@@ -245,17 +245,20 @@ def has_file(user_id: Optional[str] = None, thread_id: str = ""):
     return {"has_file": file_record.exists()}
 
 
+from fastapi import BackgroundTasks
+
+# Modify your ingest endpoint
 @app.post("/api/ingest")
 async def ingest(
+    background_tasks: BackgroundTasks,
     user_id: Optional[str] = Form(default=None),
     thread_id: str = Form(...),
     file: UploadFile = File(...),
-    replace: bool = Form(False),   # <-- NEW: server-side control
+    replace: bool = Form(False),
 ):
-    # Enforce one-file-per-thread on the server
+    # Enforce one-file-per-thread
     _, _, file_record = chat_paths(user_id, thread_id)
     if file_record.exists() and not replace:
-        # client can pass replace=true to allow replacing the context
         raise HTTPException(
             status_code=409,
             detail={
@@ -266,21 +269,24 @@ async def ingest(
             },
         )
 
-    # If replacing, wipe the previous vector store + metadata
     if replace and file_record.exists():
         _reset_vector_store(user_id, thread_id)
 
-    # Save upload to disk (no DB writes)
+    # Save upload to disk
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
 
-    # Ingest without SQLite writes (FAISS + metadata files only)
-    result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
-    if not result.get("success"):
-        raise HTTPException(status_code=422, detail=result)
-    return result
+    # Schedule background ingestion instead of blocking request
+    background_tasks.add_task(_ingest_no_sqlite_save, str(local_path), file.filename, user_id, thread_id)
+
+    return {
+        "success": True,
+        "message": f"File {file.filename} uploaded. Ingestion running in background.",
+        "thread_id": thread_id,
+        "user_id": user_id,
+    }
 
 @app.post("/api/study-guide")
 def api_study_guide(req: StudyGuideReq):
