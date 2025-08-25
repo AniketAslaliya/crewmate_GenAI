@@ -4,10 +4,19 @@ from __future__ import annotations
 import io
 import os
 import uuid
+import traceback
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, status
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    BackgroundTasks,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -53,12 +62,15 @@ except Exception:
             f"Document excerpts:\n{context}\n"
         )
 
-# ----------------------------- FastAPI app ------------------------------------
-app = FastAPI(title="RAG Backend API", version="1.0.0")
+# ----------------------------- App & Config -----------------------------------
 
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+app = FastAPI(title="RAG Backend API", version="1.0.0", debug=DEBUG)
+
+# CORS — open for dev; lock down in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
+    allow_origins=["*"],  # change to your site(s) in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,13 +80,14 @@ app.add_middleware(
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Tunables (set via ENV on Render)
+# Tunables (Render ENV)
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
-CHUNK_BYTES = int(os.getenv("UPLOAD_CHUNK_BYTES", str(1024 * 1024)))  # 1 MB default
+CHUNK_BYTES = int(os.getenv("UPLOAD_CHUNK_BYTES", str(1024 * 1024)))  # 1 MB
 EMBED_BATCH = int(os.getenv("EMBED_BATCH", "64"))
 PREVIEW_CHARS = int(os.getenv("PREVIEW_CHARS", "600"))
 
 # ----------------------------- Models -----------------------------------------
+
 class StudyGuideReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
@@ -120,7 +133,18 @@ class TimelineDownloadReq(BaseModel):
     thread_id: str
     filename: Optional[str] = None
 
+# ---------------------- Global error handler (no blank 500s) -------------------
+
+@app.exception_handler(Exception)
+async def _unhandled_exc_handler(request, exc: Exception):
+    traceback.print_exc()  # full stack in logs
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": str(exc)[:500]},
+    )
+
 # ----------------------------- Utils ------------------------------------------
+
 def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[str]:
     """Read vectors/<user>/<thread>/ingested_file.json and return 'filepath'."""
     _, _, file_record = chat_paths(user_id, thread_id)
@@ -199,7 +223,18 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
         if len(batch_vecs) != len(batch_ids):
             return {"success": False, "message": "Embedding count mismatch.", "diagnostics": diagnostics, "source": source}
 
-        upsert_chunks(index, ns, batch_vecs, batch_ids, batch_metas)
+        try:
+            upsert_chunks(index, ns, batch_vecs, batch_ids, batch_metas)
+        except Exception as e:
+            # Most common: Pinecone dimension mismatch
+            return {
+                "success": False,
+                "message": f"Upsert failed: {str(e)[:400]}",
+                "hint": "If this mentions 'dimension', your Pinecone index dim doesn't match the model. "
+                        "Recreate the index with the correct dim or switch EMBEDDING_MODEL accordingly.",
+                "diagnostics": diagnostics,
+                "source": source,
+            }
         total += len(batch_ids)
 
     # Persist small pointer so UI knows a file is attached
@@ -222,6 +257,7 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
     }
 
 # ----------------------------- Endpoints --------------------------------------
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "vector_dir": str(VECTOR_DIR), "vision": VISION_AVAILABLE}
@@ -246,8 +282,8 @@ def _ingest_background(local_path: str, file_name: str, user_id: Optional[str], 
     try:
         result = _ingest_no_sqlite_save(local_path, file_name, user_id, thread_id)
         print("[ingest] done:", result.get("message", result))
-    except Exception as e:
-        print("[ingest] ERROR:", e)
+    except Exception:
+        traceback.print_exc()
 
 @app.post("/api/ingest")
 async def ingest(
@@ -273,7 +309,7 @@ async def ingest(
     if replace and file_record.exists():
         _reset_vector_store(user_id, thread_id)
 
-    # Stream the upload to disk (avoid reading whole file into RAM)
+    # Stream upload to disk (avoid loading entire file into RAM)
     save_name = f"{thread_id}_{uuid.uuid4()}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     bytes_written = 0
@@ -291,6 +327,11 @@ async def ingest(
                         pass
                     raise HTTPException(status_code=413, detail=f"File too large. Limit is {MAX_UPLOAD_MB} MB.")
                 out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Failed to save upload: {str(e)[:300]}")
     finally:
         await file.close()
 
@@ -313,6 +354,27 @@ async def ingest(
             "user_id": user_id,
         },
     )
+
+@app.get("/api/diag")
+def api_diag(user_id: Optional[str] = None, thread_id: str = "diag"):
+    """
+    Verifies embedding dimension vs Pinecone index by doing a tiny round-trip upsert.
+    """
+    dim = get_embedding_dimension()
+    index = get_or_create_index(dim)
+    ns = namespace(user_id, thread_id)
+    vec = [0.0] * dim
+    try:
+        upsert_chunks(index, ns, [vec], ["__diag__"], [{"file_name": "__diag__", "chunk_id": "__diag__", "text": "diag"}])
+        return {"ok": True, "embedding_dim": dim, "message": "Index accepts vectors with this dimension."}
+    except Exception as e:
+        return {
+            "ok": False,
+            "embedding_dim": dim,
+            "error": str(e)[:500],
+            "hint": "If error mentions 'dimension', recreate your Pinecone index with this dimension "
+                    f"({dim}) or change EMBEDDING_MODEL to match the existing index.",
+        }
 
 @app.post("/api/study-guide")
 def api_study_guide(req: StudyGuideReq):
@@ -346,7 +408,7 @@ def api_timeline(req: TimelineReq):
 def api_ask(req: AskReq):
     """
     Q&A over the uploaded document for (user_id, thread_id).
-    - Uses FAISS retrieval -> strict system prompt -> LLM
+    - Uses retrieval -> strict system prompt -> LLM
     - No SQLite writes; only reads vector store on disk.
     """
     ing_fp = _read_ingested_filepath(req.user_id, req.thread_id)
