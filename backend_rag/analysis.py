@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from .extract import extract_text_with_diagnostics
 from .chunking import chunk_text
 from .models import call_model_system_then_user
-from .storage import chat_paths
+from .vectorstore_pinecone import get_or_create_index, namespace, query_top_k
 
 # Heuristic keywords
 LEGAL_KEYWORDS = [
@@ -61,17 +61,6 @@ def detect_hard_words(text: str, top_n: int = 40) -> List[str]:
     return terms
 
 
-def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[str]:
-    try:
-        _, _, file_record = chat_paths(user_id, thread_id)
-        if file_record.exists():
-            rec = json.loads(file_record.read_text(encoding="utf-8"))
-            return rec.get("filepath")
-    except Exception:
-        pass
-    return None
-
-
 def quick_analyze(filepath: str, user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
     """
     Fast summary + basic keywords, without touching FAISS.
@@ -113,10 +102,20 @@ def quick_analyze_thread(user_id: Optional[str], thread_id: str) -> Dict[str, An
     Wrapper: run quick_analyze for the ingested file belonging to (user_id, thread_id).
     """
     try:
-        fp = _read_ingested_filepath(user_id, thread_id)
-        if not fp:
+        # Query Pinecone for the ingested file metadata
+        index = get_or_create_index(dim=768)  # Example dimension, adjust as needed
+        ns = namespace(user_id, thread_id)
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 768, top_k=1)  # Example query vector
+
+        if not query_result:
             return {"success": False, "message": "No ingested file for this thread."}
-        return quick_analyze(str(fp), user_id, thread_id)
+
+        # Extract filepath from metadata
+        filepath = query_result[0].get("metadata", {}).get("filepath")
+        if not filepath:
+            return {"success": False, "message": "No filepath found in metadata."}
+
+        return quick_analyze(filepath, user_id, thread_id)
     except Exception as e:
         return {"success": False, "message": f"quick_analyze_thread error: {e}"}
 
@@ -304,7 +303,7 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
         faq_md = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
         return {"success": True, "faq_markdown": faq_md, "diagnostics": diagnostics}
     except Exception as e:
-        return {"success": False, "message": f"generate_faq error: {e}"}\
+        return {"success": False, "message": f"generate_faq error: {e}"}
         
 def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int = 10) -> Dict[str, Any]:
     """

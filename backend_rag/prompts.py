@@ -50,3 +50,88 @@ FALLBACK_SYSTEM_PROMPT = (
     "(1-2 sentences), label it clearly, and include: 'This is general information, not legal advice.'\n\n"
     "Then give NEXT STEPS: one or two practical actions (e.g., 'Upload the contract', 'Ask for clause X', 'Consult a lawyer')."
 )
+
+
+def process_response(raw_response: str) -> dict:
+    """
+    Process the raw response into structured JSON fields.
+    """
+    # Split into sections
+    sections = raw_response.split("\n\n")
+
+    # Extract PLAIN ANSWER
+    answer = next(
+        (section.replace("PLAIN ANSWER:\n", "").strip() for section in sections if section.startswith("PLAIN ANSWER:")),
+        "Not provided"
+    )
+
+    # Extract ASSESSMENT
+    assessment_section = next((section for section in sections if section.startswith("ASSESSMENT:")), None)
+    assessment = {"confidence": "Not provided", "reason": "Not provided"}
+    if assessment_section:
+        lines = assessment_section.split("\n")
+        for line in lines:
+            if line.startswith("- CONFIDENCE:"):
+                assessment["confidence"] = line.replace("- CONFIDENCE:", "").strip()
+            elif line.startswith("- REASON:"):
+                assessment["reason"] = line.replace("- REASON:", "").strip()
+
+    # Extract NEXT STEPS
+    next_steps_section = next((section for section in sections if section.startswith("NEXT STEPS:")), None)
+    next_steps = []
+    if next_steps_section:
+        lines = next_steps_section.split("\n")
+        for line in lines:
+            if line.startswith("-"):
+                next_steps.append(line.replace("-", "").strip())
+
+    # Extract sources (placeholder — extend with real logic if needed)
+    sources = [
+        {
+            "file_name": "1234.pdf",
+            "preview": "Example excerpt from the document."
+        }
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "answer": answer,
+            "assessment": assessment,
+            "next_steps": next_steps,
+            "sources": sources
+        }
+    }
+
+
+def format_response(raw_response: str) -> str:
+    """
+    Ensure the response is returned in the strict formatted style.
+    """
+    structured = process_response(raw_response)
+    answer = structured["data"]["answer"]
+    confidence = structured["data"]["assessment"]["confidence"]
+    reason = structured["data"]["assessment"]["reason"]
+    next_steps = structured["data"]["next_steps"]
+
+    formatted = (
+        "PLAIN ANSWER:\n"
+        f"{answer}\n\n"
+        "ASSESSMENT:\n"
+        f"- CONFIDENCE: {confidence}\n"
+        f"- REASON: {reason}\n\n"
+        "NEXT STEPS:\n"
+    )
+
+    for step in next_steps:
+        formatted += f"- {step}\n"
+
+    return formatted.strip()
+
+
+def handle_prompt_and_response(context: str, raw_response: str) -> str:
+    """
+    Build the prompt and process the raw response into formatted output.
+    """
+    prompt = build_strict_system_prompt(context)
+    return format_response(raw_response)

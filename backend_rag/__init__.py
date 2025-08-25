@@ -11,7 +11,7 @@ from .analysis import (
     quick_analyze_thread,
     get_term_context,
 )
-from .storage import chat_paths
+
 from .chat import chatbot
 from .threads import (
     create_user_if_not_exists,

@@ -65,3 +65,9 @@ def query_top_k(index, ns: str, query_vec: List[float], top_k: int = 5):
 def delete_namespace(index, ns: str):
     """Delete everything for this user/thread."""
     index.delete(namespace=ns, delete_all=True)
+
+
+def namespace_count(index, ns: str) -> int:
+    """Count the number of vectors in the given namespace."""
+    stats = index.describe_index_stats()
+    return stats.get("namespaces", {}).get(ns, {}).get("vector_count", 0)

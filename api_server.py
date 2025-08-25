@@ -1,47 +1,33 @@
 # api_server.py
 from __future__ import annotations
-
+from fastapi.responses import StreamingResponse
 import io
 import os
-import uuid
-import traceback
 from pathlib import Path
 from typing import Optional
-
-from fastapi import (
-    FastAPI,
-    UploadFile,
-    File,
-    Form,
-    HTTPException,
-    BackgroundTasks,
-    status,
-)
+from backend_rag.vectorstore_pinecone import get_or_create_index, upsert_chunks, delete_namespace, namespace, query_top_k
+from backend_rag.embeddings import embed_texts, get_embedding_dimension
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
-from backend_rag.vectorstore_pinecone import (
-    get_or_create_index,
-    upsert_chunks,
-    delete_namespace,
-    namespace,
-)
-from backend_rag.embeddings import iter_embed_texts, get_embedding_dimension
-from backend_rag.storage import chat_paths
 from backend_rag.extract import extract_text_with_diagnostics
 from backend_rag.chunking import chunk_text
-from backend_rag.config import VECTOR_DIR, ANN_TOP_K, FINAL_TOP_K, CROSS_ENCODER_MODEL
-from backend_rag.ocr import VISION_AVAILABLE
+from backend_rag.analysis import (
+    generate_study_guide,
+    quick_analyze_for_thread as quick_analyze_thread,
+    generate_faq,
+    generate_timeline,
+)
 from backend_rag.retrieval import retrieve_similar_chunks
 
-# ---- LLM helpers (Gemini chat you already use) ----
+# try to use your LLM helper; fall back to a minimal one if not present
 try:
-    from backend_rag.llm import call_model_system_then_user  # preferred
+    from backend_rag.llm import call_model_system_then_user  # preferred if you have it
 except Exception:
-    from backend_rag.models import model  # fallback
+    # Fallback: use the same model your backend uses
+    from backend_rag.models import model  # if you have a wrapper, adjust as needed
     from langchain_core.messages import SystemMessage, HumanMessage
-
     def call_model_system_then_user(system_prompt: str, user_prompt: str, temperature: float = 0.0) -> str:
         sys = SystemMessage(content=system_prompt)
         hum = HumanMessage(content=user_prompt)
@@ -51,6 +37,7 @@ except Exception:
         except Exception as e:
             return f"(model error: {e})"
 
+# optional: use your prompt builder if it exists, otherwise a safe default
 try:
     from backend_rag.prompts import build_strict_system_prompt as _build_strict_prompt
 except Exception:
@@ -61,16 +48,13 @@ except Exception:
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
             f"Document excerpts:\n{context}\n"
         )
-
-# ----------------------------- App & Config -----------------------------------
-
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-app = FastAPI(title="RAG Backend API", version="1.0.0", debug=DEBUG)
+# ----------------------------- FastAPI app ------------------------------------
+app = FastAPI(title="RAG Backend API", version="1.0.0")
 
 # CORS — open for dev; lock down in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change to your site(s) in prod
+    allow_origins=["http://localhost:3000"],  # Frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,27 +64,24 @@ app.add_middleware(
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Tunables (Render ENV)
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
-CHUNK_BYTES = int(os.getenv("UPLOAD_CHUNK_BYTES", str(1024 * 1024)))  # 1 MB
-EMBED_BATCH = int(os.getenv("EMBED_BATCH", "64"))
-PREVIEW_CHARS = int(os.getenv("PREVIEW_CHARS", "600"))
 
 # ----------------------------- Models -----------------------------------------
-
 class StudyGuideReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
 
+
 class QuickAnalyzeReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+
 
 class FAQReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     max_snippets: int = 8
     num_questions: int = 10
+
 
 class TimelineReq(BaseModel):
     user_id: Optional[str] = None
@@ -113,40 +94,9 @@ class AskReq(BaseModel):
     query: str
     top_k: int = 4
 
-class StudyGuideDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
-    filename: Optional[str] = None
-
-class QuickAnalyzeDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
-    filename: Optional[str] = None
-
-class FAQDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
-    filename: Optional[str] = None
-
-class TimelineDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
-    filename: Optional[str] = None
-
-# ---------------------- Global error handler (no blank 500s) -------------------
-
-@app.exception_handler(Exception)
-async def _unhandled_exc_handler(request, exc: Exception):
-    traceback.print_exc()  # full stack in logs
-    return JSONResponse(
-        status_code=500,
-        content={"success": False, "error": str(exc)[:500]},
-    )
-
 # ----------------------------- Utils ------------------------------------------
-
 def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[str]:
-    """Read vectors/<user>/<thread>/ingested_file.json and return 'filepath'."""
+    """Mirror the backend helper: read vectors/<user>/<thread>/ingested_file.json."""
     _, _, file_record = chat_paths(user_id, thread_id)
     if file_record.exists():
         try:
@@ -158,6 +108,7 @@ def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[
     return None
 
 def _default_basename(user_id: Optional[str], thread_id: str) -> str:
+    """Derive a nice base filename from the uploaded file if present, else the thread id."""
     fp = _read_ingested_filepath(user_id, thread_id)
     try:
         if fp:
@@ -167,12 +118,14 @@ def _default_basename(user_id: Optional[str], thread_id: str) -> str:
     return f"thread_{thread_id}"
 
 def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
+    """Return a download response with Content-Disposition: attachment; filename=..."""
     buf = io.BytesIO(text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(buf, media_type=media_type, headers=headers)
+# --- add this in api_server.py, near other Utils ---
 
 def _reset_vector_store(user_id: Optional[str], thread_id: str):
-    """Delete Pinecone namespace for (user, thread) and remove local file pointer."""
+    """Delete the Pinecone namespace for this (user, thread) and remove the local file pointer."""
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
@@ -180,17 +133,11 @@ def _reset_vector_store(user_id: Optional[str], thread_id: str):
         delete_namespace(index, ns)
     except Exception:
         pass
-    _, _, file_record = chat_paths(user_id, thread_id)
-    try:
-        if file_record.exists():
-            file_record.unlink()
-    except Exception:
-        pass
 
 def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     """
-    Extract -> chunk -> embed (batched) -> upsert (batched) to Pinecone.
-    Writes only a tiny ingested_file.json locally. Designed for 512 MB RAM.
+    Pinecone-only ingestion: chunk + embed + upsert to Pinecone.
+    Writes only a small ingested_file.json locally so the thread knows it has a file attached.
     """
     extraction = extract_text_with_diagnostics(local_path)
     text = (extraction.get("text") or "").strip()
@@ -205,176 +152,23 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
     if not texts:
         return {"success": False, "message": "No chunks created from file.", "diagnostics": diagnostics, "source": source}
 
+    vecs = embed_texts(texts)
+    vecs_list = [v.astype("float32").tolist() for v in vecs]
+    ids = [c[0] for c in chunks]
+    metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000]} for i in range(len(texts))]
+
+    # Pinecone upsert
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
+    upsert_chunks(index, ns, vecs_list, ids, metadatas)
 
-    total = 0
-    for i in range(0, len(texts), EMBED_BATCH):
-        batch_texts = texts[i:i + EMBED_BATCH]
-        batch_ids = [chunks[i + j][0] for j in range(len(batch_texts))]
-        batch_metas = [
-            {"file_name": file_name, "chunk_id": cid, "text": (batch_texts[j] or "")[:PREVIEW_CHARS]}
-            for j, cid in enumerate(batch_ids)
-        ]
-
-        # Get embeddings via generator (keeps memory low)
-        batch_vecs = list(iter_embed_texts(batch_texts))
-        if len(batch_vecs) != len(batch_ids):
-            return {"success": False, "message": "Embedding count mismatch.", "diagnostics": diagnostics, "source": source}
-
-        try:
-            upsert_chunks(index, ns, batch_vecs, batch_ids, batch_metas)
-        except Exception as e:
-            # Most common: Pinecone dimension mismatch
-            return {
-                "success": False,
-                "message": f"Upsert failed: {str(e)[:400]}",
-                "hint": "If this mentions 'dimension', your Pinecone index dim doesn't match the model. "
-                        "Recreate the index with the correct dim or switch EMBEDDING_MODEL accordingly.",
-                "diagnostics": diagnostics,
-                "source": source,
-            }
-        total += len(batch_ids)
-
-    # Persist small pointer so UI knows a file is attached
-    import json
-    _, _, file_record = chat_paths(user_id, thread_id)
-    file_record.parent.mkdir(parents=True, exist_ok=True)
-    file_record.write_text(
-        json.dumps(
-            {"file_name": file_name, "filepath": str(local_path), "user_id": user_id, "extracted_from": source},
-            ensure_ascii=False, indent=2
-        ),
-        encoding="utf-8"
-    )
-
-    return {
-        "success": True,
-        "message": f"Ingested {total} chunks (source={source}) into chat {thread_id} for user {user_id}",
-        "diagnostics": diagnostics,
-        "source": source,
-    }
+    return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
 # ----------------------------- Endpoints --------------------------------------
-
 @app.get("/api/health")
 def health():
-    return {"ok": True, "vector_dir": str(VECTOR_DIR), "vision": VISION_AVAILABLE}
-
-@app.get("/api/config")
-def get_config():
-    return {
-        "ANN_TOP_K": ANN_TOP_K,
-        "FINAL_TOP_K": FINAL_TOP_K,
-        "CROSS_ENCODER_MODEL": CROSS_ENCODER_MODEL,
-        "VISION_AVAILABLE": VISION_AVAILABLE,
-    }
-
-@app.get("/api/thread/has-file")
-def has_file(user_id: Optional[str] = None, thread_id: str = ""):
-    if not thread_id:
-        raise HTTPException(status_code=400, detail="thread_id is required")
-    _, _, file_record = chat_paths(user_id, thread_id)
-    return {"has_file": file_record.exists()}
-
-def _ingest_background(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
-    try:
-        result = _ingest_no_sqlite_save(local_path, file_name, user_id, thread_id)
-        print("[ingest] done:", result.get("message", result))
-    except Exception:
-        traceback.print_exc()
-
-@app.post("/api/ingest")
-async def ingest(
-    background_tasks: BackgroundTasks,
-    user_id: Optional[str] = Form(default=None),
-    thread_id: str = Form(...),
-    file: UploadFile = File(...),
-    replace: bool = Form(False),
-    mode: str = Form("async"),  # "async" (default) or "sync" for debugging
-):
-    # One-file-per-thread policy
-    _, _, file_record = chat_paths(user_id, thread_id)
-    if file_record.exists() and not replace:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "A file is already attached to this thread. Pass replace=true to overwrite.",
-                "has_file": True,
-                "thread_id": thread_id,
-                "user_id": user_id,
-            },
-        )
-    if replace and file_record.exists():
-        _reset_vector_store(user_id, thread_id)
-
-    # Stream upload to disk (avoid loading entire file into RAM)
-    save_name = f"{thread_id}_{uuid.uuid4()}_{file.filename}"
-    local_path = UPLOAD_DIR / save_name
-    bytes_written = 0
-    try:
-        with local_path.open("wb") as out:
-            while True:
-                chunk = await file.read(CHUNK_BYTES)
-                if not chunk:
-                    break
-                bytes_written += len(chunk)
-                if bytes_written > MAX_UPLOAD_MB * 1024 * 1024:
-                    try:
-                        local_path.unlink()
-                    except Exception:
-                        pass
-                    raise HTTPException(status_code=413, detail=f"File too large. Limit is {MAX_UPLOAD_MB} MB.")
-                out.write(chunk)
-    except HTTPException:
-        raise
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Failed to save upload: {str(e)[:300]}")
-    finally:
-        await file.close()
-
-    if mode.lower() == "sync":
-        result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
-        if not result.get("success"):
-            raise HTTPException(status_code=422, detail=result)
-        return result
-
-    # Async: return quickly, process after response
-    background_tasks.add_task(_ingest_background, str(local_path), file.filename, user_id, thread_id)
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content={
-            "success": True,
-            "status": "accepted",
-            "message": "File received; ingestion running in background.",
-            "bytes": bytes_written,
-            "thread_id": thread_id,
-            "user_id": user_id,
-        },
-    )
-
-@app.get("/api/diag")
-def api_diag(user_id: Optional[str] = None, thread_id: str = "diag"):
-    """
-    Verifies embedding dimension vs Pinecone index by doing a tiny round-trip upsert.
-    """
-    dim = get_embedding_dimension()
-    index = get_or_create_index(dim)
-    ns = namespace(user_id, thread_id)
-    vec = [0.0] * dim
-    try:
-        upsert_chunks(index, ns, [vec], ["__diag__"], [{"file_name": "__diag__", "chunk_id": "__diag__", "text": "diag"}])
-        return {"ok": True, "embedding_dim": dim, "message": "Index accepts vectors with this dimension."}
-    except Exception as e:
-        return {
-            "ok": False,
-            "embedding_dim": dim,
-            "error": str(e)[:500],
-            "hint": "If error mentions 'dimension', recreate your Pinecone index with this dimension "
-                    f"({dim}) or change EMBEDDING_MODEL to match the existing index.",
-        }
+    return {"ok": True}
 
 @app.post("/api/study-guide")
 def api_study_guide(req: StudyGuideReq):
@@ -382,92 +176,79 @@ def api_study_guide(req: StudyGuideReq):
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
     return out
-
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
     out = quick_analyze_thread(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
     return out
-
 @app.post("/api/faq")
 def api_faq(req: FAQReq):
     out = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
     return out
+@app.post("/api/ingest")
+async def ingest(
+    user_id: Optional[str] = Form(default=None),
+    thread_id: str = Form(...),
+    file: UploadFile = File(...),
+    replace: bool = Form(False),
+):
+    if replace:
+        _reset_vector_store(user_id, thread_id)
 
-@app.post("/api/timeline")
-def api_timeline(req: TimelineReq):
-    out = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    return out
+    save_name = f"{thread_id}_{file.filename}"
+    local_path = UPLOAD_DIR / save_name
+    with local_path.open("wb") as f:
+        f.write(await file.read())
+
+    result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
 
 @app.post("/api/ask")
 def api_ask(req: AskReq):
     """
     Q&A over the uploaded document for (user_id, thread_id).
-    - Uses retrieval -> strict system prompt -> LLM
-    - No SQLite writes; only reads vector store on disk.
+    - Uses Pinecone retrieval -> strict system prompt -> LLM
     """
-    ing_fp = _read_ingested_filepath(req.user_id, req.thread_id)
-    if not ing_fp or not Path(ing_fp).exists():
-        raise HTTPException(status_code=400, detail="No ingested file for this thread. Upload a document first.")
-
+    # Retrieve top_k similar chunks from Pinecone
     hits = retrieve_similar_chunks(req.query, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     if not hits:
         return {"success": True, "answer": "Not stated in document.", "sources": []}
 
-    context_blobs, sources = [], []
+    # Build short, safe context
+    context_blobs = []
+    sources = []
     for r in hits:
         text = (r.get("text") or "")[:1200].replace("\n", " ")
         fn = r.get("file_name") or "document"
         context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
         sources.append({"file_name": fn, "preview": text[:300]})
+
     context = "\n\n".join(context_blobs)
 
     system_prompt = _build_strict_prompt(context)
     user_prompt = req.query.strip()
+
     answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
 
+    # if the model drifted and didn't follow rules, guard-rail minimally
     if not answer or answer.strip() == "":
         answer = "Not stated in document."
+    # very light sanity check: if it contains 'I do not have the document' etc., fix
     low = answer.lower()
     if ("i don't have" in low or "cannot access" in low) and sources:
         answer = "Not stated in document."
 
-    return {"success": True, "answer": answer.strip(), "sources": sources}
-
-@app.post("/api/download/study-guide")
-def download_study_guide(req: StudyGuideDownloadReq):
-    out = generate_study_guide(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    guide_text = out.get("study_guide") or out.get("text") or out.get("content") or ""
-    if not guide_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
-    base = req.filename or _default_basename(req.user_id, req.thread_id)
-    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
-
-@app.post("/api/download/quick-analyze")
-def download_quick_analyze(req: QuickAnalyzeDownloadReq):
-    qa = quick_analyze_thread(req.user_id, req.thread_id)
-    if not qa.get("success"):
-        raise HTTPException(status_code=422, detail=qa)
-
-    dl_text = "QUICK SUMMARY\n\n"
-    dl_text += (qa.get("summary") or "") + "\n\n"
-    if qa.get("keywords"):
-        dl_text += "KEYWORDS:\n" + ", ".join(qa.get("keywords")) + "\n\n"
-    if qa.get("sample_snippets"):
-        dl_text += "SAMPLE SNIPPETS:\n"
-        for k, v in qa.get("sample_snippets", {}).items():
-            dl_text += f"--- {k} ---\n{(v or '')[:2000]}\n\n"
-
-    base = req.filename or _default_basename(req.user_id, req.thread_id)
-    return _stream_text_file(dl_text, f"{base}_quick_analysis.txt", media_type="text/plain; charset=utf-8")
-
+    return {
+        "success": True,
+        "answer": answer.strip(),
+        "sources": sources,  # small previews so you can show citations in your UI
+    }
 @app.post("/api/download/faq")
 def download_faq(req: FAQDownloadReq):
     out = generate_faq(req.user_id, req.thread_id)
@@ -489,3 +270,52 @@ def download_timeline(req: TimelineDownloadReq):
         raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
+
+# put near your other imports
+from fastapi import Query
+from backend_rag.vectorstore_pinecone import get_or_create_index, namespace, query_top_k, namespace_count
+from backend_rag.embeddings import get_embedding_dimension
+
+# add near the bottom with other endpoints
+
+@app.get("/api/ns/stats")
+def api_ns_stats(user_id: Optional[str] = None, thread_id: str = Query(...)):
+    dim = get_embedding_dimension()
+    index = get_or_create_index(dim)
+    ns = namespace(user_id, thread_id)
+    count = namespace_count(index, ns)
+    return {"namespace": ns, "vector_count": count}
+
+@app.get("/api/ns/peek")
+def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: int = 3):
+    dim = get_embedding_dimension()
+    index = get_or_create_index(dim)
+    ns = namespace(user_id, thread_id)
+    zero = [0.0] * dim
+    matches = query_top_k(index, ns, zero, top_k=max(1, min(k, 10)))
+    # return IDs + metadata keys + short snippet
+    out = []
+    for m in matches:
+        md = m.get("metadata", {}) if isinstance(m, dict) else {}
+        preview = ""
+        for key in ("text","chunk_text","content","page_content","snippet","preview","chunk","body"):
+            if isinstance(md.get(key), str) and md[key].strip():
+                preview = md[key][:120]
+                break
+        out.append({
+            "id": m.get("id"),
+            "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0,
+            "keys": list(md.keys())[:20],
+            "preview": preview,
+        })
+    return {"namespace": ns, "samples": out}
+@app.post("/api/download/study-guide")
+def download_study_guide(req: StudyGuideDownloadReq):
+    out = generate_study_guide(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    guide_text = out.get("study_guide") or out.get("text") or out.get("content") or ""
+    if not guide_text.strip():
+        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
+    base = req.filename or _default_basename(req.user_id, req.thread_id)
+    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")

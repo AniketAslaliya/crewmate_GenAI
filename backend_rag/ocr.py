@@ -73,6 +73,17 @@ def ocr_image_with_google_vision_bytes(content: bytes) -> str:
 
 
 def ocr_image_with_google_vision(image_path: str) -> str:
+    bucket = os.getenv("VISION_GCS_BUCKET")
+    if not bucket:
+        raise ValueError("VISION_GCS_BUCKET is not set in environment variables.")
+    
+    # Upload image to GCS
+    dest_blob_name = f"vision_inputs/{Path(image_path).name}"
+    gcs_uri = _upload_file_to_gcs(bucket, image_path, dest_blob_name)
+    if not gcs_uri:
+        raise RuntimeError("Failed to upload image to GCS.")
+    
+    # Perform OCR
     try:
         with open(image_path, "rb") as f:
             return ocr_image_with_google_vision_bytes(f.read())

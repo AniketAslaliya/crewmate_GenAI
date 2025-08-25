@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 
 from backend_rag.extract import extract_text_with_diagnostics
 from backend_rag.chunking import chunk_text
@@ -12,7 +12,6 @@ from backend_rag.vectorstore_pinecone import (
     delete_namespace,
     namespace,
 )
-from backend_rag.storage import chat_paths
 
 
 def ingest_file(
@@ -24,7 +23,6 @@ def ingest_file(
 ) -> Dict:
     """
     Pinecone-only ingestion: extract -> chunk -> embed -> upsert to Pinecone.
-    Writes a small ingested_file.json so the app knows a file is attached.
     """
 
     # Optional: replace existing vectors for this thread (one-file-per-thread)
@@ -78,23 +76,6 @@ def ingest_file(
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
     upsert_chunks(index, ns, vecs_list, ids, metadatas)
-
-    # 5) Mark thread as having an attached file
-    _, _, file_record = chat_paths(user_id, thread_id)
-    file_record.parent.mkdir(parents=True, exist_ok=True)
-    file_record.write_text(
-        json.dumps(
-            {
-                "file_name": file_name,
-                "filepath": str(filepath),
-                "user_id": user_id,
-                "extracted_from": source,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
 
     return {
         "success": True,
