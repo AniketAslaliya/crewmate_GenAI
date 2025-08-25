@@ -218,9 +218,7 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
         json.dumps({"file_name": file_name, "filepath": str(local_path), "user_id": user_id, "extracted_from": source}, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
-    done_flag = CHAT_DIR / user_id / thread_id / "ingest_done.flag"
-    done_flag.parent.mkdir(parents=True, exist_ok=True)
-    done_flag.write_text("done")
+    
 
     return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
@@ -253,15 +251,15 @@ from fastapi import BackgroundTasks
 # Modify your ingest endpoint
 @app.post("/api/ingest")
 async def ingest(
-    background_tasks: BackgroundTasks,
     user_id: Optional[str] = Form(default=None),
     thread_id: str = Form(...),
     file: UploadFile = File(...),
-    replace: bool = Form(False),
+    replace: bool = Form(False),   # <-- NEW: server-side control
 ):
-    # Enforce one-file-per-thread
+    # Enforce one-file-per-thread on the server
     _, _, file_record = chat_paths(user_id, thread_id)
     if file_record.exists() and not replace:
+        # client can pass replace=true to allow replacing the context
         raise HTTPException(
             status_code=409,
             detail={
@@ -272,24 +270,22 @@ async def ingest(
             },
         )
 
+    # If replacing, wipe the previous vector store + metadata
     if replace and file_record.exists():
         _reset_vector_store(user_id, thread_id)
 
-    # Save upload to disk
+    # Save upload to disk (no DB writes)
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
 
-    # Schedule background ingestion instead of blocking request
-    background_tasks.add_task(_ingest_no_sqlite_save, str(local_path), file.filename, user_id, thread_id)
+    # Ingest without SQLite writes (FAISS + metadata files only)
+    result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
 
-    return {
-        "success": True,
-        "message": f"File {file.filename} uploaded. Ingestion running in background.",
-        "thread_id": thread_id,
-        "user_id": user_id,
-    }
 
 @app.post("/api/study-guide")
 def api_study_guide(req: StudyGuideReq):
@@ -428,8 +424,5 @@ def download_timeline(req: TimelineDownloadReq):
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
 
-@app.get("/api/ingest/status")
-def ingest_status(user_id: str, thread_id: str):
-    done_flag = CHAT_DIR / user_id / thread_id / "ingest_done.flag"
-    return {"ready": done_flag.exists()}
+
 
