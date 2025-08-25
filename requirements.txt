@@ -1,11 +1,20 @@
-# Core packages
+fastapi
+uvicorn[standard]
+python-multipart
 python-dotenv
-streamlit
+pydantic
 
-# LangChain & Google Generative AI
-langchain
-langchain-google-genai
+pinecone
+sentence-transformers
+numpy
 langchain-core
+langchain-google-genai
 
-# Optional but recommended (for compatibility)
-protobuf<5
+PyPDF2
+Pillow
+pdf2image
+python-docx
+
+google-cloud-vision
+google-cloud-storage
+langgraph
