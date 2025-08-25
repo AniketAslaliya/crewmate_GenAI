@@ -18,7 +18,6 @@ from backend_rag.vectorstore_pinecone import (
     delete_namespace,
     namespace,
 )
-# NOTE: we import the new batched iterator + dim helper
 from backend_rag.embeddings import iter_embed_texts, get_embedding_dimension
 from backend_rag.storage import chat_paths
 from backend_rag.extract import extract_text_with_diagnostics
@@ -27,9 +26,9 @@ from backend_rag.config import VECTOR_DIR, ANN_TOP_K, FINAL_TOP_K, CROSS_ENCODER
 from backend_rag.ocr import VISION_AVAILABLE
 from backend_rag.retrieval import retrieve_similar_chunks
 
-# ---- LLM helpers (Gemini) ----
+# ---- LLM helpers (Gemini chat you already use) ----
 try:
-    from backend_rag.llm import call_model_system_then_user  # preferred if present
+    from backend_rag.llm import call_model_system_then_user  # preferred
 except Exception:
     from backend_rag.models import model  # fallback
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -57,10 +56,9 @@ except Exception:
 # ----------------------------- FastAPI app ------------------------------------
 app = FastAPI(title="RAG Backend API", version="1.0.0")
 
-# CORS — open for dev; lock down in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change to your site(s) in prod
+    allow_origins=["*"],  # tighten in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,11 +79,9 @@ class StudyGuideReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
 
-
 class QuickAnalyzeReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
-
 
 class FAQReq(BaseModel):
     user_id: Optional[str] = None
@@ -93,12 +89,10 @@ class FAQReq(BaseModel):
     max_snippets: int = 8
     num_questions: int = 10
 
-
 class TimelineReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     max_snippets: int = 10
-
 
 class AskReq(BaseModel):
     user_id: Optional[str] = None
@@ -106,34 +100,29 @@ class AskReq(BaseModel):
     query: str
     top_k: int = 4
 
-
 class StudyGuideDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
-    filename: Optional[str] = None  # optional custom name
-
+    filename: Optional[str] = None
 
 class QuickAnalyzeDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     filename: Optional[str] = None
 
-
 class FAQDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     filename: Optional[str] = None
-
 
 class TimelineDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     filename: Optional[str] = None
 
-
 # ----------------------------- Utils ------------------------------------------
 def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[str]:
-    """Mirror the backend helper: read vectors/<user>/<thread>/ingested_file.json."""
+    """Read vectors/<user>/<thread>/ingested_file.json and return 'filepath'."""
     _, _, file_record = chat_paths(user_id, thread_id)
     if file_record.exists():
         try:
@@ -144,9 +133,7 @@ def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[
             return None
     return None
 
-
 def _default_basename(user_id: Optional[str], thread_id: str) -> str:
-    """Derive a nice base filename from the uploaded file if present, else the thread id."""
     fp = _read_ingested_filepath(user_id, thread_id)
     try:
         if fp:
@@ -155,16 +142,13 @@ def _default_basename(user_id: Optional[str], thread_id: str) -> str:
         pass
     return f"thread_{thread_id}"
 
-
 def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
-    """Return a download response with Content-Disposition: attachment; filename=..."""
     buf = io.BytesIO(text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(buf, media_type=media_type, headers=headers)
 
-
 def _reset_vector_store(user_id: Optional[str], thread_id: str):
-    """Delete the Pinecone namespace for this (user, thread) and remove the local file pointer."""
+    """Delete Pinecone namespace for (user, thread) and remove local file pointer."""
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
@@ -172,7 +156,6 @@ def _reset_vector_store(user_id: Optional[str], thread_id: str):
         delete_namespace(index, ns)
     except Exception:
         pass
-    # remove local ingested_file.json pointer
     _, _, file_record = chat_paths(user_id, thread_id)
     try:
         if file_record.exists():
@@ -180,12 +163,10 @@ def _reset_vector_store(user_id: Optional[str], thread_id: str):
     except Exception:
         pass
 
-
 def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     """
-    Pinecone-only ingestion: extract -> chunk -> embed (batched) -> upsert (batched).
-    Writes only a small ingested_file.json locally so the thread knows it has a file attached.
-    Designed to stay within 512 MB.
+    Extract -> chunk -> embed (batched) -> upsert (batched) to Pinecone.
+    Writes only a tiny ingested_file.json locally. Designed for 512 MB RAM.
     """
     extraction = extract_text_with_diagnostics(local_path)
     text = (extraction.get("text") or "").strip()
@@ -205,7 +186,6 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
     ns = namespace(user_id, thread_id)
 
     total = 0
-    # Process in EMBED_BATCH windows to keep memory low
     for i in range(0, len(texts), EMBED_BATCH):
         batch_texts = texts[i:i + EMBED_BATCH]
         batch_ids = [chunks[i + j][0] for j in range(len(batch_texts))]
@@ -214,16 +194,15 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
             for j, cid in enumerate(batch_ids)
         ]
 
-        # Gather vectors via generator to avoid holding large arrays
+        # Get embeddings via generator (keeps memory low)
         batch_vecs = list(iter_embed_texts(batch_texts))
         if len(batch_vecs) != len(batch_ids):
             return {"success": False, "message": "Embedding count mismatch.", "diagnostics": diagnostics, "source": source}
 
-        # Upsert this small batch
         upsert_chunks(index, ns, batch_vecs, batch_ids, batch_metas)
         total += len(batch_ids)
 
-    # Persist a small "ingested_file.json" so your UI/endpoints know there's a file attached
+    # Persist small pointer so UI knows a file is attached
     import json
     _, _, file_record = chat_paths(user_id, thread_id)
     file_record.parent.mkdir(parents=True, exist_ok=True)
@@ -242,12 +221,10 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
         "source": source,
     }
 
-
 # ----------------------------- Endpoints --------------------------------------
 @app.get("/api/health")
 def health():
     return {"ok": True, "vector_dir": str(VECTOR_DIR), "vision": VISION_AVAILABLE}
-
 
 @app.get("/api/config")
 def get_config():
@@ -258,7 +235,6 @@ def get_config():
         "VISION_AVAILABLE": VISION_AVAILABLE,
     }
 
-
 @app.get("/api/thread/has-file")
 def has_file(user_id: Optional[str] = None, thread_id: str = ""):
     if not thread_id:
@@ -266,14 +242,12 @@ def has_file(user_id: Optional[str] = None, thread_id: str = ""):
     _, _, file_record = chat_paths(user_id, thread_id)
     return {"has_file": file_record.exists()}
 
-
 def _ingest_background(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     try:
         result = _ingest_no_sqlite_save(local_path, file_name, user_id, thread_id)
         print("[ingest] done:", result.get("message", result))
     except Exception as e:
         print("[ingest] ERROR:", e)
-
 
 @app.post("/api/ingest")
 async def ingest(
@@ -284,7 +258,7 @@ async def ingest(
     replace: bool = Form(False),
     mode: str = Form("async"),  # "async" (default) or "sync" for debugging
 ):
-    # Enforce one-file-per-thread
+    # One-file-per-thread policy
     _, _, file_record = chat_paths(user_id, thread_id)
     if file_record.exists() and not replace:
         raise HTTPException(
@@ -296,11 +270,10 @@ async def ingest(
                 "user_id": user_id,
             },
         )
-
     if replace and file_record.exists():
         _reset_vector_store(user_id, thread_id)
 
-    # Stream the upload to disk to avoid loading the whole file into RAM
+    # Stream the upload to disk (avoid reading whole file into RAM)
     save_name = f"{thread_id}_{uuid.uuid4()}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     bytes_written = 0
@@ -322,13 +295,12 @@ async def ingest(
         await file.close()
 
     if mode.lower() == "sync":
-        # Synchronous path (debug only): may still be slow on tiny instances
         result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
         if not result.get("success"):
             raise HTTPException(status_code=422, detail=result)
         return result
 
-    # Async by default: return 202 and do heavy work after
+    # Async: return quickly, process after response
     background_tasks.add_task(_ingest_background, str(local_path), file.filename, user_id, thread_id)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
@@ -342,14 +314,12 @@ async def ingest(
         },
     )
 
-
 @app.post("/api/study-guide")
 def api_study_guide(req: StudyGuideReq):
     out = generate_study_guide(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
     return out
-
 
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
@@ -358,7 +328,6 @@ def api_quick_analyze(req: QuickAnalyzeReq):
         raise HTTPException(status_code=422, detail=out)
     return out
 
-
 @app.post("/api/faq")
 def api_faq(req: FAQReq):
     out = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
@@ -366,14 +335,12 @@ def api_faq(req: FAQReq):
         raise HTTPException(status_code=422, detail=out)
     return out
 
-
 @app.post("/api/timeline")
 def api_timeline(req: TimelineReq):
     out = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
     return out
-
 
 @app.post("/api/ask")
 def api_ask(req: AskReq):
@@ -410,7 +377,6 @@ def api_ask(req: AskReq):
 
     return {"success": True, "answer": answer.strip(), "sources": sources}
 
-
 @app.post("/api/download/study-guide")
 def download_study_guide(req: StudyGuideDownloadReq):
     out = generate_study_guide(req.user_id, req.thread_id)
@@ -421,7 +387,6 @@ def download_study_guide(req: StudyGuideDownloadReq):
         raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
-
 
 @app.post("/api/download/quick-analyze")
 def download_quick_analyze(req: QuickAnalyzeDownloadReq):
@@ -441,7 +406,6 @@ def download_quick_analyze(req: QuickAnalyzeDownloadReq):
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(dl_text, f"{base}_quick_analysis.txt", media_type="text/plain; charset=utf-8")
 
-
 @app.post("/api/download/faq")
 def download_faq(req: FAQDownloadReq):
     out = generate_faq(req.user_id, req.thread_id)
@@ -452,7 +416,6 @@ def download_faq(req: FAQDownloadReq):
         raise HTTPException(status_code=422, detail={"message": "Empty FAQ content."})
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(faq_text, f"{base}_faq.md", media_type="text/markdown; charset=utf-8")
-
 
 @app.post("/api/download/timeline")
 def download_timeline(req: TimelineDownloadReq):
