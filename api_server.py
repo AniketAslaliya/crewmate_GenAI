@@ -218,6 +218,9 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
         json.dumps({"file_name": file_name, "filepath": str(local_path), "user_id": user_id, "extracted_from": source}, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
+    done_flag = CHAT_DIR / user_id / thread_id / "ingest_done.flag"
+    done_flag.parent.mkdir(parents=True, exist_ok=True)
+    done_flag.write_text("done")
 
     return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
@@ -424,3 +427,9 @@ def download_timeline(req: TimelineDownloadReq):
         raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
     base = req.filename or _default_basename(req.user_id, req.thread_id)
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
+
+@app.get("/api/ingest/status")
+def ingest_status(user_id: str, thread_id: str):
+    done_flag = CHAT_DIR / user_id / thread_id / "ingest_done.flag"
+    return {"ready": done_flag.exists()}
+
