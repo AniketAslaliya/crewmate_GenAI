@@ -103,9 +103,9 @@ def quick_analyze_thread(user_id: Optional[str], thread_id: str) -> Dict[str, An
     """
     try:
         # Query Pinecone for the ingested file metadata
-        index = get_or_create_index(dim=768)  # Example dimension, adjust as needed
+        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
         ns = namespace(user_id, thread_id)
-        query_result = query_top_k(index, ns, query_vec=[0.0] * 768, top_k=1)  # Example query vector
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=1)  # Example query vector
 
         if not query_result:
             return {"success": False, "message": "No ingested file for this thread."}
@@ -124,53 +124,26 @@ def quick_analyze_thread(user_id: Optional[str], thread_id: str) -> Dict[str, An
 quick_analyze_for_thread = quick_analyze_thread
 
 
+from backend_rag.vectorstore_pinecone import get_or_create_index, namespace, query_top_k
+from backend_rag.models import call_model_system_then_user
+
+
 def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: int = 8) -> Dict[str, Any]:
     """
-    Build a study guide from a handful of representative snippets.
+    Build a study guide from representative snippets stored in Pinecone.
     """
     try:
-        filepath = _read_ingested_filepath(user_id, thread_id)
-        if not filepath or not Path(filepath).exists():
-            return {"success": False, "message": "No ingested file for this thread."}
+        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
+        ns = namespace(user_id, thread_id)
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=max_snippets)
 
-        # Prefer metadata snippets saved at ingest time
-        _, meta_path, _ = chat_paths(user_id, thread_id)
-        snippets: List[str] = []
-        diagnostics: Dict[str, Any] = {"meta_used": False}
+        if not query_result:
+            return {"success": False, "message": "No document excerpts available for study guide."}
 
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                taken = 0
-                for k in sorted(meta.keys(), key=lambda x: int(x) if str(x).isdigit() else x):
-                    if taken >= max_snippets:
-                        break
-                    t = meta.get(k, {}).get("text") or ""
-                    if t.strip():
-                        snippets.append(t.strip())
-                        taken += 1
-                if snippets:
-                    diagnostics["meta_used"] = True
-                    diagnostics["meta_count"] = len(snippets)
-            except Exception as e:
-                diagnostics["meta_error"] = str(e)
-
-        # Fallback: extract and chunk directly
+        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
         if not snippets:
-            extraction = extract_text_with_diagnostics(filepath)
-            diagnostics["extraction"] = extraction.get("diagnostics", {})
-            text = extraction.get("text", "") or ""
-            if not text.strip():
-                return {"success": False, "message": "No text available to generate study guide.", "diagnostics": diagnostics}
-            chunks = chunk_text(text, chunk_size=1200, overlap=200)
-            for _, ctext in chunks[:max_snippets]:
-                snippets.append(ctext)
-            diagnostics["from_chunks"] = len(snippets)
+            return {"success": False, "message": "No valid snippets found in Pinecone."}
 
-        if not snippets:
-            return {"success": False, "message": "Unable to find document excerpts for study guide.", "diagnostics": diagnostics}
-
-        # Prompt the LLM
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         system_prompt = (
             "You are an expert study-guide writer who specializes in legal and technical documents. "
@@ -184,10 +157,6 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
             "- If you make an inference that synthesizes multiple excerpts, PREPEND the inference with the single word 'INFERENCE:' then succinctly explain the premises and cite the short snippets used (see quoting rule below).\n"
             "- When including any quoted excerpt, include only a short snippet (<=250 characters) and append a parenthetical source tag like '(excerpt)'. Do not paste long verbatim sections from the document.\n"
             "- Keep language plain, concise, and aimed at a non-expert. Use bullet lists for enumerations and short numbered lists for steps or procedures.\n\n"
-            "Specific output elements (guidance):\n"
-            "- Overview: 2–4 short paragraphs describing the document's purpose, scope, and core themes.\n"
-            "- Key Concepts: up to ~10 important terms from the excerpts; for each give a 1–2 sentence plain-English definition and a one-line note about why it matters in this document. If a term is missing detail, write 'Not stated in document.'\n"
-            "- Suggested Tips: 3–5 practical tips for reviewing the document (e.g., focus areas, how to compare clauses, what to bring to counsel).\n\n"
             "Formatting & deliverable:\n"
             "- Produce the entire Study Guide in Markdown. Use H1 for title, H2/H3 for main sections and subsections, bullets and code blocks only where appropriate.\n"
             "- Be thorough and long-form (comparable to a helpful revision guide) but avoid repetition.\n"
@@ -197,11 +166,10 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
         user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
 
         guide_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
-        return {"success": True, "study_guide": guide_text, "diagnostics": diagnostics}
+        return {"success": True, "study_guide": guide_text}
     except Exception as e:
         return {"success": False, "message": f"generate_study_guide error: {e}"}
-
-
+    
 def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[str, Any]:
     """
     Quick, paragraph-anchored explanation of a term within the uploaded doc.
@@ -234,53 +202,20 @@ def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[
 
 def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, num_questions: int = 10) -> Dict[str, Any]:
     """
-    Generate an FAQ (questions & answers) based ONLY on the uploaded document excerpts.
-    Returns:
-      {"success": bool, "faq_markdown": str, "diagnostics": {...}}
+    Generate an FAQ (questions & answers) based ONLY on the uploaded document excerpts stored in Pinecone.
     """
     try:
-        filepath = _read_ingested_filepath(user_id, thread_id)
-        if not filepath or not Path(filepath).exists():
-            return {"success": False, "message": "No ingested file for this thread."}
+        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
+        ns = namespace(user_id, thread_id)
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=max_snippets)
 
-        # Prefer metadata snippets saved at ingest time
-        _, meta_path, _ = chat_paths(user_id, thread_id)
-        snippets: List[str] = []
-        diagnostics: Dict[str, Any] = {"meta_used": False, "num_questions": num_questions}
+        if not query_result:
+            return {"success": False, "message": "No document excerpts available for FAQ generation."}
 
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                taken = 0
-                for k in sorted(meta.keys(), key=lambda x: int(x) if str(x).isdigit() else x):
-                    if taken >= max_snippets:
-                        break
-                    t = meta.get(k, {}).get("text") or ""
-                    if t.strip():
-                        snippets.append(t.strip())
-                        taken += 1
-                if snippets:
-                    diagnostics["meta_used"] = True
-                    diagnostics["meta_count"] = len(snippets)
-            except Exception as e:
-                diagnostics["meta_error"] = str(e)
-
-        # Fallback: extract & chunk if needed
+        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
         if not snippets:
-            extraction = extract_text_with_diagnostics(filepath)
-            diagnostics["extraction"] = extraction.get("diagnostics", {})
-            text = extraction.get("text", "") or ""
-            if not text.strip():
-                return {"success": False, "message": "No text available to generate FAQ.", "diagnostics": diagnostics}
-            chunks = chunk_text(text, chunk_size=1200, overlap=200)
-            for _, ctext in chunks[:max_snippets]:
-                snippets.append(ctext)
-            diagnostics["from_chunks"] = len(snippets)
+            return {"success": False, "message": "No valid snippets found in Pinecone."}
 
-        if not snippets:
-            return {"success": False, "message": "Unable to find document excerpts for FAQ.", "diagnostics": diagnostics}
-
-        # Build prompt
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         system_prompt = (
             "You are an expert FAQ writer for legal/technical documents. "
@@ -293,7 +228,7 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
             "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
             "- Do NOT invent numbers, dates, obligations, or parties.\n"
             "- Output format (Markdown): use '### Q: ...' then on next line 'A: ...'. No extra commentary.\n"
-        ).format(nq=num_questions)
+            ).format(nq=num_questions)
 
         user_prompt = (
             f"Document excerpts:\n\n{context_excerpt}\n\n"
@@ -301,189 +236,26 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
         )
 
         faq_md = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
-        return {"success": True, "faq_markdown": faq_md, "diagnostics": diagnostics}
+        return {"success": True, "faq_markdown": faq_md}
     except Exception as e:
         return {"success": False, "message": f"generate_faq error: {e}"}
         
 def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int = 10) -> Dict[str, Any]:
     """
-    Generate a chronological timeline (Markdown) using ONLY the uploaded document excerpts.
-
-    Rules enforced post-generation:
-    - Only show timeline if there are >= 1 rows; else return "No timeline to show in your document."
-    - Normalize all dates to DD/MM/YYYY.
-    - Keep only two columns: Date | Event (no snippet).
+    Generate a chronological timeline using ONLY the uploaded document excerpts stored in Pinecone.
     """
-    import re
-    from pathlib import Path
-
-    # --- helpers: date normalization ---
-    MONTHS = {
-        "january": "01", "february": "02", "march": "03", "april": "04",
-        "may": "05", "june": "06", "july": "07", "august": "08",
-        "september": "09", "october": "10", "november": "11", "december": "12",
-        "jan": "01", "feb": "02", "mar": "03", "apr": "04",
-        "jun": "06", "jul": "07", "aug": "08",
-        "sep": "09", "sept": "09", "oct": "10", "nov": "11", "dec": "12",
-    }
-
-    def _pad2(n: str) -> str:
-        return n.zfill(2)
-
-    def normalize_date_string(s: str) -> Optional[str]:
-        """Try to normalize various common formats to DD/MM/YYYY; return None if cannot."""
-        ss = s.strip()
-
-        # YYYY-MM-DD
-        m = re.match(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$", ss)
-        if m:
-            y, mo, d = m.groups()
-            return f"{_pad2(d)}/{_pad2(mo)}/{y}"
-
-        # YYYY/MM/DD or YYYY.MM.DD
-        m = re.match(r"^\s*(\d{4})[\/\.](\d{1,2})[\/\.](\d{1,2})\s*$", ss)
-        if m:
-            y, mo, d = m.groups()
-            return f"{_pad2(d)}/{_pad2(mo)}/{y}"
-
-        # DD/MM/YYYY or D/M/YYYY (already dd/mm/yyyy-ish)
-        m = re.match(r"^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$", ss)
-        if m:
-            d, mo, y = m.groups()
-            return f"{_pad2(d)}/{_pad2(mo)}/{y}"
-
-        # Month D, YYYY   (e.g., January 10, 2024)
-        m = re.match(r"^\s*([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\s*$", ss)
-        if m:
-            mon, d, y = m.groups()
-            mo = MONTHS.get(mon.lower())
-            if mo:
-                return f"{_pad2(d)}/{mo}/{y}"
-
-        # D Month YYYY    (e.g., 10 January 2024)
-        m = re.match(r"^\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\s*$", ss)
-        if m:
-            d, mon, y = m.groups()
-            mo = MONTHS.get(mon.lower())
-            if mo:
-                return f"{_pad2(d)}/{mo}/{y}"
-
-        # Mon D, YYYY (short month) e.g., Jan 5, 2024
-        m = re.match(r"^\s*([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4})\s*$", ss)
-        if m:
-            mon, d, y = m.groups()
-            mo = MONTHS.get(mon.lower())
-            if mo:
-                return f"{_pad2(d)}/{mo}/{y}"
-
-        return None  # unknown format
-
-    def sanitize_table(md_text: str) -> Tuple[str, int]:
-        """
-        Convert any markdown table returned by the model into a strict 2-col table (Date|Event),
-        normalize the first column to DD/MM/YYYY, drop rows with un-normalizable dates,
-        and return (table_text, row_count).
-        """
-        lines = [ln.rstrip() for ln in md_text.splitlines()]
-        rows = []
-        header_seen = False
-        sep_seen = False
-
-        for ln in lines:
-            if not ln.strip().startswith("|"):
-                continue
-            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-            if len(cells) < 2:
-                continue
-
-            # Detect header
-            if not header_seen and ("date" in cells[0].lower() and "event" in " ".join(cells[1:]).lower()):
-                header_seen = True
-                continue
-            # Detect separator row (---)
-            if not sep_seen and re.match(r"^\s*:?-{3,}:?\s*$", cells[0]):
-                sep_seen = True
-                continue
-
-            # Data row: keep only first two columns
-            date_cell = cells[0]
-            event_cell = cells[1]
-
-            norm = normalize_date_string(date_cell)
-            if not norm:
-                # Try to extract a date-like token within the cell
-                # e.g., “2024-03-15 — ...”
-                # Pull first plausible token (very simple heuristic)
-                tok = re.split(r"[—\-–]|,|\s{2,}", date_cell)[0].strip()
-                norm = normalize_date_string(tok)
-
-            if not norm:
-                # skip rows we can't normalize into DD/MM/YYYY
-                continue
-
-            rows.append((norm, event_cell))
-
-        # sort earliest -> latest by YYYYMMDD numeric
-        def sort_key(row):
-            d, e = row
-            # dd/mm/yyyy -> yyyymmdd
-            day, mon, year = d.split("/")
-            return (year, mon, day)
-
-        rows.sort(key=sort_key)
-
-        # Build strict 2-col table
-        out = []
-        out.append("| Date | Event |")
-        out.append("|---|---|")
-        for d, e in rows:
-            out.append(f"| {d} | {e} |")
-
-        return ("\n".join(out), len(rows))
-
     try:
-        filepath = _read_ingested_filepath(user_id, thread_id)
-        if not filepath or not Path(filepath).exists():
-            return {"success": False, "message": "No ingested file for this thread."}
+        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
+        ns = namespace(user_id, thread_id)
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=max_snippets)
 
-        # Prefer metadata snippets saved at ingest time
-        _, meta_path, _ = chat_paths(user_id, thread_id)
-        snippets: List[str] = []
-        diagnostics: Dict[str, Any] = {"meta_used": False}
+        if not query_result:
+            return {"success": False, "message": "No document excerpts available for timeline generation."}
 
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                taken = 0
-                for k in sorted(meta.keys(), key=lambda x: int(x) if str(x).isdigit() else x):
-                    if taken >= max_snippets:
-                        break
-                    t = meta.get(k, {}).get("text") or ""
-                    if t.strip():
-                        snippets.append(t.strip())
-                        taken += 1
-                if snippets:
-                    diagnostics["meta_used"] = True
-                    diagnostics["meta_count"] = len(snippets)
-            except Exception as e:
-                diagnostics["meta_error"] = str(e)
-
-        # Fallback: extract & chunk if no meta snippets
+        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
         if not snippets:
-            extraction = extract_text_with_diagnostics(filepath)
-            diagnostics["extraction"] = extraction.get("diagnostics", {})
-            text = extraction.get("text", "") or ""
-            if not text.strip():
-                return {"success": False, "message": "No text available to generate timeline.", "diagnostics": diagnostics}
-            chunks = chunk_text(text, chunk_size=1200, overlap=200)
-            for _, ctext in chunks[:max_snippets]:
-                snippets.append(ctext)
-            diagnostics["from_chunks"] = len(snippets)
+            return {"success": False, "message": "No valid snippets found in Pinecone."}
 
-        if not snippets:
-            return {"success": False, "message": "Unable to find document excerpts for timeline.", "diagnostics": diagnostics}
-
-        # Build stricter prompt (no snippet column, explicit format & threshold)
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         system_prompt = (
             "You are a precise timeline builder. Using ONLY the provided excerpts (no outside knowledge), "
@@ -495,7 +267,6 @@ def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int 
             "- Sort rows earliest → latest.\n"
             "- If fewer than 6 dated events are present, output exactly: 'No timeline to show in your document.'\n"
         )
-
         user_prompt = (
             f"Document excerpts:\n\n{context_excerpt}\n\n"
             "Now produce the TIMELINE as instructed above."
@@ -503,12 +274,14 @@ def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int 
 
         timeline_md = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
 
-        # Post-process to enforce format and threshold regardless of LLM drift
-        sanitized_md, row_count = sanitize_table(timeline_md)
+        # Ensure timeline is sorted and in one format
+        timeline_lines = timeline_md.split("\n")
+        sorted_timeline = sorted(
+            [line for line in timeline_lines if "|" in line and line.strip()],
+            key=lambda x: x.split("|")[0].strip()
+        )
+        final_timeline = "\n".join(sorted_timeline)
 
-        if row_count < 6:
-            return {"success": True, "timeline_markdown": "No timeline to show in your document.", "diagnostics": diagnostics}
-
-        return {"success": True, "timeline_markdown": sanitized_md, "diagnostics": diagnostics}
+        return {"success": True, "timeline_markdown": final_timeline}
     except Exception as e:
         return {"success": False, "message": f"generate_timeline error: {e}"}

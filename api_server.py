@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 from backend_rag.vectorstore_pinecone import get_or_create_index, upsert_chunks, delete_namespace, namespace, query_top_k
 from backend_rag.embeddings import embed_texts, get_embedding_dimension
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -94,6 +94,24 @@ class AskReq(BaseModel):
     query: str
     top_k: int = 4
 
+class FAQDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    
+
+
+class TimelineDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    
+
+
+class StudyGuideDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    filename: Optional[str] = None
+
+
 # ----------------------------- Utils ------------------------------------------
 def _read_ingested_filepath(user_id: Optional[str], thread_id: str) -> Optional[str]:
     """Mirror the backend helper: read vectors/<user>/<thread>/ingested_file.json."""
@@ -171,11 +189,14 @@ def health():
     return {"ok": True}
 
 @app.post("/api/study-guide")
-def api_study_guide(req: StudyGuideReq):
-    out = generate_study_guide(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    return out
+def study_guide(req: StudyGuideReq):
+    try:
+        result = generate_study_guide(req.user_id, req.thread_id)
+        return {"success": True, "study_guide": result.get("study_guide")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
+
+
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
     out = quick_analyze_thread(req.user_id, req.thread_id)
@@ -183,11 +204,23 @@ def api_quick_analyze(req: QuickAnalyzeReq):
         raise HTTPException(status_code=422, detail=out)
     return out
 @app.post("/api/faq")
-def api_faq(req: FAQReq):
-    out = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    return out
+def faq(req: FAQReq):
+    try:
+        result = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
+        return {"success": True, "faq_markdown": result.get("faq_markdown")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
+
+
+@app.post("/api/timeline")
+def timeline(req: TimelineReq):
+    try:
+        result = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
+        return {"success": True, "timeline_markdown": result.get("timeline_markdown")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
+
+
 @app.post("/api/ingest")
 async def ingest(
     user_id: Optional[str] = Form(default=None),
@@ -254,10 +287,10 @@ def download_faq(req: FAQDownloadReq):
     out = generate_faq(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
-    faq_text = out.get("faq_markdown") or out.get("text") or out.get("content") or ""
+    faq_text = out.get("faq_markdown") or ""
     if not faq_text.strip():
         raise HTTPException(status_code=422, detail={"message": "Empty FAQ content."})
-    base = req.filename or _default_basename(req.user_id, req.thread_id)
+    base = f"thread_{req.thread_id}"
     return _stream_text_file(faq_text, f"{base}_faq.md", media_type="text/markdown; charset=utf-8")
 
 @app.post("/api/download/timeline")
@@ -265,11 +298,23 @@ def download_timeline(req: TimelineDownloadReq):
     out = generate_timeline(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
-    timeline_text = out.get("timeline_markdown") or out.get("text") or out.get("content") or ""
-    if timeline_text.strip() == "":
+    timeline_text = out.get("timeline_markdown") or ""
+    if not timeline_text.strip():
         raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
-    base = req.filename or _default_basename(req.user_id, req.thread_id)
+    base =  f"thread_{req.thread_id}"
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
+
+@app.post("/api/download/study-guide")
+def download_study_guide(req: StudyGuideDownloadReq):
+    out = generate_study_guide(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    guide_text = out.get("study_guide") or ""
+    if not guide_text.strip():
+        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
+    base = f"thread_{req.thread_id}"
+    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
+
 
 # put near your other imports
 from fastapi import Query
@@ -309,13 +354,3 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
             "preview": preview,
         })
     return {"namespace": ns, "samples": out}
-@app.post("/api/download/study-guide")
-def download_study_guide(req: StudyGuideDownloadReq):
-    out = generate_study_guide(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    guide_text = out.get("study_guide") or out.get("text") or out.get("content") or ""
-    if not guide_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
-    base = req.filename or _default_basename(req.user_id, req.thread_id)
-    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
