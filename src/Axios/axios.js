@@ -2,6 +2,7 @@
 import axios from "axios";
 import useAuthStore from "../context/AuthContext"; // adjust path if needed
 
+// API for the main backend
 const api = axios.create({
   baseURL: process.env.REACT_APP_BACKEND_URL,
   withCredentials: true,
@@ -19,4 +20,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-export default api;
+
+
+export default api; // Default export

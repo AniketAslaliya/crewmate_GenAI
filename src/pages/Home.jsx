@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import api from "../Axios/axios";
+
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-
+import api from "../Axios/axios";
+import papi from "../Axios/paxios";
 // A modern background component with a gradient and subtle noise texture
 const ModernBackground = () => (
   <div className="absolute inset-0 -z-10 bg-gray-900" style={{
@@ -22,8 +23,8 @@ const Home = () => {
   const [adding, setAdding] = useState(false);
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
-
-  const [userProfile, setUserProfile] = useState({ name: "Loading...", photo: "" });
+    const [Loading,setLoading]=useState(false);
+  const [userProfile, setUserProfile] = useState({ name: null, photo: "", id: null });
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState("newest");
 
@@ -35,12 +36,16 @@ const Home = () => {
   const fetchUserProfile = async () => {
     try {
       const res = await api.get("/auth/me");
+      console.log("User Profile Response:", res.data);
       if (res.data && res.data.user) {
         setUserProfile({
+          id: res.data.user.id,
           name: res.data.user.name,
           photo: res.data.user.picture || "https://i.pravatar.cc/150?u=a042581f4e29026704d",
         });
+        
       }
+      
     } catch (err) {
       console.error("Failed to fetch user profile:", err);
       setUserProfile({ name: "Guest User", photo: "https://i.pravatar.cc/150?u=a042581f4e29026704d" });
@@ -74,23 +79,51 @@ const Home = () => {
     setUploading(true);
 
     try {
-      const res = await api.post("/api/uploaddoc", {
+      // First request: Create a legal desk
+      const res1 = await api.post("/api/uploaddoc", {
         title,
       });
 
-      if (res.data && res.data.chat) {
-        setChats([...chats, res.data.chat]);
+      if (res1.data && res1.data.chat) {
+        setChats([...chats, res1.data.chat]);
         setTitle("");
         setFile(null);
         setAdding(false);
-        const id = res.data.chat._id;
-        navigate(`/legaldesk/${id}`);
+
+        const id = res1.data.chat._id;
+
+       
+       
+
+        // Second request: Send file and additional data
+        const formData = new FormData();
+        console.log("User Profile in handleAddlegaldesk:", userProfile._id);
+        console.log("thread_id:", id);
+        console.log("title:", title);
+        formData.append("user_id", userProfile.id || ""); // Add user_id
+        formData.append("thread_id", id); // Use the created legal desk ID as thread_id
+        formData.append("title", title); // Add title
+        formData.append("file", file); // Add file
+        setLoading(true);
+        const res2 = await papi.post("/api/ingest", formData, {
+          headers: {
+            "Content-Type": "multipart/form-data", // Set content type for file upload
+          },
+        });
+
+        if (res2.data && res2.data.success) {
+          setLoading(false);
+           // Navigate to the created legal desk
+          navigate(`/legaldesk/${id}`);
+        } else {
+          alert("Failed to upload file. Try again.");
+        }
       } else {
         alert("Failed to create legaldesk. Try again.");
       }
     } catch (err) {
       console.error(err);
-      alert("Error creating legaldesk. Please try again.");
+      alert("Error creating legaldesk or uploading file. Please try again.");
     } finally {
       setUploading(false);
     }
@@ -105,12 +138,22 @@ const Home = () => {
     }
   };
 
-  const handleDragOver = (e) => e.preventDefault();
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) setFile(files[0]);
-  };
+  const handleDragOver = (e) => {
+  e.preventDefault(); // Prevent default browser behavior
+  e.stopPropagation(); // Stop event propagation
+  console.log("Drag over event detected");
+};
+
+const handleDrop = (e) => {
+  e.preventDefault(); // Prevent default browser behavior
+  e.stopPropagation(); // Stop event propagation
+
+  const files = Array.from(e.dataTransfer.files); // Get the dropped files
+  if (files.length > 0) {
+    console.log("Dropped file:", files[0]);
+    setFile(files[0]); // Set the first file in the state
+  }
+};
 
   const filteredAndSortedChats = chats
     .filter((chat) => chat.title.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -137,6 +180,48 @@ const Home = () => {
   return (
     <div className="relative min-h-screen bg-gray-950 text-gray-100 p-6 font-sans">
       <ModernBackground />
+
+      {/* Scanning Animation */}
+      {Loading && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="relative w-64 h-64 bg-gray-800 rounded-lg overflow-hidden shadow-lg">
+            {/* Scanning Bar */}
+            <motion.div
+              className="absolute inset-x-0 top-0 h-2 bg-blue-500"
+              animate={{ y: [0, "100%"], opacity: [1, 0.5, 1] }}
+              transition={{ repeat: Infinity, duration: 2 }}
+            ></motion.div>
+
+            {/* Document Placeholder */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <svg
+                className="w-24 h-24 text-gray-400"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+            </div>
+
+            {/* Scanning Text */}
+            <p className="absolute bottom-4 w-full text-center text-gray-300 font-medium">
+              Scanning document...
+            </p>
+          </div>
+        </motion.div>
+      )}
 
       {/* Header and Profile */}
       <motion.div
