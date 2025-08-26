@@ -69,7 +69,7 @@ def ocr_pdf_with_google_vision_local_pages(pdf_path: str, max_pages: int = 5) ->
         return ""
 
 
-def extract_text_with_diagnostics(filepath: str, pdf_ocr_pages: int = 5) -> Dict[str, Any]:
+def extract_text_with_diagnostics(file: str, pdf_ocr_pages: int = 5) -> Dict[str, Any]:
     """
     Attempts multi-strategy extraction and returns diagnostics.
 
@@ -80,27 +80,27 @@ def extract_text_with_diagnostics(filepath: str, pdf_ocr_pages: int = 5) -> Dict
         "diagnostics": { step_name: {"ok": bool, "len": int, "note"?: str} }
       }
     """
-    p = Path(filepath)
+    p = Path(file)
     suf = p.suffix.lower()
     diag: Dict[str, Any] = {}
 
     # 1) PDF: text layer → Vision GCS async → local rasterize fallback
     if suf == ".pdf":
-        t = _extract_text_from_pdf(filepath)
+        t = _extract_text_from_pdf(file)
         diag["pdf_pytext"] = {"ok": bool(t and t.strip()), "len": len(t) if t else 0}
         if t and t.strip():
             return {"text": t, "source": "pdf_pytext", "diagnostics": diag}
 
         if os.getenv("VISION_GCS_BUCKET"):
             diag["pdf_vision_mode"] = {"mode": "gcs_async", "bucket": os.getenv("VISION_GCS_BUCKET")}
-            t2 = ocr_pdf_with_google_vision_async_gcs(filepath, max_pages=pdf_ocr_pages)
+            t2 = ocr_pdf_with_google_vision_async_gcs(file, max_pages=pdf_ocr_pages)
             diag["pdf_vision"] = {"ok": bool(t2 and t2.strip()), "len": len(t2) if t2 else 0}
             if t2 and t2.strip():
                 return {"text": t2, "source": "pdf_vision_gcs_async", "diagnostics": diag}
         else:
             diag["pdf_vision_mode"] = {"mode": "local_pages_fallback", "note": "VISION_GCS_BUCKET not set"}
 
-        t3 = ocr_pdf_with_google_vision_local_pages(filepath, max_pages=pdf_ocr_pages)
+        t3 = ocr_pdf_with_google_vision_local_pages(file, max_pages=pdf_ocr_pages)
         diag["pdf_vision_local_pages"] = {"ok": bool(t3 and t3.strip()), "len": len(t3) if t3 else 0}
         if t3 and t3.strip():
             return {"text": t3, "source": "pdf_vision_local_pages", "diagnostics": diag}
@@ -124,7 +124,7 @@ def extract_text_with_diagnostics(filepath: str, pdf_ocr_pages: int = 5) -> Dict
             diag["docx"] = {"ok": False, "len": 0, "note": "python-docx not installed"}
             return {"text": "", "source": None, "diagnostics": diag}
         try:
-            d = docx.Document(filepath)
+            d = docx.Document(file)
             paragraphs = [pp.text for pp in d.paragraphs]
             t = "\n".join(paragraphs)
             diag["docx"] = {"ok": bool(t and t.strip()), "len": len(t) if t else 0}

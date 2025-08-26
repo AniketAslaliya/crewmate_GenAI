@@ -61,12 +61,12 @@ def detect_hard_words(text: str, top_n: int = 40) -> List[str]:
     return terms
 
 
-def quick_analyze(filepath: str, user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+def quick_analyze(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
     """
     Fast summary + basic keywords, without touching FAISS.
     """
     try:
-        extraction = extract_text_with_diagnostics(filepath)
+        extraction = extract_text_with_diagnostics(file)
         text = (extraction.get("text") or "")
         if not text.strip():
             return {"success": False, "message": "No text extracted for analysis.", "diagnostics": extraction.get("diagnostics", {})}
@@ -109,13 +109,12 @@ def quick_analyze_thread(user_id: Optional[str], thread_id: str) -> Dict[str, An
 
         if not query_result:
             return {"success": False, "message": "No ingested file for this thread."}
-
+        prompt = {"(B) three short factual bullets labelled FACTS that are explicitly supported by the excerpts, and "
+            "(C) a single-line confidence indicator (High/Medium/Low)."}
         # Extract filepath from metadata
-        filepath = query_result[0].get("metadata", {}).get("filepath")
-        if not filepath:
-            return {"success": False, "message": "No filepath found in metadata."}
+        
 
-        return quick_analyze(filepath, user_id, thread_id)
+        return quick_analyze( user_id, thread_id)
     except Exception as e:
         return {"success": False, "message": f"quick_analyze_thread error: {e}"}
 
@@ -146,23 +145,15 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
 
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         system_prompt = (
-            "You are an expert study-guide writer who specializes in legal and technical documents. "
-            "Using ONLY the provided document excerpts below (do NOT use external knowledge), produce a detailed Study Guide in MARKDOWN.\n\n"
-            "Style & structure (flexible):\n"
-            "- Create a clear, readable title using the uploaded filename if available (otherwise use 'Uploaded Document — Study Guide').\n"
-            "- Organize the guide with sensible headings and subheadings (use Markdown), but do not force a rigid template. For each heading you create, include 1–4 short paragraphs (2–4 sentences each) that explain the topic plainly and concisely for a non-expert reader.\n"
-            "- After the main explanation sections, include the following useful outputs if supported by the excerpts: Key Concepts, Quiz (with questions), Answer Key, Timeline (if the document contains dates), Glossary of key terms, and Suggested Study Tips. Only include the sections that are relevant to the provided excerpts; omit irrelevant sections.\n\n"
-            "Content rules (must follow):\n"
-            "- Use ONLY content present in the provided excerpts. If a requested fact, limit, date, or clause is not present in the excerpts, write exactly: 'Not stated in document.' Do NOT invent or assume missing facts, numbers, or legal conclusions.\n"
-            "- If you make an inference that synthesizes multiple excerpts, PREPEND the inference with the single word 'INFERENCE:' then succinctly explain the premises and cite the short snippets used (see quoting rule below).\n"
-            "- When including any quoted excerpt, include only a short snippet (<=250 characters) and append a parenthetical source tag like '(excerpt)'. Do not paste long verbatim sections from the document.\n"
-            "- Keep language plain, concise, and aimed at a non-expert. Use bullet lists for enumerations and short numbered lists for steps or procedures.\n\n"
-            "Formatting & deliverable:\n"
-            "- Produce the entire Study Guide in Markdown. Use H1 for title, H2/H3 for main sections and subsections, bullets and code blocks only where appropriate.\n"
-            "- Be thorough and long-form (comparable to a helpful revision guide) but avoid repetition.\n"
-            "- At the top, include a single-line 'Source summary:' listing which short snippets you used as the basis for the guide (each as a short quoted snippet <=250 chars followed by '(excerpt)').\n\n"
-            "Now: using ONLY the excerpts provided below, generate the Study Guide according to these instructions. Begin with the H1 title and 'Source summary:' and then the rest of the guide."
-        )
+    "You are a concise legal document analyst.\n"
+    "Using only the provided document excerpts, extract key factual points.\n"
+    "Rules:\n"
+    "- Generate approximately 1 FACT for every 100 words of text.\n"
+    "- Each FACT should be 1–2 sentences: clear, specific, and not vague.\n"
+    "- Do not include opinions, interpretations, or assumptions—only what is explicitly supported by the excerpts.\n"
+    "- Keep the wording concise but complete, neither too short nor too long.\n"
+)
+
         user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
 
         guide_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
