@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
-
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
+
 // A modern background component with a gradient and subtle noise texture
 const ModernBackground = () => (
   <div className="absolute inset-0 -z-10 bg-gray-900" style={{
@@ -16,6 +16,77 @@ const ModernBackground = () => (
   </div>
 );
 
+// --- NEW: Next-Level Ingestion Loader Component ---
+
+const StatusIcon = ({ status }) => {
+  if (status === 'completed') {
+    return <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">✅</motion.div>;
+  }
+  if (status === 'in-progress') {
+    return <div className="w-5 h-5 flex items-center justify-center">
+      <svg className="animate-spin h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+    </div>;
+  }
+  return <div className="w-5 h-5 bg-gray-600 rounded-full" />;
+};
+
+const IngestionLoader = ({ steps }) => {
+  const completedSteps = steps.filter(step => step.status === 'completed').length;
+  const progress = (completedSteps / steps.length) * 100;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-md"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div 
+        className="bg-gray-800/80 border border-white/10 rounded-2xl shadow-2xl p-8 w-full max-w-md"
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: 0.1, type: "spring", stiffness: 100 }}
+      >
+        <h2 className="text-2xl font-bold text-center text-gray-100 mb-2">Securing Your Legal Desk</h2>
+        <p className="text-center text-gray-400 mb-6 text-sm">
+          Your data is encrypted end-to-end. Not even we can see your content.
+        </p>
+
+        <div className="space-y-4 mb-6">
+          {steps.map((step, index) => (
+            <motion.div
+              key={step.id}
+              className="flex items-center space-x-4"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.1 }}
+            >
+              <StatusIcon status={step.status} />
+              <span className={`text-lg ${step.status === 'in-progress' ? 'text-blue-300' : step.status === 'completed' ? 'text-gray-300' : 'text-gray-500'}`}>
+                {step.text}
+              </span>
+            </motion.div>
+          ))}
+        </div>
+        
+        <div className="w-full bg-gray-700 rounded-full h-2.5">
+          <motion.div
+            className="bg-gradient-to-r from-blue-500 to-green-400 h-2.5 rounded-full"
+            initial={{ width: '0%' }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.5, ease: "easeInOut" }}
+          ></motion.div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+// --- Main Home Component ---
+
 const Home = () => {
   const [chats, setChats] = useState([]);
   const [title, setTitle] = useState("");
@@ -23,10 +94,13 @@ const Home = () => {
   const [adding, setAdding] = useState(false);
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
-    const [Loading,setLoading]=useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Renamed for clarity
   const [userProfile, setUserProfile] = useState({ name: null, photo: "", id: null });
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState("newest");
+  
+  // NEW: State to manage the ingestion loader steps
+  const [ingestionStatus, setIngestionStatus] = useState([]);
 
   useEffect(() => {
     fetchChats();
@@ -36,19 +110,16 @@ const Home = () => {
   const fetchUserProfile = async () => {
     try {
       const res = await api.get("/auth/me");
-      console.log("User Profile Response:", res.data);
       if (res.data && res.data.user) {
         setUserProfile({
           id: res.data.user.id,
           name: res.data.user.name,
-          photo: res.data.user.picture || "https://i.pravatar.cc/150?u=a042581f4e29026704d",
+          photo: res.data.user.picture || `https://avatar.vercel.sh/${res.data.user.id}.png`,
         });
-        
       }
-      
     } catch (err) {
       console.error("Failed to fetch user profile:", err);
-      setUserProfile({ name: "Guest User", photo: "https://i.pravatar.cc/150?u=a042581f4e29026704d" });
+      setUserProfile({ name: "Guest User", photo: "https://avatar.vercel.sh/guest.png" });
     }
   };
 
@@ -65,69 +136,82 @@ const Home = () => {
     navigate(`/legaldesk/${id}`);
   };
 
+  // --- UPDATED: handleAddlegaldesk Function ---
   const handleAddlegaldesk = async () => {
-    if (!file) {
-      alert("Please select a file before creating a legaldesk.");
-      return;
-    }
-
-    if (!title.trim()) {
-      alert("Please enter a title.");
+    if (!file || !title.trim()) {
+      alert("Please provide both a title and a file.");
       return;
     }
 
     setUploading(true);
 
     try {
-      // First request: Create a legal desk
-      const res1 = await api.post("/api/uploaddoc", {
-        title,
+      // First, create the legal desk entry to get an ID
+      const res1 = await api.post("/api/uploaddoc", { title });
+      if (!res1.data?.chat) throw new Error("Failed to create legal desk entry.");
+
+      const newChat = res1.data.chat;
+      setChats(prev => [newChat, ...prev]);
+      setAdding(false);
+
+      // Show the new loader
+      setIsLoading(true);
+
+      const steps = [
+        { id: 1, text: "Uploading secure document...", status: 'pending' },
+        { id: 2, text: "Parsing and splitting into chunks...", status: 'pending' },
+        { id: 3, text: "Generating secure embeddings...", status: 'pending' },
+        { id: 4, text: "Applying end-to-end encryption...", status: 'pending' },
+        { id: 5, text: "Indexing encrypted data...", status: 'pending' },
+        { id: 6, text: "Finalizing Legal Desk...", status: 'pending' }
+      ];
+      setIngestionStatus(steps);
+      
+      // Simulate the step-by-step progress for a better UX
+      const updateProgress = async () => {
+        for (let i = 0; i < steps.length; i++) {
+          await new Promise(resolve => setTimeout(resolve, 800)); // Delay between steps
+          setIngestionStatus(prev => prev.map((step, index) => ({
+            ...step,
+            status: index < i ? 'completed' : index === i ? 'in-progress' : 'pending'
+          })));
+        }
+      };
+
+      // Prepare the actual file ingestion API call
+      const formData = new FormData();
+      formData.append("user_id", userProfile.id || "");
+      formData.append("thread_id", newChat._id);
+      formData.append("title", title);
+      formData.append("file", file);
+
+      const ingestPromise = papi.post("/api/ingest", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
-      if (res1.data && res1.data.chat) {
-        setChats([...chats, res1.data.chat]);
-        setTitle("");
-        setFile(null);
-        setAdding(false);
+      // Run simulation and API call concurrently
+      await Promise.all([ingestPromise, updateProgress()]);
+      
+      // Mark all steps as complete
+      setIngestionStatus(prev => prev.map(step => ({ ...step, status: 'completed' })));
 
-        const id = res1.data.chat._id;
+      // Final short delay to let the user see the "completed" state
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-       
-       
+      navigate(`/legaldesk/${newChat._id}`);
 
-        // Second request: Send file and additional data
-        const formData = new FormData();
-        console.log("User Profile in handleAddlegaldesk:", userProfile._id);
-        console.log("thread_id:", id);
-        console.log("title:", title);
-        formData.append("user_id", userProfile.id || ""); // Add user_id
-        formData.append("thread_id", id); // Use the created legal desk ID as thread_id
-        formData.append("title", title); // Add title
-        formData.append("file", file); // Add file
-        setLoading(true);
-        const res2 = await papi.post("/api/ingest", formData, {
-          headers: {
-            "Content-Type": "multipart/form-data", // Set content type for file upload
-          },
-        });
-
-        if (res2.data && res2.data.success) {
-          setLoading(false);
-           // Navigate to the created legal desk
-          navigate(`/legaldesk/${id}`);
-        } else {
-          alert("Failed to upload file. Try again.");
-        }
-      } else {
-        alert("Failed to create legaldesk. Try again.");
-      }
     } catch (err) {
       console.error(err);
-      alert("Error creating legaldesk or uploading file. Please try again.");
+      alert("Error creating legal desk. Please try again.");
+      setChats(prev => prev.filter(c => c.title !== title)); // Rollback optimistic update on error
     } finally {
       setUploading(false);
+      setIsLoading(false);
+      setTitle("");
+      setFile(null);
     }
   };
+
 
   const handleDelete = async (id) => {
     try {
@@ -139,89 +223,42 @@ const Home = () => {
   };
 
   const handleDragOver = (e) => {
-  e.preventDefault(); // Prevent default browser behavior
-  e.stopPropagation(); // Stop event propagation
-  console.log("Drag over event detected");
-};
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
-const handleDrop = (e) => {
-  e.preventDefault(); // Prevent default browser behavior
-  e.stopPropagation(); // Stop event propagation
-
-  const files = Array.from(e.dataTransfer.files); // Get the dropped files
-  if (files.length > 0) {
-    console.log("Dropped file:", files[0]);
-    setFile(files[0]); // Set the first file in the state
-  }
-};
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) setFile(files[0]);
+  };
 
   const filteredAndSortedChats = chats
     .filter((chat) => chat.title.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
-      if (sortOption === "oldest") {
-        return new Date(a.createdAt) - new Date(b.createdAt);
-      }
-      if (sortOption === "newest") {
-        return new Date(b.createdAt) - new Date(a.createdAt);
-      }
-      if (sortOption === "title-asc") {
-        return a.title.localeCompare(b.title);
-      }
-      if (sortOption === "title-desc") {
-        return b.title.localeCompare(a.title);
-      }
+      if (sortOption === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
+      if (sortOption === "newest") return new Date(b.createdAt) - new Date(a.createdAt);
+      if (sortOption === "title-asc") return a.title.localeCompare(b.title);
+      if (sortOption === "title-desc") return b.title.localeCompare(a.title);
       return 0;
     });
 
   const handleLogout = () => {
+    // Implement your actual logout logic here (e.g., clearing tokens)
     console.log("User logged out.");
+    // navigate('/login');
   };
 
   return (
     <div className="relative min-h-screen bg-gray-950 text-gray-100 p-6 font-sans">
       <ModernBackground />
 
-      {/* Scanning Animation */}
-      {Loading && (
-        <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <div className="relative w-64 h-64 bg-gray-800 rounded-lg overflow-hidden shadow-lg">
-            {/* Scanning Bar */}
-            <motion.div
-              className="absolute inset-x-0 top-0 h-2 bg-blue-500"
-              animate={{ y: [0, "100%"], opacity: [1, 0.5, 1] }}
-              transition={{ repeat: Infinity, duration: 2 }}
-            ></motion.div>
+      {/* --- RENDER THE NEW LOADER --- */}
+      <AnimatePresence>
+        {isLoading && <IngestionLoader steps={ingestionStatus} />}
+      </AnimatePresence>
 
-            {/* Document Placeholder */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <svg
-                className="w-24 h-24 text-gray-400"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-            </div>
-
-            {/* Scanning Text */}
-            <p className="absolute bottom-4 w-full text-center text-gray-300 font-medium">
-              Scanning document...
-            </p>
-          </div>
-        </motion.div>
-      )}
 
       {/* Header and Profile */}
       <motion.div
@@ -325,6 +362,7 @@ const handleDrop = (e) => {
               key={chat._id}
               className="relative group bg-gray-800/50 rounded-3xl overflow-hidden shadow-2xl hover:shadow-lg transition-all duration-300 border border-white/10"
               whileHover={{ y: -6, scale: 1.02 }}
+              layout
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}

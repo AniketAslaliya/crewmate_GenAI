@@ -4,12 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 
+// --- UI Components ---
+
 const DarkBackground = () => (
   <div className="absolute inset-0 -z-10 bg-black">
-    {/* Subtle animated gradient */}
     <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 animate-pulse-slow" />
-
-    {/* Grid overlay */}
     <div
       className="absolute inset-0 opacity-[0.07]"
       style={{
@@ -21,6 +20,36 @@ const DarkBackground = () => (
   </div>
 );
 
+// New component for the AI "typing" animation
+const TypingIndicator = () => (
+  <motion.div
+    initial={{ opacity: 0, y: 10 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, y: 10 }}
+    className="flex justify-start"
+  >
+    <div className="max-w-md px-6 py-4 rounded-2xl shadow-md bg-gray-800/70 text-gray-200 border border-gray-700 flex items-center space-x-2">
+      <motion.span
+        className="w-2 h-2 bg-cyan-400 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.span
+        className="w-2 h-2 bg-cyan-400 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.8, delay: 0.2, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.span
+        className="w-2 h-2 bg-cyan-400 rounded-full"
+        animate={{ y: [0, -4, 0] }}
+        transition={{ duration: 0.8, delay: 0.4, repeat: Infinity, ease: "easeInOut" }}
+      />
+    </div>
+  </motion.div>
+);
+
+// --- Main Notebook Page Component ---
+
 const NotebookPage = () => {
   const { id } = useParams();
   const [activeFeature, setActiveFeature] = useState(null);
@@ -28,187 +57,100 @@ const NotebookPage = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loadingFeature, setLoadingFeature] = useState(false);
-  const [storedData, setStoredData] = useState({}); // Store feature data by chatId
+  const [isAiThinking, setIsAiThinking] = useState(false); // New state for AI loading
+  const [storedData, setStoredData] = useState({});
   const [featureData, setFeatureData] = useState({
     summary: { title: "Document Summary", icon: "📄", content: null },
     questions: { title: "Suggested Questions", icon: "🤔", content: null },
     timeline: { title: "Timeline", icon: "⏳", content: null },
   });
+  const [followUpQuestions, setFollowUpQuestions] = useState([]);
 
-  const scrollRef = useRef();
+  const chatEndRef = useRef(null); // Ref for auto-scrolling
+
+  // --- Effects ---
 
   useEffect(() => {
-    const fetchNotebook = async () => {
+    const fetchNotebookAndMessages = async () => {
       try {
-        const res = await api.get(`/api/getchat/${id}`);
-        setNotebook(res.data.chat);
+        const [notebookRes, messagesRes] = await Promise.all([
+          api.get(`/api/getchat/${id}`),
+          api.get(`/api/messages/${id}`),
+        ]);
+        setNotebook(notebookRes.data.chat);
+        setMessages(messagesRes.data.messages);
       } catch (err) {
-        console.error(err);
+        console.error("Failed to fetch initial data:", err);
       }
     };
 
-    const fetchMessages = async () => {
-      try {
-        const res = await api.get(`/api/messages/${id}`);
-        setMessages(res.data.messages);
-      } catch (err) {
-        console.error(err);
-      }
-    };
-
-    fetchNotebook();
-    fetchMessages();
-
-    // Clear stored data when chatId changes
-    return () => {
-      setStoredData((prev) => {
-        const newData = { ...prev };
-        delete newData[id];
-        return newData;
-      });
-    };
+    fetchNotebookAndMessages();
   }, [id]);
 
+  // Effect for auto-scrolling to the bottom of the chat
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isAiThinking]);
+
+  // --- Data Fetching Functions ---
 
   const fetchFeatureData = async (featureKey) => {
     if (!notebook) return;
     setLoadingFeature(true);
 
     try {
-      // Check if data for the current chatId is already stored
       if (storedData[id]?.[featureKey]) {
         setFeatureData((prev) => ({
           ...prev,
-          [featureKey]: {
-            ...prev[featureKey],
-            content: storedData[id][featureKey], // Use stored data
-          },
+          [featureKey]: { ...prev[featureKey], content: storedData[id][featureKey] },
         }));
         setLoadingFeature(false);
         return;
       }
 
       const payload = { user_id: notebook?.user, thread_id: id };
+      let content;
 
       if (featureKey === "summary") {
         const res = await papi.post(`/api/study-guide`, payload);
         const studyGuide = res.data.study_guide;
         const formattedContent = studyGuide.split("\n").map((line, index) => {
-          if (line.startsWith("# "))
-            return (
-              <h1 key={index} className="text-2xl font-bold text-cyan-400 mt-6">
-                {line.replace("#", "").trim()}
-              </h1>
-            );
-          else if (line.startsWith("##"))
-            return (
-              <h2 key={index} className="text-lg font-semibold text-indigo-300 mt-4">
-                {line.replace("##", "").trim()}
-              </h2>
-            );
-          else if (line.startsWith("*"))
-            return (
-              <li key={index} className="text-sm text-gray-300 ml-6 list-disc">
-                {line.replace("*", "").trim()}
-              </li>
-            );
-          else if (line.trim() === "---")
-            return <hr key={index} className="my-4 border-gray-700" />;
-          else if (line.trim() !== "")
-            return (
-              <p key={index} className="text-sm text-gray-400 leading-relaxed">
-                {line.trim()}
-              </p>
-            );
+          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold text-cyan-400 mt-6">{line.substring(2)}</h1>;
+          if (line.startsWith("##")) return <h2 key={index} className="text-lg font-semibold text-indigo-300 mt-4">{line.substring(3)}</h2>;
+          if (line.startsWith("*")) return <li key={index} className="text-sm text-gray-300 ml-6 list-disc">{line.substring(2)}</li>;
+          if (line.trim() === "---") return <hr key={index} className="my-4 border-gray-700" />;
+          if (line.trim()) return <p key={index} className="text-sm text-gray-400 leading-relaxed">{line}</p>;
           return null;
         });
-
-        // Store the data for the current chatId
-        setStoredData((prev) => ({
-          ...prev,
-          [id]: {
-            ...prev[id],
-            summary: <div className="space-y-2">{formattedContent}</div>,
-          },
-        }));
-
-        setFeatureData((prev) => ({
-          ...prev,
-          summary: {
-            ...prev.summary,
-            content: <div className="space-y-2">{formattedContent}</div>,
-          },
-        }));
+        content = <div className="space-y-2">{formattedContent}</div>;
       } else if (featureKey === "questions") {
         const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 });
         const faqMarkdown = res.data.faq_markdown;
-
         const formattedFAQ = faqMarkdown.split("\n\n").map((block, index) => {
-          if (block.startsWith("### Q:")) {
-            const question = block.split("\n")[0].replace("### Q:", "").trim();
-            let answer = block.split("\n")[1].replace("A:", "").trim();
-
-            // Remove "(excerpt)" from the answer
-            answer = answer.replace(/\(excerpt\)/g, "").trim();
-
-            return (
-              <motion.div
-                key={index}
-                whileHover={{ scale: 1.02 }}
-                className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-xl text-gray-200 shadow-lg mb-4 cursor-pointer"
-                onClick={(e) => {
-                  const ans = e.currentTarget.querySelector(".faq-answer");
-                  if (ans) ans.classList.toggle("hidden");
-                }}
-              >
-                <h3 className="text-lg font-bold text-cyan-300 mb-2">Q: {question}</h3>
-                <p className="faq-answer text-sm text-gray-400 mt-2 hidden">A: {answer}</p>
-              </motion.div>
-            );
-          }
-          return null;
+          if (!block.startsWith("### Q:")) return null;
+          const [questionLine, answerLine] = block.split("\n");
+          const question = questionLine.replace("### Q:", "").trim();
+          const answer = answerLine.replace("A:", "").replace(/\(excerpt\)/g, "").trim();
+          return (
+            <motion.div
+              key={index}
+              whileHover={{ scale: 1.02 }}
+              className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-xl shadow-lg mb-4 cursor-pointer"
+              onClick={(e) => e.currentTarget.querySelector(".faq-answer")?.classList.toggle("hidden")}
+            >
+              <h3 className="text-lg font-bold text-cyan-300 mb-2">Q: {question}</h3>
+              <p className="faq-answer text-sm text-gray-400 mt-2 hidden">A: {answer}</p>
+            </motion.div>
+          );
         });
-
-        // Store the data for the current chatId
-        setStoredData((prev) => ({
-          ...prev,
-          [id]: {
-            ...prev[id],
-            questions: <div className="space-y-4">{formattedFAQ}</div>,
-          },
-        }));
-
-        setFeatureData((prev) => ({
-          ...prev,
-          questions: {
-            ...prev.questions,
-            content: <div className="space-y-4">{formattedFAQ}</div>,
-          },
-        }));
+        content = <div className="space-y-4">{formattedFAQ}</div>;
       } else if (featureKey === "timeline") {
         const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 });
-        const timelineContent = res.data.timeline_markdown || "No timeline available";
-
-        // Store the data for the current chatId
-        setStoredData((prev) => ({
-          ...prev,
-          [id]: {
-            ...prev[id],
-            timeline: timelineContent,
-          },
-        }));
-
-        setFeatureData((prev) => ({
-          ...prev,
-          timeline: {
-            ...prev.timeline,
-            content: timelineContent,
-          },
-        }));
+        content = res.data.timeline_markdown || "No timeline available";
       }
+
+      setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [featureKey]: content } }));
+      setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
     } catch (err) {
       console.error(err);
     } finally {
@@ -216,45 +158,77 @@ const NotebookPage = () => {
     }
   };
 
+  // --- Event Handlers ---
+
   const handleFeatureClick = (featureKey) => {
     setActiveFeature(featureKey);
     fetchFeatureData(featureKey);
   };
 
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
+  const handleSendMessage = async (e, question = null) => {
+    e?.preventDefault();
+    const messageToSend = question || newMessage.trim();
+    if (!messageToSend || isAiThinking) return;
+
+    // **IMPROVEMENT 1: Optimistic UI Update**
+    // The user's message is added to the state immediately.
+    const userMessage = {
+      _id: `optimistic-${Date.now()}`,
+      role: "user",
+      content: messageToSend,
+    };
+    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    setNewMessage("");
+    setFollowUpQuestions([]);
+    setIsAiThinking(true); // **IMPROVEMENT 2: Set loading state**
 
     try {
-      const res1 = await api.post("/api/messages", {
-        chatId: id,
-        content: newMessage,
-        role: "user",
-      });
-      setMessages([...messages, res1.data.message]);
-      setNewMessage("");
+      // Run user message saving in the background
+      api.post("/api/messages", { chatId: id, content: messageToSend, role: "user" });
 
-      const payload = { user_id: notebook.user, thread_id: id, query: newMessage, top_k: 4 };
+      // Call the ask API
+      const payload = { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4 };
       const res2 = await papi.post("/api/ask", payload);
 
-      let plainAnswer = res2.data.answer;
-      if (plainAnswer.includes("PLAIN ANSWER:")) {
-        plainAnswer = plainAnswer.split("PLAIN ANSWER:")[1].split("ASSESSMENT:")[0].trim();
+      // Parse response
+      let apiAnswer = res2.data.answer;
+      if (typeof apiAnswer === "string") {
+        apiAnswer = apiAnswer.replace(/^```json\n?/, "").replace(/```$/, "");
+        try {
+          apiAnswer = JSON.parse(apiAnswer);
+        } catch (parseError) {
+          throw new Error("API answer is not valid JSON.");
+        }
       }
 
-      const res3 = await api.post("/api/messages", {
-        chatId: id,
-        content: plainAnswer,
-        role: "response",
-      });
+      if (!apiAnswer?.response) throw new Error("API response is missing the 'response' field.");
+      
+      const apiResponse = apiAnswer.response;
+      const aiContent = apiResponse["PLAIN ANSWER"];
 
-      setMessages([...messages, res1.data.message, res3.data.message]);
+      // Save the AI's response and get the final message object
+      const res3 = await api.post("/api/messages", { chatId: id, content: aiContent, role: "response" });
+
+      // Add the final AI message from the server to the chat
+      setMessages((prev) => [...prev, res3.data.message]);
+      setFollowUpQuestions(apiResponse.followupquestion || []);
     } catch (err) {
       console.error("Error sending message:", err);
+      // Add a user-friendly error message to the chat
+      const errorMessage = {
+        _id: `error-${Date.now()}`,
+        role: 'response',
+        content: 'Sorry, I encountered an error. Please try again.'
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsAiThinking(false); // **IMPROVEMENT 2: Unset loading state**
     }
   };
 
-  if (!notebook)
+  // --- Render Logic ---
+
+  if (!notebook) {
     return (
       <div className="flex items-center justify-center h-screen bg-black text-gray-400">
         <motion.div
@@ -265,6 +239,7 @@ const NotebookPage = () => {
         <span className="ml-4 text-cyan-300">Loading notebook...</span>
       </div>
     );
+  }
 
   return (
     <div className="relative flex h-screen text-gray-100 font-sans overflow-hidden p-4">
@@ -282,9 +257,8 @@ const NotebookPage = () => {
           <span className="bg-gradient-to-r from-cyan-400 to-blue-600 bg-clip-text text-transparent">AI</span>
         </h1>
         <p className="mt-1 text-sm text-gray-400">Your AI-powered legal assistant</p>
-
         <div className="flex flex-col gap-4">
-          {Object.keys(featureData).map((key) => (
+          {Object.entries(featureData).map(([key, { icon, title }]) => (
             <motion.div
               key={key}
               whileHover={{ scale: 1.05, boxShadow: "0 0 20px rgba(56,189,248,0.3)" }}
@@ -296,9 +270,7 @@ const NotebookPage = () => {
               }`}
               onClick={() => handleFeatureClick(key)}
             >
-              <h3 className="flex items-center gap-3 font-bold text-lg">
-                {featureData[key].icon} {featureData[key].title}
-              </h3>
+              <h3 className="flex items-center gap-3 font-bold text-lg">{icon} {title}</h3>
             </motion.div>
           ))}
         </div>
@@ -311,13 +283,12 @@ const NotebookPage = () => {
         </header>
 
         <div className="flex-1 p-8 overflow-y-auto space-y-4 custom-scrollbar">
-          {messages.map((msg, index) => (
+          {messages.map((msg) => (
             <motion.div
               key={msg._id}
-              ref={index === messages.length - 1 ? scrollRef : null}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.05 }}
+              transition={{ duration: 0.3 }}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
@@ -331,24 +302,44 @@ const NotebookPage = () => {
               </div>
             </motion.div>
           ))}
+
+          {/* **IMPROVEMENT 3: Render Typing Indicator** */}
+          {isAiThinking && <TypingIndicator />}
+
+          {followUpQuestions.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h3 className="text-gray-400 text-sm font-semibold">Follow-up Questions:</h3>
+              {followUpQuestions.map((question, index) => (
+                <motion.button
+                  key={index}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={(e) => handleSendMessage(e, question)}
+                  className="w-full text-left px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg shadow-md hover:opacity-90 transition-all duration-300"
+                >
+                  {question}
+                </motion.button>
+              ))}
+            </div>
+          )}
+          <div ref={chatEndRef} /> {/* Invisible element to scroll to */}
         </div>
 
-        <form
-          onSubmit={handleSendMessage}
-          className="p-6 border-t border-gray-800 flex items-center space-x-4"
-        >
+        <form onSubmit={handleSendMessage} className="p-6 border-t border-gray-800 flex items-center space-x-4">
           <input
             type="text"
-            placeholder="Ask anything or add a note..."
+            placeholder={isAiThinking ? "Generating response..." : "Ask anything or add a note..."}
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300"
+            disabled={isAiThinking} // **IMPROVEMENT 2: Disable input**
+            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <motion.button
             type="submit"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md"
+            whileHover={{ scale: isAiThinking ? 1 : 1.05 }}
+            whileTap={{ scale: isAiThinking ? 1 : 0.95 }}
+            disabled={isAiThinking} // **IMPROVEMENT 2: Disable button**
+            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </motion.button>
@@ -366,14 +357,9 @@ const NotebookPage = () => {
             transition={{ duration: 0.6 }}
           >
             <div className="p-6 border-b border-gray-800">
-              <h2 className="text-xl font-semibold text-cyan-300">
-                {featureData[activeFeature].title}
-              </h2>
-              {activeFeature === "questions" && (
-                <p className="text-sm text-gray-500 italic">Click to reveal answers</p>
-              )}
+              <h2 className="text-xl font-semibold text-cyan-300">{featureData[activeFeature].title}</h2>
+              {activeFeature === "questions" && <p className="text-sm text-gray-500 italic">Click to reveal answers</p>}
             </div>
-
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
               {loadingFeature ? (
                 <div className="flex items-center justify-center h-full">
