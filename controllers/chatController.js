@@ -10,14 +10,14 @@ export const uploadDocument = async (req, res) => {
 
     await chat.save();
 
-    res.status(201).json({ 
-      message: "Document processed & chat stored", 
-      chat 
+    res.status(201).json({
+      message: "Document processed & chat stored",
+      chat,
     });
   } catch (error) {
-    res.status(500).json({ 
-      message: "Failed to process document", 
-      error: error.message 
+    res.status(500).json({
+      message: "Failed to process document",
+      error: error.message,
     });
   }
 };
@@ -45,6 +45,7 @@ export const deleteChat = async (req, res) => {
 export const getUserChats = async (req, res) => {
   try {
     const chats = await Chat.find({ user: req.user.id }).sort({ createdAt: -1 });
+
     res.json({ chats });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch chats" });
@@ -68,4 +69,4 @@ export const getChatbyId = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch chat" });
   }
-}
+};
