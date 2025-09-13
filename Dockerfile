@@ -35,4 +35,5 @@ EXPOSE 10000
 # Use shell form so ${PORT} gets expanded at runtime by the shell.
 # Use ${PORT:-10000} as fallback in case PORT is not provided locally.
 # Keep a single worker to lower memory usage.
-CMD ["sh", "-c", "uvicorn api_server:app --host 0.0.0.0 --port ${PORT} --workers 1 --log-level info"]
+# CORRECT - This separates each part of the command properly
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
