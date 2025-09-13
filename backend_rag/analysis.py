@@ -185,7 +185,7 @@ def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[
         )
         q_user = f"Term: {term}\n\nParagraph:\n{paragraph}\n\nDefinition:"
 
-        definition = call_model_system_then_user(q_prompt_sys, q_user, temperature=0.0)
+        definition = call_model_system_then_user(q_prompt_sys, q_user, temperature=0.2)
         return {"success": True, "term": term, "definition": definition, "snippet": paragraph}
     except Exception as e:
         return {"success": False, "message": f"get_term_context error: {e}"}
