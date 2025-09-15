@@ -10,6 +10,12 @@ from backend_rag.embeddings import embed_texts, get_embedding_dimension
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import tempfile
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, Form
+from fastapi.responses import JSONResponse
+from pydub import AudioSegment
 
 from backend_rag.extract import extract_text_with_diagnostics
 from backend_rag.chunking import chunk_text
@@ -20,6 +26,9 @@ from backend_rag.analysis import (
     generate_timeline,
 )
 from backend_rag.retrieval import retrieve_similar_chunks
+
+# new import: speech helper (added)
+from backend_rag.ocr import speech_to_text_from_local_file
 
 # try to use your LLM helper; fall back to a minimal one if not present
 try:
@@ -183,6 +192,42 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
 
     return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
+# ----------------------------- New: audio ingest helper -----------------------
+def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
+    """
+    Transcribe audio -> chunk -> embed -> upsert to Pinecone.
+    Mirrors _ingest_no_sqlite_save but uses speech_to_text_from_local_file.
+    """
+    try:
+        # Transcribe using the speech helper (handles GCS upload for long files)
+        transcript = speech_to_text_from_local_file(local_path)
+        if not transcript or not transcript.strip():
+            return {"success": False, "message": "No transcript produced from audio file."}
+
+        text = transcript.strip()
+        source = f"audio:{file_name}"
+        diagnostics = {"transcript_length": len(text.split())}
+
+        chunks = chunk_text(text, chunk_size=1000, overlap=200)
+        texts = [c[1] for c in chunks]
+        if not texts:
+            return {"success": False, "message": "No chunks created from audio transcript.", "diagnostics": diagnostics, "source": source}
+
+        vecs = embed_texts(texts)
+        vecs_list = [v.astype("float32").tolist() for v in vecs]
+        ids = [c[0] for c in chunks]
+        metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000], "source": source} for i in range(len(texts))]
+
+        # Pinecone upsert
+        dim = get_embedding_dimension()
+        index = get_or_create_index(dim)
+        ns = namespace(user_id, thread_id)
+        upsert_chunks(index, ns, vecs_list, ids, metadatas)
+
+        return {"success": True, "message": f"Ingested {len(chunks)} audio chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
+    except Exception as e:
+        return {"success": False, "message": f"_ingest_audio_no_sqlite_save error: {e}"}
+
 # ----------------------------- Endpoints --------------------------------------
 @app.get("/api/health")
 def health():
@@ -237,6 +282,36 @@ async def ingest(
         f.write(await file.read())
 
     result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result)
+    return result
+
+# ------------------------- New endpoint: ingest audio -------------------------
+@app.post("/api/ingest-audio")
+async def ingest_audio(
+    user_id: Optional[str] = Form(default=None),
+    thread_id: str = Form(...),
+    file: UploadFile = File(...),
+    replace: bool = Form(False),
+):
+    """
+    Upload an audio file (wav, mp3, flac, m4a, etc). The server will:
+      - Save the file locally
+      - Transcribe using Google Speech (uploads to GCS if long)
+      - Chunk, embed, upsert to Pinecone under (user_id, thread_id)
+    Environment:
+      - GOOGLE_SPEECH_TO_TEXT: path to service account JSON OR the JSON content string OR omitted (ADC)
+      - SPEECH_GCS_BUCKET or VISION_GCS_BUCKET: needed for long audio async transcription upload
+    """
+    if replace:
+        _reset_vector_store(user_id, thread_id)
+
+    save_name = f"{thread_id}_{file.filename}"
+    local_path = UPLOAD_DIR / save_name
+    with local_path.open("wb") as f:
+        f.write(await file.read())
+
+    result = _ingest_audio_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
     return result
@@ -320,6 +395,7 @@ def download_study_guide(req: StudyGuideDownloadReq):
 from fastapi import Query
 from backend_rag.vectorstore_pinecone import get_or_create_index, namespace, query_top_k, namespace_count
 from backend_rag.embeddings import get_embedding_dimension
+from backend_rag.ocr import speech_to_text_from_bytes
 
 # add near the bottom with other endpoints
 
@@ -354,3 +430,48 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
             "preview": preview,
         })
     return {"namespace": ns, "samples": out}
+
+
+@app.post("/api/transcribe-audio")
+async def transcribe_audio(
+    file: UploadFile,
+    user_id: str = Form(""),
+    thread_id: str = Form(""),
+):
+    try:
+        # Save uploaded file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as tmp:
+            tmp.write(await file.read())
+            tmp_path = tmp.name
+
+        # Convert to WAV (mono, 16kHz)
+        audio = AudioSegment.from_file(tmp_path)
+        audio = audio.set_channels(1).set_frame_rate(16000)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
+            audio.export(tmp_wav.name, format="wav")
+            tmp_wav_path = tmp_wav.name
+
+        with open(tmp_wav_path, "rb") as f:
+            data = f.read()
+
+        # Send to Google Speech-to-Text
+        transcript = speech_to_text_from_bytes(
+            data,
+            language_code="en-US",
+            enable_automatic_punctuation=True,
+            encoding_hint="wav",
+        )
+
+        if not transcript or transcript.startswith("(speech error"):
+            return JSONResponse(
+                content={"success": False, "transcript": transcript or ""},
+                status_code=422,
+            )
+
+        return {"success": True, "transcript": transcript}
+
+    except Exception as e:
+        return JSONResponse(
+            content={"success": False, "error": str(e)}, status_code=500
+        )
