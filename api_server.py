@@ -1,4 +1,3 @@
-# api_server.py
 from __future__ import annotations
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
@@ -7,6 +6,7 @@ from pathlib import Path
 import tempfile
 from typing import Optional
 
+# Ensure all backend modules are correctly imported
 from backend_rag.vectorstore_pinecone import get_or_create_index, upsert_chunks, delete_namespace, namespace, query_top_k, namespace_count
 from backend_rag.embeddings import embed_texts, get_embedding_dimension
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
@@ -51,19 +51,18 @@ except Exception:
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
             f"Document excerpts:\n{context}\n"
         )
+
 # ----------------------------- FastAPI app ------------------------------------
 app = FastAPI(title="RAG Backend API", version="1.0.0")
 
-# CORS — open for dev; lock down in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for simplicity
+    allow_origins=["*"],  # Adjust for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Upload dir (temporary)
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -94,7 +93,26 @@ class AskReq(BaseModel):
     query: str
     top_k: int = 4
 
+class FAQDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
+class TimelineDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
+class StudyGuideDownloadReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
+
 # ----------------------------- Utils ------------------------------------------
+def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
+    """Return a download response with Content-Disposition: attachment; filename=..."""
+    buf = io.BytesIO(text.encode("utf-8"))
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(buf, media_type=media_type, headers=headers)
+
 def _reset_vector_store(user_id: Optional[str], thread_id: str):
     """Delete the Pinecone namespace for this (user, thread)."""
     dim = get_embedding_dimension()
@@ -165,6 +183,37 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
 def health():
     return {"ok": True}
 
+@app.post("/api/study-guide")
+def study_guide(req: StudyGuideReq):
+    try:
+        result = generate_study_guide(req.user_id, req.thread_id)
+        return {"success": True, "study_guide": result.get("study_guide")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
+
+@app.post("/api/quick-analyze")
+def api_quick_analyze(req: QuickAnalyzeReq):
+    out = quick_analyze_thread(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    return out
+
+@app.post("/api/faq")
+def faq(req: FAQReq):
+    try:
+        result = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
+        return {"success": True, "faq_markdown": result.get("faq_markdown")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
+
+@app.post("/api/timeline")
+def timeline(req: TimelineReq):
+    try:
+        result = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
+        return {"success": True, "timeline_markdown": result.get("timeline_markdown")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
+
 @app.post("/api/ingest")
 async def ingest(
     user_id: Optional[str] = Form(default=None),
@@ -226,34 +275,24 @@ def api_ask(req: AskReq):
 
     return {"success": True, "answer": answer.strip(), "sources": sources}
 
-# In api_server.py
-
 @app.post("/api/transcribe-audio")
 async def transcribe_audio(
     file: UploadFile,
     user_id: str = Form(""),
     thread_id: str = Form(""),
 ):
-    # This outer try-except is a general catch-all
     try:
         audio_bytes = await file.read()
         
-        # --- NEW Specific Error Handling ---
-        # We wrap the pydub conversion in its own try-except
-        # to see if this is the part that is failing.
         try:
-            # Load audio bytes into pydub. Use io.BytesIO to treat bytes as a file.
-            audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+            AudioSegment.from_file(io.BytesIO(audio_bytes))
         except Exception as e:
-            # If pydub/ffmpeg fails to read the file, return a specific error
             error_message = f"Pydub/FFMPEG failed to decode audio. Error: {e}"
             return JSONResponse(
                 content={"success": False, "transcript": f"(speech error: {error_message})"},
                 status_code=422,
             )
-        # --- END of new block ---
 
-        # If loading was successful, proceed with transcription
         transcript = speech_to_text_from_bytes(
             content=audio_bytes,
             language_code="en-US",
@@ -272,6 +311,40 @@ async def transcribe_audio(
         return JSONResponse(
             content={"success": False, "error": str(e)}, status_code=500
         )
+
+@app.post("/api/download/faq")
+def download_faq(req: FAQDownloadReq):
+    out = generate_faq(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    faq_text = out.get("faq_markdown") or ""
+    if not faq_text.strip():
+        raise HTTPException(status_code=422, detail={"message": "Empty FAQ content."})
+    base = f"thread_{req.thread_id}"
+    return _stream_text_file(faq_text, f"{base}_faq.md", media_type="text/markdown; charset=utf-8")
+
+@app.post("/api/download/timeline")
+def download_timeline(req: TimelineDownloadReq):
+    out = generate_timeline(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    timeline_text = out.get("timeline_markdown") or ""
+    if not timeline_text.strip():
+        raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
+    base = f"thread_{req.thread_id}"
+    return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
+
+@app.post("/api/download/study-guide")
+def download_study_guide(req: StudyGuideDownloadReq):
+    out = generate_study_guide(req.user_id, req.thread_id)
+    if not out.get("success"):
+        raise HTTPException(status_code=422, detail=out)
+    guide_text = out.get("study_guide") or ""
+    if not guide_text.strip():
+        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
+    base = f"thread_{req.thread_id}"
+    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
+
 @app.get("/api/ns/stats")
 def api_ns_stats(user_id: Optional[str] = None, thread_id: str = Query(...)):
     dim = get_embedding_dimension()
@@ -279,3 +352,26 @@ def api_ns_stats(user_id: Optional[str] = None, thread_id: str = Query(...)):
     ns = namespace(user_id, thread_id)
     count = namespace_count(index, ns)
     return {"namespace": ns, "vector_count": count}
+
+@app.get("/api/ns/peek")
+def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: int = 3):
+    dim = get_embedding_dimension()
+    index = get_or_create_index(dim)
+    ns = namespace(user_id, thread_id)
+    zero = [0.0] * dim
+    matches = query_top_k(index, ns, zero, top_k=max(1, min(k, 10)))
+    out = []
+    for m in matches:
+        md = m.get("metadata", {}) if isinstance(m, dict) else {}
+        preview = ""
+        for key in ("text", "chunk_text", "content", "page_content", "snippet", "preview", "chunk", "body"):
+            if isinstance(md.get(key), str) and md[key].strip():
+                preview = md[key][:120]
+                break
+        out.append({
+            "id": m.get("id"),
+            "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0,
+            "keys": list(md.keys())[:20],
+            "preview": preview,
+        })
+    return {"namespace": ns, "samples": out}
