@@ -252,6 +252,7 @@ def speech_to_text_from_local_file(
     try:
         with open(audio_path, "rb") as f:
             content = f.read()
+        # Call the main bytes function WITHOUT the encoding_hint
         return speech_to_text_from_bytes(
             content=content,
             language_code=language_code,
