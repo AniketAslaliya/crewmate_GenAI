@@ -18,3 +18,7 @@ python-docx
 google-cloud-vision
 google-cloud-storage
 langgraph
+
+google-cloud-speech
+pydub
+
