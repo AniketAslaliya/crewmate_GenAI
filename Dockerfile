@@ -38,7 +38,9 @@ COPY . /app
 EXPOSE 10000
 
 # Run FastAPI with uvicorn
-# Use ${PORT:-10000} as fallback so it works locally and on platforms like Render
-CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "${PORT}", "--workers", "1"]
+# Use  as fallback so it works locally and on platforms like Render
+EXPOSE 7860
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
+
 
 
