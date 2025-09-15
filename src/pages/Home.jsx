@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
-
+import useAuthStore from "../context/AuthContext";
 // A modern background component with a gradient and subtle noise texture
 const ModernBackground = () => (
   <div className="absolute inset-0 -z-10 bg-gray-900" style={{
@@ -98,7 +98,7 @@ const Home = () => {
   const [userProfile, setUserProfile] = useState({ name: null, photo: "", id: null });
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOption, setSortOption] = useState("newest");
-  
+   const logout = useAuthStore((state) => state.logout); // Access the logout method from Zustand
   // NEW: State to manage the ingestion loader steps
   const [ingestionStatus, setIngestionStatus] = useState([]);
 
@@ -245,9 +245,11 @@ const Home = () => {
     });
 
   const handleLogout = () => {
-    // Implement your actual logout logic here (e.g., clearing tokens)
-    console.log("User logged out.");
-    // navigate('/login');
+    // Clear the token from local storage
+    logout();
+
+    // Redirect to the login page
+    navigate("/login");
   };
 
   return (

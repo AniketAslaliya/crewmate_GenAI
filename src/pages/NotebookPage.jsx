@@ -4,7 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 
-// --- UI Components ---
+// Check for browser support for Web Speech API
+const SpeechRecognition =
+  window.SpeechRecognition || window.webkitSpeechRecognition;
+// Reference to the browser's speech synthesis API
+const synthesis = window.speechSynthesis;
 
 const DarkBackground = () => (
   <div className="absolute inset-0 -z-10 bg-black">
@@ -19,8 +23,29 @@ const DarkBackground = () => (
     />
   </div>
 );
+const convertTo16BitPCM = async (audioBlob) => {
+  const audioContext = new AudioContext();
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-// New component for the AI "typing" animation
+  const numberOfChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const length = audioBuffer.length * numberOfChannels * 2; // 16-bit PCM uses 2 bytes per sample
+  const pcmBuffer = new ArrayBuffer(length);
+  const pcmView = new DataView(pcmBuffer);
+
+  let offset = 0;
+  for (let i = 0; i < audioBuffer.length; i++) {
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      const sample = audioBuffer.getChannelData(channel)[i];
+      const int16Sample = Math.max(-1, Math.min(1, sample)) * 0x7fff; // Convert to 16-bit PCM
+      pcmView.setInt16(offset, int16Sample, true); // Little-endian
+      offset += 2;
+    }
+  }
+
+  return new Blob([pcmBuffer], { type: "audio/wav" });
+};
 const TypingIndicator = () => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
@@ -48,8 +73,6 @@ const TypingIndicator = () => (
   </motion.div>
 );
 
-// --- Main Notebook Page Component ---
-
 const NotebookPage = () => {
   const { id } = useParams();
   const [activeFeature, setActiveFeature] = useState(null);
@@ -57,17 +80,23 @@ const NotebookPage = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loadingFeature, setLoadingFeature] = useState(false);
-  const [isAiThinking, setIsAiThinking] = useState(false); // New state for AI loading
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [followUpQuestions, setFollowUpQuestions] = useState([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcribedText, setTranscribedText] = useState("");
+  const recognitionRef = useRef(null);
+  const chatEndRef = useRef(null);
   const [storedData, setStoredData] = useState({});
   const [featureData, setFeatureData] = useState({
     summary: { title: "Document Summary", icon: "📄", content: null },
     questions: { title: "Suggested Questions", icon: "🤔", content: null },
     timeline: { title: "Timeline", icon: "⏳", content: null },
   });
-  const [followUpQuestions, setFollowUpQuestions] = useState([]);
 
-  const chatEndRef = useRef(null); // Ref for auto-scrolling
-
+  // NEW: State for Text-to-Speech
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false); // Tracks if audio is being processed
   // --- Effects ---
 
   useEffect(() => {
@@ -91,6 +120,138 @@ const NotebookPage = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAiThinking]);
+
+  // NEW: Text-to-Speech Handler
+  const handleToggleSpeech = (msg) => {
+    if (isSpeaking && speakingMessageId === msg._id) {
+      synthesis.cancel();
+      setIsSpeaking(false);
+      setSpeakingMessageId(null);
+    } else {
+      if (synthesis.speaking) {
+        synthesis.cancel();
+      }
+      const utterance = new SpeechSynthesisUtterance(msg.content);
+      utterance.onend = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId(null);
+      };
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId(null);
+        console.error("An error occurred during speech synthesis.");
+      };
+      setSpeakingMessageId(msg._id);
+      setIsSpeaking(true);
+      synthesis.speak(utterance);
+    }
+  };
+
+  // --- Voice Input Functions (API-based) ---
+  const mediaRecorderRef = useRef(null);
+  const [audioChunks, setAudioChunks] = useState([]);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioBufferRef = useRef([]);
+
+  // Helper function to encode raw audio data into a WAV file
+  const encodeWAV = (samples, sampleRate) => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (view, offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    const floatTo16BitPCM = (output, offset, input) => {
+      for (let i = 0; i < input.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+    };
+
+    writeString(view, 0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, "WAVE");
+    writeString(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, "data");
+    view.setUint32(40, samples.length * 2, true);
+    floatTo16BitPCM(view, 44, samples);
+
+    return new Blob([view], { type: "audio/wav" });
+  };
+
+  const startVoiceRecording = async () => {
+    try {
+        audioBufferRef.current = []; // Clear previous recording
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream; // Save the stream to stop tracks later
+
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = context;
+
+        const source = context.createMediaStreamSource(stream);
+        audioInputRef.current = source;
+
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
+
+        processor.onaudioprocess = (e) => {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const bufferCopy = new Float32Array(inputData);
+            audioBufferRef.current.push(bufferCopy);
+        };
+
+        source.connect(processor);
+        processor.connect(context.destination);
+        setIsRecording(true);
+    } catch (err) {
+        console.error("Microphone access denied:", err);
+        alert("Microphone access denied.");
+    }
+};
+
+const stopVoiceRecording = () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+
+    // Get the sampleRate BEFORE closing the context
+    const sampleRate = audioContextRef.current?.sampleRate;
+
+    // Disconnect nodes and stop microphone track
+    audioInputRef.current?.disconnect();
+    processorRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach(track => track.stop()); // Stop the mic light
+    audioContextRef.current?.close();
+
+    // Combine all recorded chunks into one Float32Array
+    if (audioBufferRef.current.length === 0) {
+        alert("No audio was recorded.");
+        return;
+    }
+    const totalLength = audioBufferRef.current.reduce((acc, val) => acc + val.length, 0);
+    const completeBuffer = new Float32Array(totalLength);
+    let offset = 0;
+    for (const buffer of audioBufferRef.current) {
+        completeBuffer.set(buffer, offset);
+        offset += buffer.length;
+    }
+
+    // Create a WAV blob from the raw audio data using the saved sampleRate
+    const audioBlob = encodeWAV(completeBuffer, sampleRate);
+    sendAudioToApi(audioBlob);
+};
 
   // --- Data Fetching Functions ---
 
@@ -226,6 +387,34 @@ const NotebookPage = () => {
     }
   };
 
+  const sendAudioToApi = async (audioBlob) => {
+    if (!audioBlob || audioBlob.size <= 44) { // 44 bytes is an empty WAV header
+      return;
+    }
+    setIsProcessingAudio(true); // Start loader
+    try {
+      const formData = new FormData();
+      formData.append("file", audioBlob, "audio.wav");
+
+      const res = await papi.post("/api/transcribe-audio", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const transcript = res.data.transcript;
+      if (transcript && !transcript.startsWith("(speech error")) {
+        handleSendMessage(null, transcript.trim());
+      } else {
+        console.error("Transcription failed on the backend:", transcript);
+        alert(`Transcription failed: ${transcript}`);
+      }
+    } catch (err) {
+      console.error("Transcription API call failed:", err);
+      alert("Transcription failed. Please try again.");
+    } finally {
+      setIsProcessingAudio(false); // Stop loader
+    }
+  };
+
   // --- Render Logic ---
 
   if (!notebook) {
@@ -292,13 +481,34 @@ const NotebookPage = () => {
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-md px-6 py-4 rounded-2xl shadow-md text-sm font-light transition-all duration-300 ${
+                className={`relative max-w-md px-6 py-4 rounded-2xl shadow-md text-sm font-light transition-all duration-300 ${
                   msg.role === "user"
                     ? "bg-gradient-to-r from-cyan-600 to-blue-700 text-white"
                     : "bg-gray-800/70 text-gray-200 border border-gray-700"
                 }`}
               >
                 {msg.content}
+                {msg.role === "response" && msg.content && (
+                  <button
+                    onClick={() => handleToggleSpeech(msg)}
+                    className="absolute bottom-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/80 transition-colors"
+                    aria-label={isSpeaking && speakingMessageId === msg._id ? "Stop speech" : "Play speech"}
+                  >
+                    {isSpeaking && speakingMessageId === msg._id ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path
+                          fillRule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
+                      </svg>
+                    )}
+                  </button>
+                )}
               </div>
             </motion.div>
           ))}
@@ -342,6 +552,45 @@ const NotebookPage = () => {
             className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
+          </motion.button>
+          <motion.button
+            type="button"
+            onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+            disabled={isProcessingAudio} // Disable button while processing audio
+            className={`px-6 py-3 rounded-full ${
+              isRecording
+                ? "bg-red-500"
+                : isProcessingAudio
+                ? "bg-gray-500 cursor-not-allowed"
+                : "bg-gradient-to-r from-cyan-500 to-blue-600"
+            } text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md`}
+          >
+            {isProcessingAudio ? (
+              <svg
+                className="animate-spin h-5 w-5 text-white mx-auto"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v8H4z"
+                ></path>
+              </svg>
+            ) : isRecording ? (
+              "Stop"
+            ) : (
+              "Voice"
+            )}
           </motion.button>
         </form>
       </div>
