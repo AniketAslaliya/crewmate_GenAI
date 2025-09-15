@@ -226,18 +226,34 @@ def api_ask(req: AskReq):
 
     return {"success": True, "answer": answer.strip(), "sources": sources}
 
+# In api_server.py
+
 @app.post("/api/transcribe-audio")
 async def transcribe_audio(
     file: UploadFile,
     user_id: str = Form(""),
     thread_id: str = Form(""),
 ):
+    # This outer try-except is a general catch-all
     try:
-        # Read the uploaded file's content into bytes
         audio_bytes = await file.read()
+        
+        # --- NEW Specific Error Handling ---
+        # We wrap the pydub conversion in its own try-except
+        # to see if this is the part that is failing.
+        try:
+            # Load audio bytes into pydub. Use io.BytesIO to treat bytes as a file.
+            audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        except Exception as e:
+            # If pydub/ffmpeg fails to read the file, return a specific error
+            error_message = f"Pydub/FFMPEG failed to decode audio. Error: {e}"
+            return JSONResponse(
+                content={"success": False, "transcript": f"(speech error: {error_message})"},
+                status_code=422,
+            )
+        # --- END of new block ---
 
-        # Send the raw bytes to our robust transcription function
-        # THIS IS THE FIX: The `encoding_hint` argument has been removed.
+        # If loading was successful, proceed with transcription
         transcript = speech_to_text_from_bytes(
             content=audio_bytes,
             language_code="en-US",
@@ -256,7 +272,6 @@ async def transcribe_audio(
         return JSONResponse(
             content={"success": False, "error": str(e)}, status_code=500
         )
-
 @app.get("/api/ns/stats")
 def api_ns_stats(user_id: Optional[str] = None, thread_id: str = Query(...)):
     dim = get_embedding_dimension()
