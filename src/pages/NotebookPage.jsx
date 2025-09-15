@@ -10,6 +10,9 @@ const SpeechRecognition =
 // Reference to the browser's speech synthesis API
 const synthesis = window.speechSynthesis;
 
+console.log("SpeechRecognition support:", !!SpeechRecognition);
+console.log("SpeechSynthesis support:", !!synthesis);
+
 const DarkBackground = () => (
   <div className="absolute inset-0 -z-10 bg-black">
     <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 animate-pulse-slow" />
@@ -75,6 +78,8 @@ const TypingIndicator = () => (
 
 const NotebookPage = () => {
   const { id } = useParams();
+  console.log("NotebookPage loaded with ID:", id);
+
   const [activeFeature, setActiveFeature] = useState(null);
   const [notebook, setNotebook] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -193,65 +198,109 @@ const NotebookPage = () => {
   };
 
   const startVoiceRecording = async () => {
+    console.log("Starting voice recording...");
     try {
-        audioBufferRef.current = []; // Clear previous recording
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = stream; // Save the stream to stop tracks later
+      audioBufferRef.current = []; // Clear previous recording
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("Microphone access granted.");
+      streamRef.current = stream; // Save the stream to stop tracks later
 
-        const context = new (window.AudioContext || window.webkitAudioContext)();
-        audioContextRef.current = context;
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = context;
 
-        const source = context.createMediaStreamSource(stream);
-        audioInputRef.current = source;
+      const source = context.createMediaStreamSource(stream);
+      audioInputRef.current = source;
 
-        const processor = context.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
 
-        processor.onaudioprocess = (e) => {
-            const inputData = e.inputBuffer.getChannelData(0);
-            const bufferCopy = new Float32Array(inputData);
-            audioBufferRef.current.push(bufferCopy);
-        };
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const bufferCopy = new Float32Array(inputData);
+        audioBufferRef.current.push(bufferCopy);
+      };
 
-        source.connect(processor);
-        processor.connect(context.destination);
-        setIsRecording(true);
+      source.connect(processor);
+      processor.connect(context.destination);
+      setIsRecording(true);
+      console.log("Voice recording started.");
     } catch (err) {
-        console.error("Microphone access denied:", err);
-        alert("Microphone access denied.");
+      console.error("Microphone access denied:", err);
+      alert("Microphone access denied.");
     }
-};
+  };
 
-const stopVoiceRecording = () => {
-    if (!isRecording) return;
+  const stopVoiceRecording = () => {
+    console.log("Stopping voice recording...");
+    if (!isRecording) {
+      console.warn("Voice recording is not active.");
+      return;
+    }
     setIsRecording(false);
 
-    // Get the sampleRate BEFORE closing the context
     const sampleRate = audioContextRef.current?.sampleRate;
+    console.log("Sample rate:", sampleRate);
 
     // Disconnect nodes and stop microphone track
     audioInputRef.current?.disconnect();
     processorRef.current?.disconnect();
-    streamRef.current?.getTracks().forEach(track => track.stop()); // Stop the mic light
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     audioContextRef.current?.close();
 
-    // Combine all recorded chunks into one Float32Array
     if (audioBufferRef.current.length === 0) {
-        alert("No audio was recorded.");
-        return;
+      console.warn("No audio was recorded.");
+      alert("No audio was recorded.");
+      return;
     }
-    const totalLength = audioBufferRef.current.reduce((acc, val) => acc + val.length, 0);
+
+    const totalLength = audioBufferRef.current.reduce(
+      (acc, val) => acc + val.length,
+      0
+    );
     const completeBuffer = new Float32Array(totalLength);
     let offset = 0;
     for (const buffer of audioBufferRef.current) {
-        completeBuffer.set(buffer, offset);
-        offset += buffer.length;
+      completeBuffer.set(buffer, offset);
+      offset += buffer.length;
     }
 
-    // Create a WAV blob from the raw audio data using the saved sampleRate
     const audioBlob = encodeWAV(completeBuffer, sampleRate);
+    console.log("Audio blob created:", audioBlob);
     sendAudioToApi(audioBlob);
-};
+  };
+
+  const sendAudioToApi = async (audioBlob) => {
+    console.log("Sending audio to API...");
+    if (!audioBlob || audioBlob.size <= 44) {
+      console.warn("Audio blob is empty or invalid.");
+      return;
+    }
+    setIsProcessingAudio(true); // Start loader
+    try {
+      const formData = new FormData();
+      formData.append("file", audioBlob, "audio.wav");
+
+      console.log("Sending FormData to API...");
+      const res = await papi.post("/api/transcribe-audio", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      console.log("API response:", res.data);
+      const transcript = res.data.transcript;
+      if (transcript && !transcript.startsWith("(speech error")) {
+        console.log("Transcription successful:", transcript);
+        handleSendMessage(null, transcript.trim());
+      } else {
+        console.error("Transcription failed on the backend:", transcript);
+        alert(`Transcription failed: ${transcript}`);
+      }
+    } catch (err) {
+      console.error("Transcription API call failed:", err);
+      alert("Transcription failed. Please try again.");
+    } finally {
+      setIsProcessingAudio(false); // Stop loader
+    }
+  };
 
   // --- Data Fetching Functions ---
 
@@ -384,34 +433,6 @@ const stopVoiceRecording = () => {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsAiThinking(false); // **IMPROVEMENT 2: Unset loading state**
-    }
-  };
-
-  const sendAudioToApi = async (audioBlob) => {
-    if (!audioBlob || audioBlob.size <= 44) { // 44 bytes is an empty WAV header
-      return;
-    }
-    setIsProcessingAudio(true); // Start loader
-    try {
-      const formData = new FormData();
-      formData.append("file", audioBlob, "audio.wav");
-
-      const res = await papi.post("/api/transcribe-audio", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const transcript = res.data.transcript;
-      if (transcript && !transcript.startsWith("(speech error")) {
-        handleSendMessage(null, transcript.trim());
-      } else {
-        console.error("Transcription failed on the backend:", transcript);
-        alert(`Transcription failed: ${transcript}`);
-      }
-    } catch (err) {
-      console.error("Transcription API call failed:", err);
-      alert("Transcription failed. Please try again.");
-    } finally {
-      setIsProcessingAudio(false); // Stop loader
     }
   };
 
@@ -638,3 +659,9 @@ const stopVoiceRecording = () => {
 };
 
 export default NotebookPage;
+
+const isVoiceSupported = !!navigator.mediaDevices?.getUserMedia && !!window.AudioContext;
+console.log("Voice support:", isVoiceSupported);
+if (!isVoiceSupported) {
+  alert("Your browser does not support voice features.");
+}
