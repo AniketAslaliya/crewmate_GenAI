@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import os
 import time
+import io
+import wave
 from io import BytesIO
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
+
+from pydub import AudioSegment
 
 from .config import VISION_GCS_BUCKET, VISION_ASYNC_TIMEOUT
 
@@ -58,51 +62,23 @@ def _get_vision_and_storage_clients():
 
 
 def _get_speech_and_storage_clients():
-    """
-    Create Speech & Storage clients.
-    Credential lookup order:
-      1) GOOGLE_SPEECH_TO_TEXT environment variable:
-         - if it points to an existing file -> treat as service account JSON path
-         - if it contains JSON text -> parse and use service_account.Credentials.from_service_account_info
-      2) Fallback to ADC (no env var / parsing fails)
-    Returns: (speech_client or None, storage_client or None)
-    """
+    """Create Speech & Storage clients using GOOGLE_APPLICATION_CREDENTIALS."""
     global _speech_client, _gcs_client_for_speech
     if not SPEECH_AVAILABLE:
         return None, None
     if _speech_client is not None and _gcs_client_for_speech is not None:
         return _speech_client, _gcs_client_for_speech
 
-    key_env = os.environ.get("GOOGLE_SPEECH_TO_TEXT")
+    key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     try:
-        # If the user provided a dedicated SPEECH key (path or JSON), use it
-        if key_env:
-            # path to JSON file
-            if Path(key_env).exists() and service_account is not None:
-                creds = service_account.Credentials.from_service_account_file(key_env)
-                _speech_client = speech.SpeechClient(credentials=creds)
-                _gcs_client_for_speech = gcs.Client(credentials=creds, project=creds.project_id) if gcs else None
-            else:
-                # try parse JSON contents
-                try:
-                    info = json.loads(key_env)
-                    if service_account is not None:
-                        creds = service_account.Credentials.from_service_account_info(info)
-                        _speech_client = speech.SpeechClient(credentials=creds)
-                        _gcs_client_for_speech = gcs.Client(credentials=creds, project=creds.project_id) if gcs else None
-                    else:
-                        # can't construct explicit creds, fallback to ADC
-                        _speech_client = speech.SpeechClient()
-                        _gcs_client_for_speech = gcs.Client() if gcs else None
-                except Exception:
-                    # Not JSON — fallback to ADC
-                    _speech_client = speech.SpeechClient()
-                    _gcs_client_for_speech = gcs.Client() if gcs else None
+        if key_path and Path(key_path).exists() and service_account is not None:
+            creds = service_account.Credentials.from_service_account_file(key_path)
+            _speech_client = speech.SpeechClient(credentials=creds)
+            _gcs_client_for_speech = gcs.Client(credentials=creds, project=creds.project_id) if gcs else None
         else:
-            # No explicit env var — use ADC
+            # ADC / local gcloud auth
             _speech_client = speech.SpeechClient()
             _gcs_client_for_speech = gcs.Client() if gcs else None
-
         return _speech_client, _gcs_client_for_speech
     except Exception:
         _speech_client = None
@@ -134,13 +110,13 @@ def ocr_image_with_google_vision(image_path: str) -> str:
     bucket = os.getenv("VISION_GCS_BUCKET")
     if not bucket:
         raise ValueError("VISION_GCS_BUCKET is not set in environment variables.")
-    
+
     # Upload image to GCS
     dest_blob_name = f"vision_inputs/{Path(image_path).name}"
     gcs_uri = _upload_file_to_gcs(bucket, image_path, dest_blob_name)
     if not gcs_uri:
         raise RuntimeError("Failed to upload image to GCS.")
-    
+
     # Perform OCR
     try:
         with open(image_path, "rb") as f:
@@ -151,11 +127,7 @@ def ocr_image_with_google_vision(image_path: str) -> str:
 
 def _upload_file_to_gcs(bucket_name: str, source_path: str, dest_blob_name: str) -> Optional[str]:
     """Upload local file to GCS. Returns gs:// URI or None."""
-    # re-use the vision storage client if available (only one storage client needed)
     _, storage_client = _get_vision_and_storage_clients()
-    if storage_client is None:
-        # fallback to speech storage client if available
-        _, storage_client = _get_speech_and_storage_clients()
     if storage_client is None:
         return None
     try:
@@ -167,37 +139,8 @@ def _upload_file_to_gcs(bucket_name: str, source_path: str, dest_blob_name: str)
         return None
 
 
-def _read_gcs_json_outputs(bucket_name: str, prefix: str) -> List[dict]:
-    """Read Vision async JSON outputs from GCS prefix."""
-    _, storage_client = _get_vision_and_storage_clients()
-    if storage_client is None:
-        return []
-    out: List[dict] = []
-    try:
-        blobs = list(storage_client.list_blobs(bucket_name, prefix=prefix))
-        for b in blobs:
-            if not b.name.endswith(".json"):
-                continue
-            data = b.download_as_bytes()
-            try:
-                out.append(json.loads(data.decode("utf-8")))
-            except Exception:
-                try:
-                    out.append(json.loads(data))
-                except Exception:
-                    continue
-        return out
-    except Exception:
-        return []
-
-
-def ocr_pdf_with_google_vision_async_gcs(pdf_path: str, max_pages: int = 100) -> str:
-    """
-    Use Vision async_batch_annotate_files via GCS. Requires:
-      - VISION_GCS_BUCKET env var
-      - Service account with storage + vision access
-    Returns extracted text or "" on failure.
-    """
+def ocr_pdf_with_google_vision_async_gcs(pdf_path: str) -> str:
+    """Use Vision async_batch_annotate_files via GCS."""
     bucket = VISION_GCS_BUCKET
     if not bucket:
         return ""
@@ -228,117 +171,74 @@ def ocr_pdf_with_google_vision_async_gcs(pdf_path: str, max_pages: int = 100) ->
         )
         operation = vclient.async_batch_annotate_files(requests=[async_req])
 
-        timeout_seconds = VISION_ASYNC_TIMEOUT
-        poll_interval = 2
-        waited = 0
-        while not operation.done():
-            time.sleep(poll_interval)
-            waited += poll_interval
-            if waited > timeout_seconds:
-                break
+        operation.result(timeout=VISION_ASYNC_TIMEOUT)
 
-        outputs = _read_gcs_json_outputs(bucket, gcs_dst_prefix)
-        text_parts: List[str] = []
-        for out_json in outputs:
-            try:
-                responses = out_json.get("responses", [])
-                for r in responses:
-                    fta = r.get("fullTextAnnotation")
-                    if isinstance(fta, dict) and fta.get("text"):
-                        text_parts.append(fta["text"])
-                    elif r.get("textAnnotations"):
-                        t0 = r["textAnnotations"][0].get("description", "")
-                        if t0:
-                            text_parts.append(t0)
-            except Exception:
-                continue
+        text_parts = []
+        blobs = storage_client.list_blobs(bucket, prefix=gcs_dst_prefix)
+        for blob in blobs:
+            if blob.name.endswith(".json"):
+                output = json.loads(blob.download_as_string())
+                for response in output.get("responses", []):
+                    if response.get("fullTextAnnotation"):
+                        text_parts.append(response["fullTextAnnotation"]["text"])
         return "\n\n".join(text_parts).strip()
     except Exception:
         return ""
 
 
-# ------------------- Speech-to-Text helpers (new) -------------------
-import wave
-import io
-from pathlib import Path
-
-def _detect_wav_params(file_bytes: bytes) -> tuple[int, int] | None:
-    """Return (channels, framerate) if valid WAV, else None."""
-    try:
-        with wave.open(io.BytesIO(file_bytes), "rb") as wf:
-            return wf.getnchannels(), wf.getframerate()
-    except Exception:
-        return None
-
+# ------------------- Speech-to-Text helpers -------------------
 
 def speech_to_text_from_bytes(
     content: bytes,
     language_code: str = "en-US",
     enable_automatic_punctuation: bool = True,
-    encoding_hint: str = None,
 ) -> str:
     """
-    Recognize short audio content (bytes) synchronously.
-    Supports WAV (LINEAR16), OGG/OPUS, WEBM/OPUS.
+    Recognize audio content (bytes) by first converting it to the required format.
+    This function takes any audio format supported by pydub and converts it to
+    16-bit, 16kHz, mono WAV before sending it to the Google Speech-to-Text API.
     """
     sc, _ = _get_speech_and_storage_clients()
     if sc is None:
-        return ""
+        return "(speech error: client not available)"
+        
     try:
-        audio = speech.RecognitionAudio(content=content)
+        # --- START: AUDIO CONVERSION LOGIC ---
+        # Load audio bytes into pydub. Use io.BytesIO to treat bytes as a file.
+        audio = AudioSegment.from_file(io.BytesIO(content))
 
-        # base config
-        config_args = dict(
+        # Convert to the required format: 16-bit (sample_width=2), 16kHz, mono (channels=1)
+        audio = audio.set_sample_width(2).set_frame_rate(16000).set_channels(1)
+
+        # Export the converted audio back into a bytes object
+        converted_buffer = io.BytesIO()
+        audio.export(converted_buffer, format="wav")
+        converted_bytes = converted_buffer.getvalue()
+        # --- END: AUDIO CONVERSION LOGIC ---
+
+        # Use the NEW, CORRECTED bytes for recognition
+        recognition_audio = speech.RecognitionAudio(content=converted_bytes)
+
+        # The audio is now guaranteed to be LINEAR16, so we can set the config directly
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=16000,
             language_code=language_code,
+            audio_channel_count=1,
             enable_automatic_punctuation=enable_automatic_punctuation,
         )
 
-        if encoding_hint == "wav":
-            params = _detect_wav_params(content)
-            if params:
-                channels, framerate = params
-                config_args.update(
-                    encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                    sample_rate_hertz=framerate,
-                    audio_channel_count=channels,
-                )
-        elif encoding_hint == "ogg_opus":
-            config_args.update(
-        encoding=speech.RecognitionConfig.AudioEncoding.OGG_OPUS,
-        sample_rate_hertz=48000,
-    )
-        elif encoding_hint == "webm_opus":
-            config_args.update(
-        encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
-        sample_rate_hertz=48000,
-    )
-        else:
-            config_args.update(
-                encoding=speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED
-            )
-
-        config = speech.RecognitionConfig(**config_args)
-        resp = sc.recognize(config=config, audio=audio)
+        resp = sc.recognize(config=config, audio=recognition_audio)
 
         parts = []
         for res in resp.results:
             if res.alternatives:
                 parts.append(res.alternatives[0].transcript)
         return "\n".join(parts).strip()
+        
     except Exception as e:
         return f"(speech error: {e})"
 
-
-def _detect_container_magic(data: bytes) -> str:
-    """Detect container type by magic bytes."""
-    if data.startswith(b"OggS"):
-        return "ogg"
-    if data.startswith(b"\x1A\x45\xDF\xA3"):
-        return "webm"
-    return "unknown"
-
-from pydub import AudioSegment
-import tempfile
 
 def speech_to_text_from_local_file(
     audio_path: str,
@@ -346,32 +246,16 @@ def speech_to_text_from_local_file(
     enable_automatic_punctuation: bool = True,
 ) -> str:
     """
-    Convert any audio (opus, ogg, webm, wav, mp3, etc.) to 16kHz mono WAV,
-    then send to Google Speech-to-Text.
+    Reads an audio file from a local path and transcribes it.
+    This function now acts as a simple wrapper around speech_to_text_from_bytes.
     """
-    sc, _ = _get_speech_and_storage_clients()
-    if sc is None:
-        return ""
-
     try:
-        # Convert input to standard WAV PCM
-        audio = AudioSegment.from_file(audio_path)
-        audio = audio.set_channels(1).set_frame_rate(16000)
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-            audio.export(tmp_wav.name, format="wav")
-            tmp_wav_path = tmp_wav.name
-
-        # Read bytes
-        with open(tmp_wav_path, "rb") as f:
-            data = f.read()
-
-        # Now it’s guaranteed LINEAR16 @ 16kHz mono
+        with open(audio_path, "rb") as f:
+            content = f.read()
         return speech_to_text_from_bytes(
-            data,
+            content=content,
             language_code=language_code,
             enable_automatic_punctuation=enable_automatic_punctuation,
-            encoding_hint="wav",
         )
     except Exception as e:
         return f"(speech error: {e})"
