@@ -557,23 +557,6 @@ const NotebookPage = () => {
         </div>
 
         <form onSubmit={handleSendMessage} className="p-6 border-t border-gray-800 flex items-center space-x-4">
-          <input
-            type="text"
-            placeholder={isAiThinking ? "Generating response..." : "Ask anything or add a note..."}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            disabled={isAiThinking} // **IMPROVEMENT 2: Disable input**
-            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          <motion.button
-            type="submit"
-            whileHover={{ scale: isAiThinking ? 1 : 1.05 }}
-            whileTap={{ scale: isAiThinking ? 1 : 0.95 }}
-            disabled={isAiThinking} // **IMPROVEMENT 2: Disable button**
-            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Send
-          </motion.button>
           <motion.button
             type="button"
             onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
@@ -612,6 +595,23 @@ const NotebookPage = () => {
             ) : (
               "Voice"
             )}
+          </motion.button>
+          <input
+            type="text"
+            placeholder={isAiThinking ? "Generating response..." : "Ask anything or add a note..."}
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            disabled={isAiThinking} // Disable input while AI is thinking
+            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          <motion.button
+            type="submit"
+            whileHover={{ scale: isAiThinking ? 1 : 1.05 }}
+            whileTap={{ scale: isAiThinking ? 1 : 0.95 }}
+            disabled={isAiThinking} // Disable button while AI is thinking
+            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Send
           </motion.button>
         </form>
       </div>
