@@ -49,7 +49,7 @@ except Exception:
             "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
             "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
-            f"Document excerpts:\n{context}\n"
+            f"Document excerpts:\n{context}\n"@app.post("/api/ask")
         )
 
 # ----------------------------- FastAPI app ------------------------------------
@@ -273,26 +273,6 @@ async def ingest_audio(
 from fastapi.responses import JSONResponse
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-    GREETINGS = {"hi", "hello", "hey", "how are you", "good morning", "good evening"}
-    normalized = req.query.strip().lower()
-    if any(normalized == g or normalized.startswith(g) for g in GREETINGS):
-        greeting_response = (
-            "{{\n"
-            "  \"success\": True,\n"
-            "  \"response\": {{\n"
-            "    \"PLAIN ANSWER\": \"Hello, this is your Legal SahAI. How may I help you with your document?\",\n"
-            "    \"ASSESSMENT\": {{\n"
-            "      \"CONFIDENCE\": \"High\",\n"
-            "      \"REASON\": \"Greeting detected, no document lookup required.\"\n"
-            "    }},\n"
-            "    \"NEXT STEPS\": [\n"
-            "      \"Ask your legal or document-related question\",\n"
-            "      \"Upload your contract or file if needed\"\n"
-            "    ]\n"
-            "  }}\n"
-            "}}\n"
-        )
-        return JSONResponse(content=greeting_response)
 
 
         
