@@ -78,12 +78,15 @@ def quick_analyze(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
         sample = "\n\n---\n\n".join([first, middle, last])
 
         system_prompt = (
-            "You are a concise legal document analyst.\n"
-            "Using only the provided document excerpts, produce: (A) a short plain-English summary aimed at a non-lawyer, "
-            "(B) three short factual bullets labelled FACTS that are explicitly supported by the excerpts, and "
-            "(C) a single-line confidence indicator (High/Medium/Low)."
-        )
-        user_prompt = f"Document excerpts:\n{sample}\n\nReturn: (1) 3-sentence summary, (2) three FACTS bullets, (3) Confidence:"
+    "You are a concise legal document analyst.\n"
+    "Using only the provided document excerpts, produce:\n"
+    "(A) first, a plain-English statement of what this document is (e.g., contract, agreement, policy) and its general purpose,\n"
+    "(B) a short 3-sentence plain-English summary aimed at a non-lawyer,\n"
+    "(C) three short factual bullets labelled FACTS that are explicitly supported by the excerpts, and\n"
+    "(D) a single-line confidence indicator (High/Medium/Low)."
+)
+
+        user_prompt = f"Document excerpts:\n{sample}\n\nReturn: (1) About the document (what it is + purpose), (2) 3-sentence summary, (3) three FACTS bullets, (4) Confidence:"
 
         summary_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
 
@@ -144,17 +147,21 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
             return {"success": False, "message": "No valid snippets found in Pinecone."}
 
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
+        
         system_prompt = (
-    "You are a concise legal document analyst.\n"
-    "Using only the provided document excerpts, extract key factual points.\n"
-    "Rules:\n"
-    "- Generate approximately 1 FACT for every 100 words of text.\n"
-    "- Each FACT should be 1–2 sentences: clear, specific, and not vague.\n"
-    "- Do not include opinions, interpretations, or assumptions—only what is explicitly supported by the excerpts.\n"
-    "- Keep the wording concise but complete, neither too short nor too long.\n"
+    "You are a detailed legal document analyst.\n"
+    "Using only the provided document excerpts, produce:\n"
+    "(A) first, a plain-English statement of what this document is (e.g., contract, agreement, policy) and its general purpose,\n"
+    "(B) a comprehensive, long-form plain-English summary aimed at a non-lawyer, covering all key topics and details in the text,\n"
+    "(C) a single-line confidence indicator (High/Medium/Low)."
 )
 
-        user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
+        user_prompt = (
+    f"Document excerpts:\n\n{context_excerpt}\n\n" # <--- Fixed
+    "Return: (1) About the document (what it is + purpose), "
+    "(2) 3-sentence summary, (3) three FACTS bullets, (4) Confidence:"
+)
+
 
         guide_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
         return {"success": True, "study_guide": guide_text}
