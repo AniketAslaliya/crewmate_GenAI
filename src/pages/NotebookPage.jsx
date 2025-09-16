@@ -26,29 +26,6 @@ const DarkBackground = () => (
     />
   </div>
 );
-const convertTo16BitPCM = async (audioBlob) => {
-  const audioContext = new AudioContext();
-  const arrayBuffer = await audioBlob.arrayBuffer();
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-  const numberOfChannels = audioBuffer.numberOfChannels;
-  const sampleRate = audioBuffer.sampleRate;
-  const length = audioBuffer.length * numberOfChannels * 2; // 16-bit PCM uses 2 bytes per sample
-  const pcmBuffer = new ArrayBuffer(length);
-  const pcmView = new DataView(pcmBuffer);
-
-  let offset = 0;
-  for (let i = 0; i < audioBuffer.length; i++) {
-    for (let channel = 0; channel < numberOfChannels; channel++) {
-      const sample = audioBuffer.getChannelData(channel)[i];
-      const int16Sample = Math.max(-1, Math.min(1, sample)) * 0x7fff; // Convert to 16-bit PCM
-      pcmView.setInt16(offset, int16Sample, true); // Little-endian
-      offset += 2;
-    }
-  }
-
-  return new Blob([pcmBuffer], { type: "audio/wav" });
-};
 const TypingIndicator = () => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
@@ -88,8 +65,8 @@ const NotebookPage = () => {
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [transcribedText, setTranscribedText] = useState("");
-  const recognitionRef = useRef(null);
+  // const [transcribedText, setTranscribedText] = useState("");
+  // const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
   const [storedData, setStoredData] = useState({});
   const [featureData, setFeatureData] = useState({
@@ -102,6 +79,8 @@ const NotebookPage = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false); // Tracks if audio is being processed
+  const [isVoiceSupported, setIsVoiceSupported] = useState(false);
+
   // --- Effects ---
 
   useEffect(() => {
@@ -120,6 +99,22 @@ const NotebookPage = () => {
 
     fetchNotebookAndMessages();
   }, [id]);
+
+  // Request microphone permission when entering the notebook
+  useEffect(() => {
+    const requestMicrophonePermission = async () => {
+      try {
+        console.log("Requesting microphone permission...");
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log("Microphone permission granted.");
+      } catch (err) {
+        console.error("Microphone permission denied:", err);
+        alert("Microphone access is required for voice features to work.");
+      }
+    };
+
+    requestMicrophonePermission();
+  }, []);
 
   // Effect for auto-scrolling to the bottom of the chat
   useEffect(() => {
@@ -153,8 +148,8 @@ const NotebookPage = () => {
   };
 
   // --- Voice Input Functions (API-based) ---
-  const mediaRecorderRef = useRef(null);
-  const [audioChunks, setAudioChunks] = useState([]);
+  // const mediaRecorderRef = useRef(null);
+  // const [audioChunks, setAudioChunks] = useState([]);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const audioInputRef = useRef(null);
@@ -659,9 +654,3 @@ const NotebookPage = () => {
 };
 
 export default NotebookPage;
-
-const isVoiceSupported = !!navigator.mediaDevices?.getUserMedia && !!window.AudioContext;
-console.log("Voice support:", isVoiceSupported);
-if (!isVoiceSupported) {
-  alert("Your browser does not support voice features.");
-}
