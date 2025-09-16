@@ -288,7 +288,7 @@ const NotebookPage = () => {
       const transcript = res.data.transcript;
       if (transcript && !transcript.startsWith("(speech error")) {
         console.log("Transcription successful:", transcript);
-        handleSendMessage(null, transcript.trim());
+        setNewMessage(transcript.trim()); // <-- Paste transcript into input
       } else {
         console.error("Transcription failed on the backend:", transcript);
         alert(`Transcription failed: ${transcript}`);
