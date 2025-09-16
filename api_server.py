@@ -270,27 +270,32 @@ async def ingest_audio(
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
     return result
-
+from fastapi.responses import JSONResponse
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-    # ---------------- Greeting Pre-Check ----------------
     GREETINGS = {"hi", "hello", "hey", "how are you", "good morning", "good evening"}
     normalized = req.query.strip().lower()
     if any(normalized == g or normalized.startswith(g) for g in GREETINGS):
-        return {
-            "success": True,
-            "response": {
-                "PLAIN ANSWER": "Hello, this is your Legal SahAI. How may I help you with your document?",
-                "ASSESSMENT": {
-                    "CONFIDENCE": "High",
-                    "REASON": "Greeting detected, no document lookup required."
-                },
-                "NEXT STEPS": [
-                    "Ask your legal or document-related question",
-                    "Upload your contract or file if needed"
-                ]
-            }
-        }
+        greeting_response = (
+            "{{\n"
+            "  \"success\": True,\n"
+            "  \"response\": {{\n"
+            "    \"PLAIN ANSWER\": \"Hello, this is your Legal SahAI. How may I help you with your document?\",\n"
+            "    \"ASSESSMENT\": {{\n"
+            "      \"CONFIDENCE\": \"High\",\n"
+            "      \"REASON\": \"Greeting detected, no document lookup required.\"\n"
+            "    }},\n"
+            "    \"NEXT STEPS\": [\n"
+            "      \"Ask your legal or document-related question\",\n"
+            "      \"Upload your contract or file if needed\"\n"
+            "    ]\n"
+            "  }}\n"
+            "}}\n"
+        )
+        return JSONResponse(content=greeting_response)
+
+
+        
     # ---------------------------------------------------
 
     hits = retrieve_similar_chunks(req.query, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
