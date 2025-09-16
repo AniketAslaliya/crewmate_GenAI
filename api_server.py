@@ -49,7 +49,7 @@ except Exception:
             "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
             "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
-            f"Document excerpts:\n{context}\n"
+            f"Document excerpts:\n{context}\n"@app.post("/api/ask")
         )
 
 # ----------------------------- FastAPI app ------------------------------------
@@ -187,16 +187,33 @@ def health():
 def study_guide(req: StudyGuideReq):
     try:
         result = generate_study_guide(req.user_id, req.thread_id)
-        return {"success": True, "study_guide": result.get("study_guide")}
+
+        # Ensure we always return a string, not None
+        study_guide = result.get("study_guide") or "No study guide could be generated."
+
+        return {"success": True, "study_guide": study_guide}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
 
+
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
-    out = quick_analyze_thread(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    return out
+    try:
+        out = quick_analyze_thread(req.user_id, req.thread_id)
+
+        # Ensure the function returns a dict with success=True/False
+        if not out.get("success"):
+            raise HTTPException(status_code=422, detail=out)
+
+        return out
+
+    except Exception as e:
+        # Catch unexpected issues
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"quick_analyze error: {str(e)}"}
+        )
+
 
 @app.post("/api/faq")
 def faq(req: FAQReq):
@@ -253,9 +270,14 @@ async def ingest_audio(
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
     return result
-
+from fastapi.responses import JSONResponse
 @app.post("/api/ask")
 def api_ask(req: AskReq):
+
+
+        
+    # ---------------------------------------------------
+
     hits = retrieve_similar_chunks(req.query, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     if not hits:
         return {"success": True, "answer": "Not stated in document.", "sources": []}
