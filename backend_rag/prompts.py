@@ -12,6 +12,7 @@ def build_strict_system_prompt(context: str, max_context_chars: int = 5000) -> s
         context = head + "\n\n...[TRUNCATED]...\n\n" + tail
     return STRICT_SYSTEM_PROMPT_TEMPLATE.format(context=context)
 
+
 STRICT_SYSTEM_PROMPT_TEMPLATE = (
     "You are a meticulous legal-document assistant. Use ONLY the provided document excerpts to answer. "
     "Do NOT use external knowledge or make up facts unless explicitly asked; when you do use general legal principles, "
@@ -33,8 +34,8 @@ STRICT_SYSTEM_PROMPT_TEMPLATE = (
     "      \"string - actionable next step 2\"\n"
     "    ],\n"
     "    \"followupquestion\": [\n"
-    "      \"string - follow-up question 1\",\n"
-    "      \"string - follow-up question 2\"\n"
+    "      \"string - suggest a relevant follow-up question THE USER could ask you (the AI) next\",\n" # <--- CHANGE 1: More specific description
+    "      \"string - suggest another relevant follow-up question THE USER could ask you (the AI) next\"\n"
     "    ]\n"
     "  }}\n"
     "}}\n\n"
@@ -47,7 +48,8 @@ STRICT_SYSTEM_PROMPT_TEMPLATE = (
     "- Do NOT provide boilerplate legal advice; when appropriate, recommend lawyer review.\n"
     "- Keep language plain and concise.\n"
     "- 'NEXT STEPS' must always be 1–2 items.\n"
-    "- 'followupquestion' is optional; omit it if no follow-ups exist.\n\n"
+    "- 'followupquestion' is optional; omit it if no follow-ups exist.\n"
+    "- 'followupquestion' must suggest questions from the user's perspective, for them to ask you (the AI).\n\n" # <--- CHANGE 2: Added a new, explicit rule
 
     "Document context:\n{context}\n"
 )
