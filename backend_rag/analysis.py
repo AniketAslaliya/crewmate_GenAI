@@ -151,16 +151,14 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
         system_prompt = (
     "You are a detailed legal document analyst.\n"
     "Using only the provided document excerpts, produce:\n"
-    "(A) first, a plain-English statement of what this document is (e.g., contract, agreement, policy) and its general purpose,\n"
-    "(B) a comprehensive, long-form plain-English summary aimed at a non-lawyer, covering all key topics and details in the text,\n"
-    "(C) a single-line confidence indicator (High/Medium/Low)."
+    "- A plain-English statement of what this document is (e.g., contract, agreement, policy) and its general purpose.\n"
+    "- A comprehensive, long-form plain-English summary aimed at a non-lawyer, covering all key topics and details in the text.\n"
+    "- A single-line confidence indicator (High/Medium/Low).\n"
 )
 
-        user_prompt = (
-    f"Document excerpts:\n\n{context_excerpt}\n\n" # <--- Fixed
-    "Return: (1) About the document (what it is + purpose), "
-    "(2) 3-sentence summary, (3) three FACTS bullets, (4) Confidence:"
-)
+        user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
+
+
 
 
         guide_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
