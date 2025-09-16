@@ -195,6 +195,10 @@ const NotebookPage = () => {
   const startVoiceRecording = async () => {
     console.log("Starting voice recording...");
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Your browser does not support voice recording.");
+      }
+
       audioBufferRef.current = []; // Clear previous recording
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log("Microphone access granted.");
@@ -220,8 +224,8 @@ const NotebookPage = () => {
       setIsRecording(true);
       console.log("Voice recording started.");
     } catch (err) {
-      console.error("Microphone access denied:", err);
-      alert("Microphone access denied.");
+      console.error("Voice recording failed:", err);
+      alert(err.message || "Voice recording is not supported on this device.");
     }
   };
 
@@ -555,7 +559,7 @@ const NotebookPage = () => {
           <motion.button
             type="button"
             onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
-            disabled={isProcessingAudio} // Disable button while processing audio
+            disabled={isProcessingAudio} // Disable button only while processing audio
             className={`px-6 py-3 rounded-full ${
               isRecording
                 ? "bg-red-500"
