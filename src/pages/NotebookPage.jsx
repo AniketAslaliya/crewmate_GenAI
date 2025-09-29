@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
+import Timeline from "../components/Timeline"; // Import the Timeline component
 
 // Check for browser support for Web Speech API
 const SpeechRecognition =
@@ -53,9 +54,10 @@ const TypingIndicator = () => (
   </motion.div>
 );
 
-const NotebookPage = () => {
-  const { id } = useParams();
-  console.log("NotebookPage loaded with ID:", id);
+const NotebookPage = (props) => {
+  // Accept id as a prop, fallback to useParams if not provided
+  const params = useParams();
+  const { id, onClose, inline } = props;
 
   const [activeFeature, setActiveFeature] = useState(null);
   const [notebook, setNotebook] = useState(null);
@@ -84,6 +86,7 @@ const NotebookPage = () => {
   // --- Effects ---
 
   useEffect(() => {
+    if (!id) return;
     const fetchNotebookAndMessages = async () => {
       try {
         const [notebookRes, messagesRes] = await Promise.all([
@@ -355,7 +358,8 @@ const NotebookPage = () => {
         content = <div className="space-y-4">{formattedFAQ}</div>;
       } else if (featureKey === "timeline") {
         const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 });
-        content = res.data.timeline_markdown || "No timeline available";
+        const timelineMarkdown = res.data.timeline_markdown || "";
+        content = <Timeline timelineMarkdown={timelineMarkdown} />;
       }
 
       setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [featureKey]: content } }));
@@ -437,6 +441,14 @@ const NotebookPage = () => {
 
   // --- Render Logic ---
 
+  if (!id) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-black text-red-400">
+        No notebook selected.
+      </div>
+    );
+  }
+
   if (!notebook) {
     return (
       <div className="flex items-center justify-center h-screen bg-black text-gray-400">
@@ -451,7 +463,12 @@ const NotebookPage = () => {
   }
 
   return (
-    <div className="relative flex h-screen text-gray-100 font-sans overflow-hidden p-4">
+    <div
+      className={`relative flex text-gray-100 font-sans overflow-hidden ${inline ? "rounded-2xl shadow-2xl bg-gray-900" : ""}`}
+      style={inline ? { height: "70vh", minHeight: 400 } : { height: "100vh" }}
+    >
+      
+
       <DarkBackground />
 
       {/* Left Panel */}
@@ -460,7 +477,9 @@ const NotebookPage = () => {
         initial={{ x: -100, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.6 }}
+        style={{ height: "100%" }}
       >
+        {/* ...sidebar content... */}
         <h1 className="text-4xl font-extrabold tracking-tight">
           <span className="text-gray-100">Legal Sah</span>
           <span className="bg-gradient-to-r from-cyan-400 to-blue-600 bg-clip-text text-transparent">AI</span>
@@ -486,11 +505,12 @@ const NotebookPage = () => {
       </motion.div>
 
       {/* Middle Panel */}
-      <div className="relative z-10 flex-1 flex flex-col bg-gray-900/50 backdrop-blur-md border-x border-gray-800 rounded-3xl">
+      <div className="relative z-10 flex-1 flex flex-col bg-gray-900/50 backdrop-blur-md border-x border-gray-800 rounded-3xl"
+        style={{ height: "100%" }}
+      >
         <header className="p-6 border-b border-gray-800 flex items-center justify-between">
           <h2 className="text-2xl font-light text-cyan-300 tracking-wide">{notebook.title}</h2>
         </header>
-
         <div className="flex-1 p-8 overflow-y-auto space-y-4 custom-scrollbar">
           {messages.map((msg) => (
             <motion.div
@@ -624,6 +644,7 @@ const NotebookPage = () => {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 100, opacity: 0 }}
             transition={{ duration: 0.6 }}
+            style={{ height: "100%" }}
           >
             <div className="p-6 border-b border-gray-800">
               <h2 className="text-xl font-semibold text-cyan-300">{featureData[activeFeature].title}</h2>
