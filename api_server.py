@@ -1,3 +1,4 @@
+# full updated file with corrected endpoints for JSON responses
 from __future__ import annotations
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
@@ -5,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 from typing import Optional
+import re
 
 # Ensure all backend modules are correctly imported
 from backend_rag.vectorstore_pinecone import get_or_create_index, upsert_chunks, delete_namespace, namespace, query_top_k, namespace_count
@@ -21,6 +23,7 @@ from backend_rag.analysis import (
     quick_analyze_for_thread as quick_analyze_thread,
     generate_faq,
     generate_timeline,
+    suggest_case_law,
 )
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
@@ -49,7 +52,7 @@ except Exception:
             "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
             "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
-            f"Document excerpts:\n{context}\n"@app.post("/api/ask")
+            f"Document excerpts:\n{context}\n"
         )
 
 # ----------------------------- FastAPI app ------------------------------------
@@ -105,16 +108,18 @@ class StudyGuideDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
 
+class CaseLawReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
 
 # ----------------------------- Utils ------------------------------------------
 def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
-    """Return a download response with Content-Disposition: attachment; filename=..."""
     buf = io.BytesIO(text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(buf, media_type=media_type, headers=headers)
 
 def _reset_vector_store(user_id: Optional[str], thread_id: str):
-    """Delete the Pinecone namespace for this (user, thread)."""
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
@@ -128,25 +133,20 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
     text = (extraction.get("text") or "").strip()
     source = extraction.get("source")
     diagnostics = extraction.get("diagnostics", {})
-
     if not text:
         return {"success": False, "message": "No text extracted from file.", "diagnostics": diagnostics, "source": source}
-
     chunks = chunk_text(text, chunk_size=1000, overlap=200)
     texts = [c[1] for c in chunks]
     if not texts:
         return {"success": False, "message": "No chunks created from file.", "diagnostics": diagnostics, "source": source}
-
     vecs = embed_texts(texts)
     vecs_list = [v.astype("float32").tolist() for v in vecs]
     ids = [c[0] for c in chunks]
     metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000]} for i in range(len(texts))]
-
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
     upsert_chunks(index, ns, vecs_list, ids, metadatas)
-
     return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
 def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
@@ -154,26 +154,21 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
         transcript = speech_to_text_from_local_file(local_path)
         if not transcript or not transcript.strip() or transcript.startswith("(speech error"):
             return {"success": False, "message": f"Could not produce transcript from audio file. Reason: {transcript}"}
-
         text = transcript.strip()
         source = f"audio:{file_name}"
         diagnostics = {"transcript_length": len(text.split())}
-
         chunks = chunk_text(text, chunk_size=1000, overlap=200)
         texts = [c[1] for c in chunks]
         if not texts:
             return {"success": False, "message": "No chunks created from audio transcript.", "diagnostics": diagnostics, "source": source}
-
         vecs = embed_texts(texts)
         vecs_list = [v.astype("float32").tolist() for v in vecs]
         ids = [c[0] for c in chunks]
         metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000], "source": source} for i in range(len(texts))]
-
         dim = get_embedding_dimension()
         index = get_or_create_index(dim)
         ns = namespace(user_id, thread_id)
         upsert_chunks(index, ns, vecs_list, ids, metadatas)
-
         return {"success": True, "message": f"Ingested {len(chunks)} audio chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
     except Exception as e:
         return {"success": False, "message": f"_ingest_audio_no_sqlite_save error: {e}"}
@@ -187,39 +182,25 @@ def health():
 def study_guide(req: StudyGuideReq):
     try:
         result = generate_study_guide(req.user_id, req.thread_id)
-
-        # Ensure we always return a string, not None
-        study_guide = result.get("study_guide") or "No study guide could be generated."
-
-        return {"success": True, "study_guide": study_guide}
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
-
 
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
     try:
         out = quick_analyze_thread(req.user_id, req.thread_id)
-
-        # Ensure the function returns a dict with success=True/False
         if not out.get("success"):
             raise HTTPException(status_code=422, detail=out)
-
         return out
-
     except Exception as e:
-        # Catch unexpected issues
-        raise HTTPException(
-            status_code=500,
-            detail={"success": False, "message": f"quick_analyze error: {str(e)}"}
-        )
-
+        raise HTTPException(status_code=500, detail={"success": False, "message": f"quick_analyze error: {str(e)}"})
 
 @app.post("/api/faq")
 def faq(req: FAQReq):
     try:
         result = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
-        return {"success": True, "faq_markdown": result.get("faq_markdown")}
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
 
@@ -227,61 +208,41 @@ def faq(req: FAQReq):
 def timeline(req: TimelineReq):
     try:
         result = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
-        return {"success": True, "timeline_markdown": result.get("timeline_markdown")}
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
 
 @app.post("/api/ingest")
-async def ingest(
-    user_id: Optional[str] = Form(default=None),
-    thread_id: str = Form(...),
-    file: UploadFile = File(...),
-    replace: bool = Form(False),
-):
+async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
     if replace:
         _reset_vector_store(user_id, thread_id)
-
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
-
     result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
     return result
 
 @app.post("/api/ingest-audio")
-async def ingest_audio(
-    user_id: Optional[str] = Form(default=None),
-    thread_id: str = Form(...),
-    file: UploadFile = File(...),
-    replace: bool = Form(False),
-):
+async def ingest_audio(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
     if replace:
         _reset_vector_store(user_id, thread_id)
-
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
-
     result = _ingest_audio_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
     return result
-from fastapi.responses import JSONResponse
+
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-
-
-        
-    # ---------------------------------------------------
-
     hits = retrieve_similar_chunks(req.query, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     if not hits:
         return {"success": True, "answer": "Not stated in document.", "sources": []}
-
     context_blobs = []
     sources = []
     for r in hits:
@@ -289,59 +250,50 @@ def api_ask(req: AskReq):
         fn = r.get("file_name") or "document"
         context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
         sources.append({"file_name": fn, "preview": text[:300]})
-
     context = "\n\n".join(context_blobs)
     system_prompt = _build_strict_prompt(context)
     user_prompt = req.query.strip()
     answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
-
     return {"success": True, "answer": answer.strip(), "sources": sources}
 
+@app.post("/api/suggest-case-law")
+def api_suggest_case_law(req: CaseLawReq):
+    try:
+        result = suggest_case_law(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error suggesting case law: {e}")
+
 @app.post("/api/transcribe-audio")
-async def transcribe_audio(
-    file: UploadFile,
-    user_id: str = Form(""),
-    thread_id: str = Form(""),
-):
+async def transcribe_audio(file: UploadFile, user_id: str = Form(""), thread_id: str = Form("")):
     try:
         audio_bytes = await file.read()
-        
         try:
             AudioSegment.from_file(io.BytesIO(audio_bytes))
         except Exception as e:
-            error_message = f"Pydub/FFMPEG failed to decode audio. Error: {e}"
-            return JSONResponse(
-                content={"success": False, "transcript": f"(speech error: {error_message})"},
-                status_code=422,
-            )
-
-        transcript = speech_to_text_from_bytes(
-            content=audio_bytes,
-            language_code="en-US",
-            enable_automatic_punctuation=True,
-        )
-
+            return JSONResponse(content={"success": False, "transcript": f"(speech error: Pydub/FFMPEG failed to decode audio. Error: {e})"}, status_code=422)
+        transcript = speech_to_text_from_bytes(content=audio_bytes, language_code="en-US", enable_automatic_punctuation=True)
         if not transcript or transcript.startswith("(speech error"):
-            return JSONResponse(
-                content={"success": False, "transcript": transcript or ""},
-                status_code=422,
-            )
-
+            return JSONResponse(content={"success": False, "transcript": transcript or ""}, status_code=422)
         return {"success": True, "transcript": transcript}
-
     except Exception as e:
-        return JSONResponse(
-            content={"success": False, "error": str(e)}, status_code=500
-        )
+        return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
 
 @app.post("/api/download/faq")
 def download_faq(req: FAQDownloadReq):
     out = generate_faq(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
-    faq_text = out.get("faq_markdown") or ""
-    if not faq_text.strip():
+    faq_list = out.get("faq", [])
+    if not faq_list:
         raise HTTPException(status_code=422, detail={"message": "Empty FAQ content."})
+    faq_text_parts = []
+    for item in faq_list:
+        faq_text_parts.append(f"### Q: {item.get('question', '')}")
+        faq_text_parts.append(f"A: {item.get('answer', '')}")
+    faq_text = "\n\n".join(faq_text_parts)
     base = f"thread_{req.thread_id}"
     return _stream_text_file(faq_text, f"{base}_faq.md", media_type="text/markdown; charset=utf-8")
 
@@ -350,9 +302,14 @@ def download_timeline(req: TimelineDownloadReq):
     out = generate_timeline(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
-    timeline_text = out.get("timeline_markdown") or ""
-    if not timeline_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
+    timeline_list = out.get("timeline", [])
+    if not timeline_list:
+        message = out.get("message", "Empty timeline content.")
+        raise HTTPException(status_code=422, detail={"message": message})
+    timeline_text_parts = ["| Date | Event |", "|---|---|"]
+    for item in timeline_list:
+        timeline_text_parts.append(f"| {item.get('date', '')} | {item.get('event', '')} |")
+    timeline_text = "\n".join(timeline_text_parts)
     base = f"thread_{req.thread_id}"
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
 
@@ -390,10 +347,5 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
             if isinstance(md.get(key), str) and md[key].strip():
                 preview = md[key][:120]
                 break
-        out.append({
-            "id": m.get("id"),
-            "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0,
-            "keys": list(md.keys())[:20],
-            "preview": preview,
-        })
+        out.append({"id": m.get("id"), "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0, "keys": list(md.keys())[:20], "preview": preview})
     return {"namespace": ns, "samples": out}
