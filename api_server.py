@@ -24,6 +24,7 @@ from backend_rag.analysis import (
     generate_faq,
     generate_timeline,
     suggest_case_law,
+    generate_predictive_output, 
 )
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
@@ -72,6 +73,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------- Models -----------------------------------------
 class StudyGuideReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
+class PredictiveOutputReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
 
@@ -212,6 +217,16 @@ def timeline(req: TimelineReq):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
 
+@app.post("/api/predictive-output")
+def api_predictive_output(req: PredictiveOutputReq):
+    try:
+        result = generate_predictive_output(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating predictive output: {e}")
+    
 @app.post("/api/ingest")
 async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
     if replace:
