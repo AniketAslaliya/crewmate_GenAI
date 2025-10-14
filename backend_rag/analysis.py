@@ -497,85 +497,37 @@ def _clean_scraped_text_heuristic(soup: BeautifulSoup) -> str:
     cleaned_lines = [line for line in content_lines if not any(phrase.lower() in line.lower() for phrase in stop_phrases)]
     return "\n".join(cleaned_lines).strip()
 
-
-import os
-import re
-from typing import Dict, List
-from urllib.parse import quote
-import cloudscraper
-from bs4 import BeautifulSoup
-
-# This is the only function you need to replace in analysis.py
-
 def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
-    """
-    [UPGRADED] Performs search and robust scraping via a proxy service to avoid being blocked.
-    """
-    if not queries: 
-        return []
-
-    # --- MODIFIED: Read the API key from environment variables ---
-    SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
-
+    if not queries: return []
     scraper = cloudscraper.create_scraper()
     all_results = {}
-
     for query in queries:
         full_query = f'"{query}"'
-        
+        print(f"--- [AGENT 2] Searching with query: '{full_query}' ---")
         try:
-            target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
-            request_url = target_url
-
-            # --- MODIFIED: Build the proxy URL if a key is available ---
-            if SCRAPER_API_KEY:
-                print(f"--- [AGENT 2] Searching via proxy with query: '{full_query}' ---")
-                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={quote(target_url)}"
-                request_url = proxy_url
-            else:
-                print(f"--- [AGENT 2] WARNING: No proxy key found. Making a direct request which may be blocked on deployed servers. ---")
-                print(f"--- [AGENT 2] Searching directly with query: '{full_query}' ---")
-            
-            # Use a longer timeout for proxy requests
-            response = scraper.get(request_url, timeout=45)
+            search_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
+            response = scraper.get(search_url, timeout=20)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            results = soup.find_all('div', class_='result')
-            for result in results:
+            for result in soup.find_all('div', class_='result'):
                 if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
                     case_url = "https://indiankanoon.org" + link['href']
                     if case_url not in all_results:
                         all_results[case_url] = {"case_name": link.get_text(strip=True), "url": case_url}
         except Exception as e:
             print(f"--- [AGENT 2] Search failed for query '{query}': {e} ---")
-
     unique_cases = list(all_results.values())[:max_cases]
     if not unique_cases:
         print("--- [AGENT 2] No relevant cases found. ---")
         return []
-    
     print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
-
     for case in unique_cases:
         try:
-            target_url = case['url']
-            request_url = target_url
-
-            # --- MODIFIED: Also use proxy for scraping individual case pages ---
-            if SCRAPER_API_KEY:
-                print(f"--- [AGENT 2] Scraping page via proxy: {target_url} ---")
-                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={quote(target_url)}"
-                request_url = proxy_url
-            else:
-                 print(f"--- [AGENT 2] Scraping page directly: {target_url} ---")
-
-            page_response = scraper.get(request_url, timeout=45)
+            print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
+            page_response = scraper.get(case['url'], timeout=20)
             page_response.raise_for_status()
             case_soup = BeautifulSoup(page_response.text, 'html.parser')
-            
-            cleaned_text = _clean_scraped_text_heuristic(case_soup) # Assumes this helper function exists in your file
-            
+            cleaned_text = _clean_scraped_text_heuristic(case_soup)
             if len(cleaned_text) > 300:
                 case['raw_text'] = cleaned_text[:25000]
                 print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
@@ -584,8 +536,7 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
                 print(f"--- [AGENT 2] FAILED: Could not extract sufficient text for '{case['case_name']}'.")
         except Exception as e:
             case['raw_text'] = ""
-            print(f"--- [AGENT 2] FAILED to scrape '{case.get('url')}': {e} ---")
-    
+            print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
     return [case for case in unique_cases if case.get('raw_text')]
 
 def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
@@ -662,4 +613,85 @@ def suggest_case_law(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
 
     except Exception as e:
         print(f"--- [ERROR] An unexpected error occurred in suggest_case_law: {e}")
+        return {"success": False, "message": f"An unexpected error occurred: {e}"}
+    
+def _predictive_agent1_extract_facts(context: str) -> str:
+    """Agent 1: Scans the document to identify and create a structured list of all key facts, obligations, and liabilities."""
+    print("--- [Predictive Agent 1] Extracting critical facts... ---")
+    system_prompt = "You are a legal fact-extraction agent. Scan the provided document and create a structured, bulleted markdown list of all key facts, obligations, liabilities, and important figures (names, dates, amounts). Be concise and objective."
+    user_prompt = f"Document Text:\n---\n{context}\n---"
+    facts_summary = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+    print(f"--- [Predictive Agent 1] Extracted Facts: \n{facts_summary[:500]}...")
+    return facts_summary
+
+# --- UPDATED: Agent 2 now performs comprehensive & adversarial analysis ---
+def _predictive_agent2_comprehensive_analysis(facts_summary: str) -> str:
+    """Agent 2: Assesses facts for primary strengths/risks AND from an adversarial perspective."""
+    print("--- [Predictive Agent 2] Performing comprehensive (primary & adversarial) analysis... ---")
+    system_prompt = (
+        "You are a senior legal analyst. Based on the following facts, provide a two-part analysis.\n\n"
+        "**Part 1: Primary Analysis**: From the perspective of the document's main party, identify the key 'Legal Strengths' and 'Potential Risks'.\n\n"
+        "**Part 2: Adversarial Analysis**: Now, acting as the 'Devil's Advocate' or opposing counsel, identify the 'Counter-Arguments / Opponent's Strengths'.\n\n"
+        "Structure your output with these three clear, bulleted markdown headings."
+    )
+    user_prompt = f"Extracted Facts:\n---\n{facts_summary}\n---"
+    risk_analysis = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
+    print(f"--- [Predictive Agent 2] Comprehensive Analysis: \n{risk_analysis[:500]}...")
+    return risk_analysis
+
+# --- UPDATED: Agent 3 now synthesizes the comprehensive analysis ---
+def _predictive_agent3_synthesize_prediction(facts_summary: str, comprehensive_analysis: str) -> Dict[str, Any]:
+    """Agent 3: Combines facts and the two-part analysis to generate a balanced predictive summary."""
+    print("--- [Predictive Agent 3] Synthesizing balanced prediction... ---")
+    system_prompt = (
+        "You are a senior legal strategist. You have been given a list of facts, a primary analysis of strengths/risks, and an adversarial analysis of counter-arguments. "
+        "Your task is to synthesize ALL of this information into a balanced predictive forecast. Generate a summary of 2-3 potential future outcomes or scenarios. "
+        "For each outcome, your reasoning should be robust and consider both sides of the argument. "
+        "Conclude with a standard legal disclaimer. "
+        "The output MUST be a valid JSON object with two keys: `scenarios` (a list of objects, each with `outcome` and `reasoning` keys) and `disclaimer` (a string)."
+    )
+    user_prompt = f"Facts Summary:\n{facts_summary}\n\nComprehensive Analysis (Both Sides):\n{comprehensive_analysis}\n\nNow, generate the balanced predictive forecast as a JSON object."
+    json_string = call_model_system_then_user(system_prompt, user_prompt, temperature=0.4)
+    print(f"--- [Predictive Agent 3] Generated Prediction JSON: {json_string[:500]}...")
+    try:
+        json_match = re.search(r'\{.*\}', json_string, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group(0))
+        return {} # Return empty dict on failure
+    except json.JSONDecodeError:
+        print("--- [Predictive Agent 3] FAILED to parse JSON from LLM response.")
+        return {}
+
+# --- UPDATED: The main orchestrator function ---
+def generate_predictive_output(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """Orchestrates the multi-agent pipeline for generating a predictive output with adversarial analysis."""
+    try:
+        index = get_or_create_index(dim=384)
+        ns = namespace(user_id, thread_id)
+        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=25)
+        if not query_result:
+            return {"success": False, "message": "No document excerpts available for analysis."}
+        context = "\n\n---\n\n".join([hit.get("metadata", {}).get("text", "").strip() for hit in query_result])
+        if len(context.strip()) < 100:
+            return {"success": False, "message": "Document content is too short for meaningful analysis."}
+        
+        # --- Agent 1: Fact Extraction ---
+        facts = _predictive_agent1_extract_facts(context)
+        if not facts.strip():
+            return {"success": False, "message": "Agent 1 failed to extract any facts."}
+            
+        # --- Agent 2: Comprehensive & Adversarial Analysis ---
+        analysis = _predictive_agent2_comprehensive_analysis(facts)
+        if not analysis.strip():
+            return {"success": False, "message": "Agent 2 failed to produce a comprehensive analysis."}
+            
+        # --- Agent 3: Prediction Synthesis ---
+        prediction = _predictive_agent3_synthesize_prediction(facts, analysis)
+        if not prediction or "scenarios" not in prediction:
+            return {"success": False, "message": "Agent 3 failed to synthesize a prediction."}
+            
+        return {"success": True, "prediction": prediction}
+
+    except Exception as e:
+        print(f"--- [ERROR] An unexpected error occurred in generate_predictive_output: {e}")
         return {"success": False, "message": f"An unexpected error occurred: {e}"}
