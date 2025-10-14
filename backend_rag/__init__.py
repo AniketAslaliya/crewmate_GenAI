@@ -2,14 +2,14 @@ from __future__ import annotations
 
 # Public API re-exports
 
-
-# backend_rag/_init_.py
 from .ingest import ingest_file, thread_has_ingested_file
 from .retrieval import retrieve_similar_chunks
 from .analysis import (
     generate_study_guide,
     quick_analyze_thread,
-    get_term_context,
+    generate_faq,
+    generate_timeline,
+    suggest_case_law
 )
 
 from .chat import chatbot
@@ -20,17 +20,19 @@ from .threads import (
     get_user_for_thread,
 )
 
+# This list defines what gets imported when a user does 'from backend_rag import *'
 _all_ = [
     # Ingest
     "ingest_file",
     "thread_has_ingested_file",
     # Retrieval
     "retrieve_similar_chunks",
-    "retrieve_all_threads",
     # Analysis
-    "quick_analyze_for_thread",
+    "quick_analyze_thread",
     "generate_study_guide",
-    "get_term_context",
+    "generate_faq",
+    "generate_timeline",
+    "suggest_case_law",
     # Chatbot graph
     "chatbot",
     # Threads/users helpers
