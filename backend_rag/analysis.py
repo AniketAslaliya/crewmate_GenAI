@@ -497,37 +497,85 @@ def _clean_scraped_text_heuristic(soup: BeautifulSoup) -> str:
     cleaned_lines = [line for line in content_lines if not any(phrase.lower() in line.lower() for phrase in stop_phrases)]
     return "\n".join(cleaned_lines).strip()
 
+
+import os
+import re
+from typing import Dict, List
+from urllib.parse import quote
+import cloudscraper
+from bs4 import BeautifulSoup
+
+# This is the only function you need to replace in analysis.py
+
 def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
-    if not queries: return []
+    """
+    [UPGRADED] Performs search and robust scraping via a proxy service to avoid being blocked.
+    """
+    if not queries: 
+        return []
+
+    # --- MODIFIED: Read the API key from environment variables ---
+    SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
+
     scraper = cloudscraper.create_scraper()
     all_results = {}
+
     for query in queries:
         full_query = f'"{query}"'
-        print(f"--- [AGENT 2] Searching with query: '{full_query}' ---")
+        
         try:
-            search_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
-            response = scraper.get(search_url, timeout=20)
+            target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
+            request_url = target_url
+
+            # --- MODIFIED: Build the proxy URL if a key is available ---
+            if SCRAPER_API_KEY:
+                print(f"--- [AGENT 2] Searching via proxy with query: '{full_query}' ---")
+                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={quote(target_url)}"
+                request_url = proxy_url
+            else:
+                print(f"--- [AGENT 2] WARNING: No proxy key found. Making a direct request which may be blocked on deployed servers. ---")
+                print(f"--- [AGENT 2] Searching directly with query: '{full_query}' ---")
+            
+            # Use a longer timeout for proxy requests
+            response = scraper.get(request_url, timeout=45)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
-            for result in soup.find_all('div', class_='result'):
+            
+            results = soup.find_all('div', class_='result')
+            for result in results:
                 if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
                     case_url = "https://indiankanoon.org" + link['href']
                     if case_url not in all_results:
                         all_results[case_url] = {"case_name": link.get_text(strip=True), "url": case_url}
         except Exception as e:
             print(f"--- [AGENT 2] Search failed for query '{query}': {e} ---")
+
     unique_cases = list(all_results.values())[:max_cases]
     if not unique_cases:
         print("--- [AGENT 2] No relevant cases found. ---")
         return []
+    
     print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
+
     for case in unique_cases:
         try:
-            print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
-            page_response = scraper.get(case['url'], timeout=20)
+            target_url = case['url']
+            request_url = target_url
+
+            # --- MODIFIED: Also use proxy for scraping individual case pages ---
+            if SCRAPER_API_KEY:
+                print(f"--- [AGENT 2] Scraping page via proxy: {target_url} ---")
+                proxy_url = f"http://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={quote(target_url)}"
+                request_url = proxy_url
+            else:
+                 print(f"--- [AGENT 2] Scraping page directly: {target_url} ---")
+
+            page_response = scraper.get(request_url, timeout=45)
             page_response.raise_for_status()
             case_soup = BeautifulSoup(page_response.text, 'html.parser')
-            cleaned_text = _clean_scraped_text_heuristic(case_soup)
+            
+            cleaned_text = _clean_scraped_text_heuristic(case_soup) # Assumes this helper function exists in your file
+            
             if len(cleaned_text) > 300:
                 case['raw_text'] = cleaned_text[:25000]
                 print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
@@ -536,7 +584,8 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
                 print(f"--- [AGENT 2] FAILED: Could not extract sufficient text for '{case['case_name']}'.")
         except Exception as e:
             case['raw_text'] = ""
-            print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
+            print(f"--- [AGENT 2] FAILED to scrape '{case.get('url')}': {e} ---")
+    
     return [case for case in unique_cases if case.get('raw_text')]
 
 def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
