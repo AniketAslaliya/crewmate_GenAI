@@ -392,13 +392,7 @@ async def ingest_audio(user_id: Optional[str] = Form(default=None), thread_id: s
 # In api_server.py
 import json
 import html
-from fastapi import FastAPI
-from backend_rag.Translation import detect_language, translate_text
-from backend_rag.vectorstore_pinecone import retrieve_similar_chunks
-from backend_rag.models import AskReq
-from backend_rag.llm import call_model_system_then_user, _build_strict_prompt
 
-app = FastAPI()
 
 @app.post("/api/ask")
 def api_ask(req: AskReq):
