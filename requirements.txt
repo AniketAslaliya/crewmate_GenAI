@@ -13,7 +13,7 @@ langchain-google-genai==0.0.9
 google-generativeai==0.3.2  # ✅ compatible with langchain-google-genai==0.0.9
 
 # ✅ Core dependencies
-pinecone-client
+pinecone  # ✅ renamed package, replaces pinecone-client
 sentence-transformers
 numpy==1.26.4  # ✅ safest for torch and transformers compatibility
 
