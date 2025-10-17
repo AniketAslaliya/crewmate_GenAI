@@ -389,53 +389,76 @@ async def ingest_audio(user_id: Optional[str] = Form(default=None), thread_id: s
 
 # In api_server.py
 
+# In api_server.py
+
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-    # --- NEW: Translate the incoming query to English first ---
+    # --- Translate the incoming query to English first ---
     query_to_process = req.query
-    query_lang_detection = detect_language(req.query)
-    query_lang = 'en'
-    if query_lang_detection and query_lang_detection.get('language') != 'en':
-        query_lang = query_lang_detection.get('language')
-        translated_query = translate_text(req.query, target_language='en')
-        if translated_query:
-            query_to_process = translated_query
-    # --- End of New Step ---
+    if req.query.strip(): # Only translate if there's a query
+        query_lang_detection = detect_language(req.query)
+        if query_lang_detection and query_lang_detection.get('language') != 'en':
+            translated_query = translate_text(req.query, target_language='en')
+            if translated_query:
+                query_to_process = translated_query
 
+    # --- Retrieve context from vector store ---
     hits = retrieve_similar_chunks(query_to_process, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     
-    if not hits:
-        # Default "not found" response
-        not_found_msg = "Not stated in document."
-        if req.output_language and req.output_language != 'en':
-            translated_not_found = translate_text(not_found_msg, target_language=req.output_language)
-            not_found_msg = translated_not_found or not_found_msg
-        return {"success": True, "answer": not_found_msg, "sources": []}
-
     context_blobs = []
     sources = []
-    for r in hits:
-        text = (r.get("text") or "")[:1200].replace("\n", " ")
-        fn = r.get("file_name") or "document"
-        context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
-        sources.append({"file_name": fn, "preview": text[:300]})
-
-    context = "\n\n".join(context_blobs)
+    if hits:
+        for r in hits:
+            text = (r.get("text") or "").replace("\n", " ")
+            fn = r.get("file_name") or "document"
+            context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
+            sources.append({"file_name": fn, "preview": text[:300]})
+    
+    context = "\n\n".join(context_blobs) if context_blobs else "No relevant document excerpts found."
+    
+    # --- Get the English JSON string from the AI ---
     system_prompt = _build_strict_prompt(context)
     user_prompt = query_to_process.strip()
-    
-    # The LLM always generates the answer in English
-    english_answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+    english_json_string = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
 
-    # --- NEW: Translate the final answer if requested ---
-    final_answer = english_answer.strip()
-    if req.output_language and req.output_language != 'en':
-        translated_answer = translate_text(final_answer, target_language=req.output_language)
-        if translated_answer:
-            final_answer = translated_answer
-    # --- End of New Step ---
+    # --- NEW: Parse the string and translate ONLY the values ---
+    try:
+        # 1. Parse the string into a dictionary (fixes the "&quot;" issue)
+        english_dict = json.loads(english_json_string)
 
-    return {"success": True, "answer": final_answer, "sources": sources}
+        # 2. Translate values if requested
+        if req.output_language and req.output_language != 'en':
+            # Translate 'plain_answer'
+            if english_dict.get("plain_answer"):
+                translated = translate_text(english_dict["plain_answer"], target_language=req.output_language)
+                if translated: english_dict["plain_answer"] = translated
+            
+            # Translate 'reason' inside 'evaluation'
+            if english_dict.get("evaluation", {}).get("reason"):
+                translated = translate_text(english_dict["evaluation"]["reason"], target_language=req.output_language)
+                if translated: english_dict["evaluation"]["reason"] = translated
+            
+            # Translate 'next_steps' array
+            if english_dict.get("next_steps"):
+                steps = [s for s in english_dict["next_steps"] if isinstance(s, str)]
+                translated_steps = [translate_text(s, req.output_language) or s for s in steps]
+                english_dict["next_steps"] = translated_steps
+            
+            # Translate 'followup_questions' array
+            if english_dict.get("followup_questions"):
+                questions = [q for q in english_dict["followup_questions"] if isinstance(q, str)]
+                translated_questions = [translate_text(q, req.output_language) or q for q in questions]
+                english_dict["followup_questions"] = translated_questions
+
+        # 3. Return the final object
+        return {"success": True, "answer": english_dict, "sources": sources}
+
+    except json.JSONDecodeError:
+        # If the AI fails to return valid JSON, return the raw string as a fallback
+        return {"success": True, "answer": {"plain_answer": english_json_string.strip()}, "sources": sources}
+    except Exception as e:
+        # Handle other potential errors
+        return {"success": False, "answer": {"plain_answer": f"An unexpected error occurred: {e}"}, "sources": sources}
 
 @app.post("/api/suggest-case-law")
 def api_suggest_case_law(req: CaseLawReq):
