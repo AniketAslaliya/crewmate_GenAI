@@ -25,5 +25,5 @@ httpx
 beautifulsoup4
 cloudscraper
 google-cloud-translate==2.0.1
-google-generativeai
+google-generativeai 
 
