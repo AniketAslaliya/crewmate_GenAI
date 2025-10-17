@@ -274,6 +274,7 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
             "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
             "- Do NOT invent numbers, dates, obligations, or parties.\n"
             "- Output format (Markdown): use '### Q: ...' then on next line 'A: ...'. No extra commentary.\n"
+            "- CRITICAL RULE: The keys in the JSON objects ('Q', 'A') MUST be in English. Do not translate them.\n"
             ).format(nq=num_questions)
 
         user_prompt = (
