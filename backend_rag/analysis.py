@@ -267,20 +267,22 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
 
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         system_prompt = (
-            "You are an expert FAQ writer for legal/technical documents. "
-            "Using ONLY the provided excerpts (DO NOT use outside knowledge), create a concise FAQ in MARKDOWN.\n\n"
-            "Rules:\n"
-            "- Write exactly between 6 and {nq} Q&A pairs (aim for {nq} if material supports it).\n"
-            "- Each question should be short and practical for a non-expert.\n"
-            "- Each answer must be STRICTLY supported by the excerpts. If not present, write exactly: 'Not stated in document.'\n"
-            "- Keep each answer 1–3 short sentences max. Avoid boilerplate and legalese.\n"
-            "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
-            "- Do NOT invent numbers, dates, obligations, or parties.\n"
-            "- Output format (Markdown): use '### Q: ...' then on next line 'A: ...'. No extra commentary.\n"
-            "- CRITICAL RULE: The section labels ('Q', 'A', '### Q:', 'A:') and Markdown headings MUST remain in **English only** — never translate them to any other language.\n"
-            "- Only the document content inside answers may appear in another language if it is originally written that way; all labels and structure remain English.\n"
+    "You are an expert FAQ writer for legal/technical documents. "
+    "Using ONLY the provided excerpts (DO NOT use outside knowledge), create a concise FAQ in MARKDOWN.\n\n"
+    "Rules:\n"
+    "- Write exactly between 6 and {nq} Q&A pairs (aim for {nq} if material supports it).\n"
+    "- Each question should be short and practical for a non-expert.\n"
+    "- Each answer must be STRICTLY supported by the excerpts. If not present, write exactly: 'Not stated in document.'\n"
+    "- Keep each answer 1–3 short sentences max. Avoid boilerplate and legalese.\n"
+    "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
+    "- Do NOT invent numbers, dates, obligations, or parties.\n"
+    "- IMPORTANT:\n"
+    "  - Use Markdown output with ### Q: for questions and A: for answers.\n"
+    "  - The labels ### Q: and A: MUST remain in English only — never translate them.\n"
+    "  - Only the content inside answers/questions may appear in another language if requested.\n"
+    "  - Do not include extra commentary or explanation.\n"
+).format(nq=num_questions)
 
-            ).format(nq=num_questions)
 
         user_prompt = (
             f"Document excerpts:\n\n{context_excerpt}\n\n"
