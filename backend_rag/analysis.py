@@ -199,12 +199,14 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
         context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
         
         system_prompt = (
-            "You are a detailed legal document analyst.\n"
-            "Using only the provided document excerpts, produce:\n"
-            "- A plain-English statement of what this document is (e.g., contract, agreement, policy) and its general purpose.\n"
-            "- A comprehensive, long-form plain-English summary aimed at a non-lawyer, covering all key topics and details in the text.\n"
-            "- A single-line confidence indicator (High/Medium/Low).\n"
-        )
+    "You are a detailed legal document analyst.\n"
+    "Using only the provided document excerpts, produce:\n"
+    "- A plain-English statement of what this document is and its purpose.\n"
+    "- A comprehensive, long-form plain-English summary aimed at a non-lawyer.\n"
+    "- A single-line confidence indicator (High/Medium/Low).\n"
+    "- CRITICAL RULE: All section headings, bullet points, and labels MUST remain in English only. Do not translate any Markdown or label text.\n"
+)
+
 
         user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
 
@@ -233,10 +235,11 @@ def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[
         paragraph = m.group(0) if m else text[:400]
 
         q_prompt_sys = (
-            "You are a legal assistant. Explain the requested term in plain English in the context of the provided paragraph. "
-            "Keep the definition short (1-2 sentences), give one concrete example relevant to the document, and list any immediate "
-            "legal implications or actions (one line). If the paragraph does not define the term, say 'Not stated in document.'"
-        )
+    "You are a legal assistant. Explain the requested term in plain English in the context of the provided paragraph. "
+    "Keep the definition short (1-2 sentences), give one concrete example, and list any immediate legal implications.\n"
+    "- CRITICAL RULE: Do not translate the keys or labels; any JSON keys or Markdown headings must remain in English.\n"
+)
+
         q_user = f"Term: {term}\n\nParagraph:\n{paragraph}\n\nDefinition:"
 
         definition = call_model_system_then_user(q_prompt_sys, q_user, temperature=0.2)
@@ -274,7 +277,9 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
             "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
             "- Do NOT invent numbers, dates, obligations, or parties.\n"
             "- Output format (Markdown): use '### Q: ...' then on next line 'A: ...'. No extra commentary.\n"
-            "- CRITICAL RULE: The keys in the JSON objects ('Q', 'A') MUST be in English. Do not translate them.\n"
+            "- CRITICAL RULE: The section labels ('Q', 'A', '### Q:', 'A:') and Markdown headings MUST remain in **English only** — never translate them to any other language.\n"
+            "- Only the document content inside answers may appear in another language if it is originally written that way; all labels and structure remain English.\n"
+
             ).format(nq=num_questions)
 
         user_prompt = (
