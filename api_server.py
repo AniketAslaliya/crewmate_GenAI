@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 from typing import Optional
 import re
+import json
 
 # Ensure all backend modules are correctly imported
 # In api_server.py, near other backend imports
