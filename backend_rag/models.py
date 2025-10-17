@@ -12,6 +12,7 @@ from .config import DEFAULT_GOOGLE_MODEL, DEFAULT_MODEL_TEMPERATURE
 # Single shared chat model (Gemini via LangChain wrapper)
 model = ChatGoogleGenerativeAI(
     model=DEFAULT_GOOGLE_MODEL,
+    convert_system_message_to_human=True,
     temperature=DEFAULT_MODEL_TEMPERATURE,
     google_api_key=os.getenv("GOOGLE_API_KEY"),
 )
