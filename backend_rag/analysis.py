@@ -369,6 +369,8 @@ def _timeline_agent2_structure_and_clean(raw_events: str) -> List[Dict]:
         "\n"
         "**Example Output (Notice the 1996 precedent is removed):**\n"
         '[{"date": "01/2013", "event": "The Respondent-wife left the matrimonial home."}, {"date": "02/09/2013", "event": "The wife filed an application for interim maintenance."}]'
+        # Add this rule to the system_prompt
+        "CRITICAL RULE: The keys in the JSON objects ('date', 'event') MUST be in English. Do not translate them."
     )
     user_prompt = f"Raw Data to Clean and Review:\n---\n{raw_events}\n---"
     json_string = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
@@ -543,7 +545,7 @@ def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) ->
     raw_text = case.get("raw_text", "")
     if len(raw_text) < 300: return None
     system_prompt = (
-        f"You are an expert legal analyst for Indian law, specializing in the '{domain}'. Your task is to analyze a historical court case and explain its relevance to a user's current situation within this specific legal domain. Respond in a strict JSON format.\n\n"
+        f"You are an expert legal analyst for Indian law, specializing in the '{domain}'. Your task is to analyze a historical court case and explain its relevance to a user's current situation within this specific legal domain. Respond in a strict JSON format. CRITICAL RULE: The keys in the JSON output ('is_useful', 'reason_if_not_useful', etc.) MUST be in English and must not be translated.\n\n"
         "Output JSON schema:\n"
         "{\n"
         "  \"is_useful\": true|false,\n"
@@ -649,6 +651,7 @@ def _predictive_agent3_synthesize_prediction(facts_summary: str, comprehensive_a
         "For each outcome, your reasoning should be robust and consider both sides of the argument. "
         "Conclude with a standard legal disclaimer. "
         "The output MUST be a valid JSON object with two keys: `scenarios` (a list of objects, each with `outcome` and `reasoning` keys) and `disclaimer` (a string)."
+        "CRITICAL RULE: The keys in the JSON output ('scenarios', 'outcome', 'reasoning', 'disclaimer') MUST be in English and must not be translated."
     )
     user_prompt = f"Facts Summary:\n{facts_summary}\n\nComprehensive Analysis (Both Sides):\n{comprehensive_analysis}\n\nNow, generate the balanced predictive forecast as a JSON object."
     json_string = call_model_system_then_user(system_prompt, user_prompt, temperature=0.4)
