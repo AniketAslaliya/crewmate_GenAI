@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 from typing import Dict, Optional
+import html
 
 # --- Google Translate (optional) ---
 try:
@@ -81,8 +82,10 @@ def translate_text(text: str, target_language: str) -> Optional[str]:
         translated = api_response.get('translatedText')
         if not translated:
             print("--- [TRANSLATION] WARNING: 'translatedText' key not found in API response or its value is empty.")
-        
+            return None
+        translated = html.unescape(translated)
         return translated
+        
 
     except Exception as e:
         print(f"--- [TRANSLATION] FAILED: An exception occurred during the API call: {e}")
