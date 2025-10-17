@@ -390,12 +390,19 @@ async def ingest_audio(user_id: Optional[str] = Form(default=None), thread_id: s
 # In api_server.py
 
 # In api_server.py
+import json
+import html
+from fastapi import FastAPI
+from backend_rag.Translation import detect_language, translate_text
+from backend_rag.vectorstore_pinecone import retrieve_similar_chunks
+from backend_rag.models import AskReq
+from backend_rag.llm import call_model_system_then_user, _build_strict_prompt
 
+app = FastAPI()
 
-    
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-    # --- NEW: Translate the incoming query to English first ---
+    # --- Step 1: Translate query to English if needed ---
     query_to_process = req.query
     query_lang_detection = detect_language(req.query)
     query_lang = 'en'
@@ -404,20 +411,19 @@ def api_ask(req: AskReq):
         translated_query = translate_text(req.query, target_language='en')
         if translated_query:
             query_to_process = translated_query
-    # --- End of New Step ---
 
+    # --- Step 2: Retrieve similar chunks ---
     hits = retrieve_similar_chunks(query_to_process, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     
     if not hits:
-        # Default "not found" response
         not_found_msg = "Not stated in document."
         if req.output_language and req.output_language != 'en':
             translated_not_found = translate_text(not_found_msg, target_language=req.output_language)
             not_found_msg = translated_not_found or not_found_msg
         return {"success": True, "answer": not_found_msg, "sources": []}
 
-    context_blobs = []
-    sources = []
+    # --- Step 3: Prepare context ---
+    context_blobs, sources = [], []
     for r in hits:
         text = (r.get("text") or "")[:1200].replace("\n", " ")
         fn = r.get("file_name") or "document"
@@ -425,24 +431,31 @@ def api_ask(req: AskReq):
         sources.append({"file_name": fn, "preview": text[:300]})
 
     context = "\n\n".join(context_blobs)
-
-
-
     system_prompt = _build_strict_prompt(context)
     user_prompt = query_to_process.strip()
-    
-    # The LLM always generates the answer in English
-    english_answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
 
-    # --- NEW: Translate the final answer if requested ---
+    # --- Step 4: Get English LLM answer ---
+    english_answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
     final_answer = english_answer.strip()
+
+    # --- Step 5: Translate answer if needed ---
     if req.output_language and req.output_language != 'en':
         translated_answer = translate_text(final_answer, target_language=req.output_language)
         if translated_answer:
             final_answer = translated_answer
-    # --- End of New Step ---
+
+    # --- Step 6: Decode HTML entities and JSON if applicable ---
+    final_answer = html.unescape(final_answer)  # Removes &quot;, &#39;, etc.
+
+    # Try parsing JSON-looking strings safely
+    try:
+        maybe_json = json.loads(final_answer)
+        final_answer = maybe_json  # Keep as dict if valid JSON
+    except (json.JSONDecodeError, TypeError):
+        pass  # Keep as plain text if not JSON
 
     return {"success": True, "answer": final_answer, "sources": sources}
+
 
 @app.post("/api/suggest-case-law")
 def api_suggest_case_law(req: CaseLawReq):
