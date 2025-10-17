@@ -54,39 +54,45 @@ def detect_language(text: str) -> Optional[Dict]:
         return None
 
 # In backend_rag/translation.py
-
 def translate_text(text: str, target_language: str) -> Optional[str]:
     """
-    Translates text into the target language with detailed logging.
+    Translates text into the target language while preserving Markdown labels and field names.
     """
     print(f"\n--- [TRANSLATION] Attempting to translate to '{target_language}' ---")
     
-    # 1. Log the input text to ensure it's not empty
     if not text or not text.strip():
-        print("--- [TRANSLATION] FAILED: Input text is empty or just whitespace.")
+        print("--- [TRANSLATION] FAILED: Input text is empty or whitespace.")
         return None
-    print(f"--- [TRANSLATION] Input text received (first 100 chars): '{text[:100].strip()}'...")
 
-    # 2. Check for the client
+    # Protect Markdown labels
+    placeholder_map = {
+        "### Q:": "___Q_PLACEHOLDER___",
+        "A:": "___A_PLACEHOLDER___"
+    }
+    protected_text = text
+    for k, v in placeholder_map.items():
+        protected_text = protected_text.replace(k, v)
+
     client = _get_translate_client()
     if not client:
-        print("--- [TRANSLATION] FAILED: Translate client is not available. Check credentials.")
+        print("--- [TRANSLATION] FAILED: Translate client not available.")
         return None
-    print("--- [TRANSLATION] Google Translate client is available.")
 
-    # 3. Call the API and log the raw response
     try:
-        api_response = client.translate(text, target_language=target_language)
-        print(f"--- [TRANSLATION] RAW RESPONSE FROM GOOGLE API: {api_response}")
-
+        api_response = client.translate(protected_text, target_language=target_language)
         translated = api_response.get('translatedText')
         if not translated:
-            print("--- [TRANSLATION] WARNING: 'translatedText' key not found in API response or its value is empty.")
+            print("--- [TRANSLATION] FAILED: 'translatedText' not in API response.")
             return None
+
         translated = html.unescape(translated)
+
+        # Restore placeholders
+        for k, v in placeholder_map.items():
+            translated = translated.replace(v, k)
+
         return translated
-        
 
     except Exception as e:
-        print(f"--- [TRANSLATION] FAILED: An exception occurred during the API call: {e}")
+        print(f"--- [TRANSLATION] FAILED: Exception during the API call: {e}")
         return None
