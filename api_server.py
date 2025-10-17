@@ -273,19 +273,18 @@ def health():
 
 @app.post("/api/study-guide")
 def study_guide(req: StudyGuideReq):
+    print("\n--- SERVER CHECK: The /api/study-guide endpoint was called. ---")
     try:
         result = generate_study_guide(req.user_id, req.thread_id)
-
-        # --- Translation Logic ---
-        if result.get("success") and req.output_language and req.output_language != 'en':
+        if req.output_language and req.output_language != 'en':
             english_text = result.get("study_guide", "")
             if english_text:
-                translated_text = translate_text(english_text, target_language=req.output_language)
+                translated_text = translate_text(english_text, req.output_language)
                 if translated_text:
                     result["study_guide"] = translated_text
-        # --- End Translation Logic ---
-        
+
         return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
 
@@ -302,64 +301,57 @@ def api_quick_analyze(req: QuickAnalyzeReq):
 
 @app.post("/api/timeline")
 def timeline(req: TimelineReq):
+    print("\n--- SERVER CHECK: The /api/timeline endpoint was called. ---")
     try:
         result = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
-
-        # --- Translation Logic ---
-        if result.get("success") and req.output_language and req.output_language != 'en':
+        if req.output_language and req.output_language != 'en':
             timeline_events = result.get("timeline", [])
-            if timeline_events:
-                # Translate the 'event' field for each item in the timeline
-                for item in timeline_events:
-                    english_event = item.get("event", "")
-                    if english_event:
-                        translated_event = translate_text(english_event, target_language=req.output_language)
-                        if translated_event:
-                            item["event"] = translated_event
-        # --- End Translation Logic ---
+            for item in timeline_events:
+                event = item.get("event", "")
+                if event:
+                    translated_event = translate_text(event, req.output_language)
+                    if translated_event:
+                        item["event"] = translated_event
 
         return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
 
 @app.post("/api/predictive-output")
 def api_predictive_output(req: PredictiveOutputReq):
+    print("\n--- SERVER CHECK: The /api/predictive-output endpoint was called. ---")
     try:
         result = generate_predictive_output(req.user_id, req.thread_id)
         if not result.get("success"):
             raise HTTPException(status_code=422, detail=result)
 
-        # --- Translation Logic ---
-        if result.get("success") and req.output_language and req.output_language != 'en':
+        if req.output_language and req.output_language != 'en':
             prediction = result.get("prediction", {})
-            if prediction:
-                # Translate disclaimer
-                disclaimer = prediction.get("disclaimer", "")
-                if disclaimer:
-                    translated_disclaimer = translate_text(disclaimer, target_language=req.output_language)
-                    if translated_disclaimer:
-                        prediction["disclaimer"] = translated_disclaimer
-                
-                # Translate scenarios
-                scenarios = prediction.get("scenarios", [])
-                for scenario in scenarios:
-                    # Translate outcome
-                    outcome = scenario.get("outcome", "")
-                    if outcome:
-                        translated_outcome = translate_text(outcome, target_language=req.output_language)
-                        if translated_outcome:
-                            scenario["outcome"] = translated_outcome
-                    # Translate reasoning
-                    reasoning = scenario.get("reasoning", "")
-                    if reasoning:
-                        translated_reasoning = translate_text(reasoning, target_language=req.output_language)
-                        if translated_reasoning:
-                            scenario["reasoning"] = translated_reasoning
-        # --- End Translation Logic ---
+            disclaimer = prediction.get("disclaimer", "")
+            if disclaimer:
+                translated_disclaimer = translate_text(disclaimer, req.output_language)
+                if translated_disclaimer:
+                    prediction["disclaimer"] = translated_disclaimer
+
+            scenarios = prediction.get("scenarios", [])
+            for scenario in scenarios:
+                outcome = scenario.get("outcome", "")
+                if outcome:
+                    translated_outcome = translate_text(outcome, req.output_language)
+                    if translated_outcome:
+                        scenario["outcome"] = translated_outcome
+                reasoning = scenario.get("reasoning", "")
+                if reasoning:
+                    translated_reasoning = translate_text(reasoning, req.output_language)
+                    if translated_reasoning:
+                        scenario["reasoning"] = translated_reasoning
 
         return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating predictive output: {e}")
+
     
 @app.post("/api/ingest")
 async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
@@ -453,32 +445,28 @@ def api_ask(req: AskReq):
 
 @app.post("/api/suggest-case-law")
 def api_suggest_case_law(req: CaseLawReq):
+    print("\n--- SERVER CHECK: The /api/suggest-case-law endpoint was called. ---")
     try:
         result = suggest_case_law(req.user_id, req.thread_id)
         if not result.get("success"):
             raise HTTPException(status_code=422, detail=result)
 
-        # --- Translation Logic ---
-        if result.get("success") and req.output_language and req.output_language != 'en':
+        if req.output_language and req.output_language != 'en':
             suggested_cases = result.get("suggested_cases", [])
-            if suggested_cases:
-                # Translate 'details' and 'outcome' for each case
-                for case in suggested_cases:
-                    # Translate details
-                    details = case.get("details", "")
-                    if details:
-                        translated_details = translate_text(details, target_language=req.output_language)
-                        if translated_details:
-                            case["details"] = translated_details
-                    # Translate outcome
-                    outcome = case.get("outcome", "")
-                    if outcome:
-                        translated_outcome = translate_text(outcome, target_language=req.output_language)
-                        if translated_outcome:
-                            case["outcome"] = translated_outcome
-        # --- End Translation Logic ---
+            for case in suggested_cases:
+                details = case.get("details", "")
+                if details:
+                    translated_details = translate_text(details, req.output_language)
+                    if translated_details:
+                        case["details"] = translated_details
+                outcome = case.get("outcome", "")
+                if outcome:
+                    translated_outcome = translate_text(outcome, req.output_language)
+                    if translated_outcome:
+                        case["outcome"] = translated_outcome
 
         return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error suggesting case law: {e}")
 
@@ -502,11 +490,8 @@ async def transcribe_audio(file: UploadFile, user_id: str = Form(""), thread_id:
 
 @app.post("/api/faq")
 def faq(req: FAQReq):
-    # --- ADD THIS LINE AS THE VERY FIRST LINE OF THE FUNCTION ---
-    print("\n--- SERVER CHECK: The /api/faq endpoint function was just called. ---")
-
+    print("\n--- SERVER CHECK: The /api/faq endpoint was called. ---")
     try:
-        # 1. Generate the FAQ in English first
         result = generate_faq(
             req.user_id,
             req.thread_id,
@@ -514,21 +499,17 @@ def faq(req: FAQReq):
             num_questions=req.num_questions
         )
 
-        # --- 2. ADDED: Translate the result if needed ---
-        if result.get("success") and req.output_language and req.output_language != 'en':
+        if req.output_language and req.output_language != 'en':
             english_markdown = result.get("faq_markdown", "")
             if english_markdown:
-                translated_markdown = translate_text(english_markdown, target_language=req.output_language)
+                translated_markdown = translate_text(english_markdown, req.output_language)
                 if translated_markdown:
-                    # Update the result with the translated text
                     result["faq_markdown"] = translated_markdown
                 else:
-                    # --- ADD THIS ELSE BLOCK for better feedback ---
                     result["translation_status"] = (
                         f"Failed to translate to '{req.output_language}'. "
-                        "Check server logs for the specific error from Google API."
+                        "Check server logs for Google API errors."
                     )
-        # --- End of added logic ---
 
         return result
 
