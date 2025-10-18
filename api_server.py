@@ -210,22 +210,21 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
 
 def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     """
-    Ingests audio: transcribes, optionally translates, chunks, embeds, and upserts to vector store.
-    Returns the raw transcript (after translation if applied), not JSON metadata.
+    Ingest audio file: transcribe, detect language, optionally translate,
+    chunk, embed, store in vector DB, and return transcript + diagnostics.
     """
     try:
-        # Step 1: Transcribe audio
         transcript = speech_to_text_from_local_file(local_path)
         if not transcript or not transcript.strip() or transcript.startswith("(speech error"):
-            return f"(speech error: Could not produce transcript from audio file. Reason: {transcript})"
+            return {"success": False, "message": f"Could not produce transcript from audio file. Reason: {transcript}"}
         
         text = transcript.strip()
         source = f"audio:{file_name}"
         diagnostics = {"transcript_length": len(text.split())}
 
-        # Step 2: Language Detection & Translation
+        # --- Language Detection & Translation ---
         detection = detect_language(text)
-        original_lang = 'en'  # Default to English
+        original_lang = 'en'
         if detection and detection.get('language') and detection.get('confidence', 0) > 0.5:
             original_lang = detection['language']
 
@@ -237,36 +236,50 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
                 diagnostics['translation'] = f"Detected '{original_lang}', translated to 'en'"
             else:
                 diagnostics['translation_error'] = f"Detected '{original_lang}', but translation failed."
+        # --- End language step ---
 
-        # Step 3: Chunk and embed for vector store
+        # --- Chunking & Embedding ---
         chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200)
         texts = [c[1] for c in chunks]
-        if texts:
-            vecs = embed_texts(texts)
-            vecs_list = [v.astype("float32").tolist() for v in vecs]
-            ids = [c[0] for c in chunks]
+        if not texts:
+            return {
+                "success": False,
+                "message": "No chunks created from audio transcript.",
+                "diagnostics": diagnostics,
+                "source": source
+            }
+        
+        vecs = embed_texts(texts)
+        vecs_list = [v.astype("float32").tolist() for v in vecs]
+        ids = [c[0] for c in chunks]
 
-            # Metadata for vector store
-            metadatas = [
-                {
-                    "file_name": file_name,
-                    "chunk_id": ids[i],
-                    "text": texts[i][:4000],
-                    "source": source,
-                    "original_language": original_lang
-                } for i in range(len(texts))
-            ]
+        metadatas = [
+            {
+                "file_name": file_name,
+                "chunk_id": ids[i],
+                "text": texts[i][:4000],
+                "source": source,
+                "original_language": original_lang
+            } for i in range(len(texts))
+        ]
 
-            dim = get_embedding_dimension()
-            index = get_or_create_index(dim)
-            ns = namespace(user_id, thread_id)
-            upsert_chunks(index, ns, vecs_list, ids, metadatas)
+        dim = get_embedding_dimension()
+        index = get_or_create_index(dim)
+        ns = namespace(user_id, thread_id)
+        upsert_chunks(index, ns, vecs_list, ids, metadatas)
+        # --- End vector DB step ---
 
-        # Step 4: Return raw transcript (before chunking/embedding)
-        return text_to_process
-
+        return {
+            "success": True,
+            "message": f"Ingested {len(chunks)} audio chunks (source={source}, lang={original_lang}) into chat {thread_id} for user {user_id}",
+            "transcript": text,           # <-- return the actual transcript here
+            "diagnostics": diagnostics,
+            "source": source,
+            "original_language": original_lang
+        }
+    
     except Exception as e:
-        return f"(speech error: _ingest_audio_no_sqlite_save error: {e})"
+        return {"success": False, "message": f"_ingest_audio_no_sqlite_save error: {e}"}
 
 
 # ----------------------------- Endpoints --------------------------------------
@@ -370,16 +383,25 @@ async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = F
     return result
 
 @app.post("/api/ingest-audio")
-async def ingest_audio(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
+async def ingest_audio(
+    user_id: Optional[str] = Form(default=None),
+    thread_id: str = Form(...),
+    file: UploadFile = File(...),
+    replace: bool = Form(False)
+):
     if replace:
         _reset_vector_store(user_id, thread_id)
+    
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
+    
     result = _ingest_audio_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
+    
     return result
 
 # In api_server.py
