@@ -206,56 +206,72 @@ def ocr_pdf_with_google_vision_async_gcs(pdf_path: str) -> str:
 
 # ------------------- Speech-to-Text helpers -------------------
 
+import io
+import os
+import base64
+import requests
+from pydub import AudioSegment
+
 def speech_to_text_from_bytes(
     content: bytes,
     language_code: str = "en-US",
     enable_automatic_punctuation: bool = True,
 ) -> str:
     """
-    Recognize audio content (bytes) by first converting it to the required format.
-    This function takes any audio format supported by pydub and converts it to
-    16-bit, 16kHz, mono WAV before sending it to the Google Speech-to-Text API.
+    Recognize audio content (bytes) using the Google Speech-to-Text REST API with an API key.
+    Works with GOOGLE_SPEECH_TO_TEXT=AIza... key (no service account needed).
+    Converts audio into 16-bit, 16kHz, mono WAV before sending to API.
     """
-    sc, _ = _get_speech_and_storage_clients()
-    if sc is None:
-        return "(speech error: client not available)"
-        
-    try:
-        # --- START: AUDIO CONVERSION LOGIC ---
-        # Load audio bytes into pydub. Use io.BytesIO to treat bytes as a file.
-        audio = AudioSegment.from_file(io.BytesIO(content))
 
-        # Convert to the required format: 16-bit (sample_width=2), 16kHz, mono (channels=1)
+    api_key = os.getenv("GOOGLE_SPEECH_TO_TEXT")
+    if not api_key:
+        return "(speech error: GOOGLE_SPEECH_TO_TEXT not set)"
+
+    try:
+        # --- AUDIO CONVERSION LOGIC ---
+        # Convert any audio format (mp3, wav, m4a, etc.) into standard 16kHz mono WAV
+        audio = AudioSegment.from_file(io.BytesIO(content))
         audio = audio.set_sample_width(2).set_frame_rate(16000).set_channels(1)
 
-        # Export the converted audio back into a bytes object
+        # Export converted audio as bytes (WAV format)
         converted_buffer = io.BytesIO()
         audio.export(converted_buffer, format="wav")
         converted_bytes = converted_buffer.getvalue()
-        # --- END: AUDIO CONVERSION LOGIC ---
 
-        # Use the NEW, CORRECTED bytes for recognition
-        recognition_audio = speech.RecognitionAudio(content=converted_bytes)
+        # --- PREPARE REQUEST PAYLOAD ---
+        audio_b64 = base64.b64encode(converted_bytes).decode("utf-8")
+        payload = {
+            "config": {
+                "languageCode": language_code,
+                "enableAutomaticPunctuation": enable_automatic_punctuation,
+                "encoding": "LINEAR16",
+                "sampleRateHertz": 16000
+            },
+            "audio": {"content": audio_b64}
+        }
 
-        # The audio is now guaranteed to be LINEAR16, so we can set the config directly
-        config = speech.RecognitionConfig(
-            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-            sample_rate_hertz=16000,
-            language_code=language_code,
-            audio_channel_count=1,
-            enable_automatic_punctuation=enable_automatic_punctuation,
+        # --- CALL GOOGLE SPEECH-TO-TEXT REST API ---
+        response = requests.post(
+            f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}",
+            json=payload,
+            timeout=120
         )
 
-        resp = sc.recognize(config=config, audio=recognition_audio)
+        if response.status_code != 200:
+            return f"(speech error: API returned status {response.status_code}, details: {response.text})"
 
-        parts = []
-        for res in resp.results:
-            if res.alternatives:
-                parts.append(res.alternatives[0].transcript)
-        return "\n".join(parts).strip()
-        
+        data = response.json()
+        if "results" not in data:
+            return f"(speech error: unexpected API response: {data})"
+
+        # --- EXTRACT TRANSCRIPT ---
+        transcript_parts = [r["alternatives"][0]["transcript"] for r in data["results"] if "alternatives" in r]
+        transcript = " ".join(transcript_parts).strip()
+        return transcript if transcript else "(speech error: empty transcript)"
+
     except Exception as e:
         return f"(speech error: {e})"
+
 
 
 def speech_to_text_from_local_file(
