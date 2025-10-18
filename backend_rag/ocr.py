@@ -62,28 +62,46 @@ def _get_vision_and_storage_clients():
 
 
 def _get_speech_and_storage_clients():
-    """Create Speech & Storage clients using GOOGLE_APPLICATION_CREDENTIALS."""
+    """
+    Create Speech & Storage clients using GOOGLE_APPLICATION_CREDENTIALS.
+    Includes detailed logging for debugging credential issues.
+    """
     global _speech_client, _gcs_client_for_speech
     if not SPEECH_AVAILABLE:
+        print("[SPEECH INIT] ❌ Speech/Storage not available in environment.")
         return None, None
+
+    # Reuse cached clients if already initialized
     if _speech_client is not None and _gcs_client_for_speech is not None:
+        print("[SPEECH INIT] ✅ Returning existing cached clients.")
         return _speech_client, _gcs_client_for_speech
 
     key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    print(f"[SPEECH INIT] GOOGLE_APPLICATION_CREDENTIALS: {key_path}")
+
     try:
+        # --- CASE 1: Explicit key file path provided ---
         if key_path and Path(key_path).exists() and service_account is not None:
+            print(f"[SPEECH INIT] ✅ Found service account key at: {key_path}")
             creds = service_account.Credentials.from_service_account_file(key_path)
             _speech_client = speech.SpeechClient(credentials=creds)
             _gcs_client_for_speech = gcs.Client(credentials=creds, project=creds.project_id) if gcs else None
+
+        # --- CASE 2: No explicit key, try ADC (local gcloud or env) ---
         else:
-            # ADC / local gcloud auth
+            print("[SPEECH INIT] ⚠️ No valid key path found. Trying default credentials (ADC)...")
             _speech_client = speech.SpeechClient()
             _gcs_client_for_speech = gcs.Client() if gcs else None
+
+        print("[SPEECH INIT] ✅ Speech and Storage clients initialized successfully.")
         return _speech_client, _gcs_client_for_speech
-    except Exception:
+
+    except Exception as e:
+        print(f"[SPEECH INIT] ❌ FAILED to initialize Speech/Storage clients: {e}")
         _speech_client = None
         _gcs_client_for_speech = None
         return None, None
+
 
 
 def ocr_image_with_google_vision_bytes(content: bytes) -> str:
