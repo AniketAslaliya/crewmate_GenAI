@@ -518,8 +518,6 @@ from urllib.parse import quote
 from bs4 import BeautifulSoup
 from typing import List, Dict
 
-
-
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -527,6 +525,7 @@ USER_AGENTS = [
 ]
 
 MAX_RETRIES = 3
+
 
 def fetch_with_retries(client, url, headers=None, max_retries=MAX_RETRIES):
     """Fetch a URL with retries and exponential backoff."""
@@ -545,10 +544,11 @@ def fetch_with_retries(client, url, headers=None, max_retries=MAX_RETRIES):
             time.sleep(wait)
     raise TimeoutError(f"--- [AGENT 2] All {max_retries} attempts failed for URL: {url} ---")
 
+
 def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
     """
     Retrieves case law from Indian Kanoon by routing requests through ScraperAPI.
-    Adds retries, random headers, caching, and graceful fallbacks.
+    Adds retries, random headers, and graceful fallbacks. (No caching version)
     """
     if not queries:
         return []
@@ -571,23 +571,13 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
             )
 
             headers = {"User-Agent": random.choice(USER_AGENTS)}
-            cache_path = os.path.join(CACHE_DIR, f"{abs(hash(query))}.html")
-
             print(f"--- [AGENT 2] Searching via ScraperAPI for query: '{full_query}' ---")
 
             try:
-                # Load from cache if exists
-                if os.path.exists(cache_path):
-                    print(f"--- [AGENT 2] Loaded cached results for query '{query}' ---")
-                    with open(cache_path, "r", encoding="utf-8") as f:
-                        html = f.read()
-                else:
-                    response = fetch_with_retries(client, scraperapi_url, headers=headers)
-                    html = response.text
-                    with open(cache_path, "w", encoding="utf-8") as f:
-                        f.write(html)
-
+                response = fetch_with_retries(client, scraperapi_url, headers=headers)
+                html = response.text
                 soup = BeautifulSoup(html, 'html.parser')
+
                 for result in soup.find_all('div', class_='result', limit=max_cases):
                     if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
                         case_url = "https://indiankanoon.org" + link['href']
@@ -636,6 +626,7 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
             print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
 
     return [case for case in unique_cases if case.get('raw_text')]
+
 
 
 def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
