@@ -516,9 +516,9 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
         return []
 
     # --- Read the API key from the environment/secrets ---
-    api_key = os.getenv("SCRAPERAPI_KEY")
+    api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
-        print("--- [AGENT 2] ERROR: SCRAPERAPI_KEY not found in environment secrets. ---")
+        print("--- [AGENT 2] ERROR: SCRAPER_API_KEY not found in environment secrets. ---")
         return []
 
     all_results = {}
