@@ -530,7 +530,7 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
             target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
             
             # --- Construct the ScraperAPI URL ---
-            scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(target_url)}"
+            scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(target_url)}&render=true"
             
             print(f"--- [AGENT 2] Searching via ScraperAPI for query: '{full_query}' ---")
             try:
@@ -561,7 +561,7 @@ def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int
     for case in unique_cases:
         try:
             print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
-            page_scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(case['url'])}"
+            page_scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(case['url'])}&render=true"
             page_response = client.get(page_scraperapi_url, timeout=45)
             page_response.raise_for_status()
             case_soup = BeautifulSoup(page_response.text, 'html.parser')
