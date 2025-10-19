@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
+import httpx
 
 # External dependencies used across versions
 import cloudscraper
