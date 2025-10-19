@@ -509,75 +509,136 @@ def _clean_scraped_text_heuristic(soup: BeautifulSoup) -> str:
     return "\n".join(cleaned_lines).strip()
 
 from urllib.parse import quote
+import os
+import io
+import time
+import random
+import httpx
+from urllib.parse import quote
+from bs4 import BeautifulSoup
+from typing import List, Dict
+
+# Optional local cache folder (to avoid hitting API repeatedly)
+CACHE_DIR = "cache_cases"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    "Mozilla/5.0 (X11; Linux x86_64)",
+]
+
+MAX_RETRIES = 3
+
+def fetch_with_retries(client, url, headers=None, max_retries=MAX_RETRIES):
+    """Fetch a URL with retries and exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            response = client.get(url, headers=headers, timeout=20)
+            if response.status_code == 429:
+                print("--- [AGENT 2] Rate limited by ScraperAPI. Cooling down 60s. ---")
+                time.sleep(60)
+                continue
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            wait = (2 ** attempt) + random.random()
+            print(f"--- [AGENT 2] Attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {wait:.1f}s ---")
+            time.sleep(wait)
+    raise TimeoutError(f"--- [AGENT 2] All {max_retries} attempts failed for URL: {url} ---")
+
 def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
     """
-    Retrieves case law from Indian Kanoon by routing requests through ScraperAPI to avoid being blocked.
+    Retrieves case law from Indian Kanoon by routing requests through ScraperAPI.
+    Adds retries, random headers, caching, and graceful fallbacks.
     """
     if not queries:
         return []
 
-    # --- Read the API key from the environment/secrets ---
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print("--- [AGENT 2] ERROR: SCRAPER_API_KEY not found in environment secrets. ---")
         return []
 
     all_results = {}
-    # Use httpx for making requests
+
     with httpx.Client() as client:
         for query in queries:
             full_query = f'"{query}"'
             target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
-            
-            # --- Construct the ScraperAPI URL ---
-            scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(target_url)}&render=true"
-            
+
+            scraperapi_url = (
+                f"http://api.scraperapi.com?api_key={api_key}"
+                f"&url={quote(target_url)}&render=true&country_code=in&keep_headers=true"
+            )
+
+            headers = {"User-Agent": random.choice(USER_AGENTS)}
+            cache_path = os.path.join(CACHE_DIR, f"{abs(hash(query))}.html")
+
             print(f"--- [AGENT 2] Searching via ScraperAPI for query: '{full_query}' ---")
+
             try:
-                # --- Make the request to ScraperAPI ---
-                response = client.get(scraperapi_url, timeout=45) # Increased timeout for proxy
-                response.raise_for_status()
-                
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # Find the first few case links
+                # Load from cache if exists
+                if os.path.exists(cache_path):
+                    print(f"--- [AGENT 2] Loaded cached results for query '{query}' ---")
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        html = f.read()
+                else:
+                    response = fetch_with_retries(client, scraperapi_url, headers=headers)
+                    html = response.text
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        f.write(html)
+
+                soup = BeautifulSoup(html, 'html.parser')
                 for result in soup.find_all('div', class_='result', limit=max_cases):
                     if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
                         case_url = "https://indiankanoon.org" + link['href']
                         if case_url not in all_results:
-                            all_results[case_url] = {"case_name": link.get_text(strip=True), "url": case_url}
+                            all_results[case_url] = {
+                                "case_name": link.get_text(strip=True),
+                                "url": case_url
+                            }
 
-            except httpx.HTTPStatusError as e:
-                print(f"--- [AGENT 2] ScraperAPI request failed for query '{query}': {e} ---")
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                print(f"--- [AGENT 2] Skipping query '{query}' due to connection issue: {e} ---")
+                continue
             except Exception as e:
-                print(f"--- [AGENT 2] An unexpected error occurred for query '{query}': {e} ---")
+                print(f"--- [AGENT 2] Error fetching query '{query}': {e} ---")
+                continue
 
     unique_cases = list(all_results.values())[:max_cases]
     if not unique_cases:
         print("--- [AGENT 2] No relevant cases found after searching. ---")
         return []
 
-    # --- Scrape the individual case pages ---
     print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
+
     for case in unique_cases:
         try:
             print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
-            page_scraperapi_url = f"http://api.scraperapi.com?api_key={api_key}&url={quote(case['url'])}&render=true"
-            page_response = client.get(page_scraperapi_url, timeout=45)
-            page_response.raise_for_status()
+            page_url = (
+                f"http://api.scraperapi.com?api_key={api_key}"
+                f"&url={quote(case['url'])}&render=true&country_code=in&keep_headers=true"
+            )
+            headers = {"User-Agent": random.choice(USER_AGENTS)}
+
+            page_response = fetch_with_retries(client, page_url, headers=headers)
             case_soup = BeautifulSoup(page_response.text, 'html.parser')
+
             cleaned_text = _clean_scraped_text_heuristic(case_soup)
-            
             if len(cleaned_text) > 300:
                 case['raw_text'] = cleaned_text[:25000]
                 print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
             else:
                 case['raw_text'] = ""
-                print(f"--- [AGENT 2] FAILED: Could not extract sufficient text for '{case['case_name']}'.")
+                print(f"--- [AGENT 2] FAILED: Insufficient text for '{case['case_name']}'.")
+
         except Exception as e:
             case['raw_text'] = ""
             print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
-            
+
     return [case for case in unique_cases if case.get('raw_text')]
+
 
 def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
     raw_text = case.get("raw_text", "")
