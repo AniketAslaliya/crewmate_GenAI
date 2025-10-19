@@ -518,9 +518,7 @@ from urllib.parse import quote
 from bs4 import BeautifulSoup
 from typing import List, Dict
 
-# Optional local cache folder (to avoid hitting API repeatedly)
-CACHE_DIR = "cache_cases"
-os.makedirs(CACHE_DIR, exist_ok=True)
+
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
