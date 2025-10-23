@@ -1,0 +1,105 @@
+/* Apple-inspired theme for light mode derived from provided palette image */
+:root{
+  --palette-1: #463F3A; /* deep warm slate */
+  --palette-2: #8A817C; /* muted taupe */
+  --palette-3: #BCB8B1; /* soft warm gray */
+  --palette-4: #F4F3EE; /* off-white */
+  --palette-5: #E0AFA0; /* soft rose accent */
+
+  /* semantic colors */
+  --color-bg: var(--palette-4);
+  --color-surface: rgba(255,255,255,0.76);
+  --color-primary: var(--palette-1);
+  --color-muted: var(--palette-2);
+  --color-accent: var(--palette-5);
+  --color-text: #0F1724;
+  --color-subtext: #6B7280;
+
+  /* button and glass tokens */
+  --btn-gradient: linear-gradient(90deg, rgba(255,255,255,0.94), rgba(246,244,243,0.96));
+  --btn-gloss: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.12));
+  --glass-bg: rgba(255,255,255,0.48);
+  --glass-border: rgba(255,255,255,0.45);
+
+  /* shadows and radii */
+  --shadow-soft: 0 8px 30px rgba(15,23,42,0.06);
+  --shadow-elev: 0 18px 50px rgba(15,23,42,0.10);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+/* helper classes */
+.theme-primary { color: var(--color-primary); }
+.theme-accent { color: var(--color-accent); }
+.bg-theme { background-color: var(--color-bg); }
+.bg-surface { background-color: var(--color-surface); }
+.text-primary { color: var(--color-text); }
+.text-muted { color: var(--color-subtext); }
+.btn-gradient { background-image: var(--btn-gradient); }
+
+/* Primary button - glossy Apple-like */
+.btn-primary {
+  background-image: linear-gradient(180deg, var(--palette-1), color-mix(in srgb, var(--palette-1) 80%, black 10%));
+  color: white !important;
+  border: none;
+  box-shadow: var(--shadow-elev);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: var(--shadow-elev); }
+.btn-primary:active { transform: translateY(0); box-shadow: var(--shadow-soft); }
+
+/* Secondary - frosted glass */
+.btn-secondary {
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--color-primary);
+  border: 1px solid rgba(255,255,255,0.6);
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+
+/* Danger / accent - bold but elegant */
+.btn-accent {
+  background: linear-gradient(180deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 90%, black 5%));
+  color: white;
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.9rem;
+}
+
+.sticky-input { box-shadow: 0 -12px 30px rgba(2,6,23,0.04); border-top: 1px solid rgba(0,0,0,0.04); }
+.text-inverse { color: white; }
+
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.7));
+  box-shadow: var(--shadow-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.6);
+}
+
+/* Input styling */
+.input {
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(12,17,23,0.06);
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 14px rgba(2,6,23,0.04) inset;
+}
+
+/* subtle motion helpers */
+.motion-safe { transition: all 300ms cubic-bezier(.2,.8,.2,1); }
+
+/* Ensure app background and body use theme tokens so stray tailwind grays get overridden */
+html, body, #root {
+  background: var(--color-bg) !important;
+  color: var(--color-text) !important;
+}
+
+.app-root {
+  background: var(--color-bg);
+  color: var(--color-text);
+}

@@ -66,7 +66,7 @@ const NotebookPage = () => {
 
   if (!notebook) {
     return (
-      <div className="flex items-center justify-center h-screen bg-neutral-100 text-neutral-500 font-sans">
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-neutral-100 text-neutral-500 font-sans">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -82,7 +82,7 @@ const NotebookPage = () => {
       title: "Document Summary",
       icon: "📄",
       content: (
-        <div className="p-8 bg-white border border-neutral-200 rounded-3xl shadow-lg transition-transform duration-300 transform hover:scale-[1.01]">
+  <div className="p-8 bg-card border rounded-3xl shadow-lg transition-transform duration-300 transform hover:scale-[1.01]" style={{ borderColor: 'var(--palette-3)' }}>
           <p className="text-neutral-600 text-base leading-relaxed font-light">
             An intelligent summary of the document, highlighting key findings, core concepts, and central arguments. This concise overview is designed to give you a quick and comprehensive understanding of the material.
           </p>
@@ -100,7 +100,7 @@ const NotebookPage = () => {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.05 }}
-              className="p-5 bg-white border border-neutral-200 rounded-2xl text-neutral-700 shadow-md flex items-center gap-3 font-medium transition-transform duration-300 hover:scale-[1.02] cursor-pointer"
+              className="p-5 bg-surface border rounded-2xl text-primary shadow-md flex items-center gap-3 font-medium transition-transform duration-300 hover:scale-[1.02] cursor-pointer" style={{ borderColor: 'var(--palette-3)' }}
             >
               <span className="text-xl">#</span> {topic}
             </motion.div>
@@ -161,12 +161,12 @@ const NotebookPage = () => {
   };
 
   return (
-    <div className="relative flex h-screen bg-neutral-100 text-neutral-800 font-sans overflow-hidden">
+    <div className="relative flex flex-1 min-h-0 font-sans overflow-hidden" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
       <LightBackground />
 
       {/* Left Panel: Features */}
       <motion.div
-        className="relative z-10 w-96 bg-white/70 backdrop-blur-lg shadow-2xl p-10 flex flex-col gap-10 border-r border-neutral-200"
+        className="relative z-10 w-96 panel backdrop-blur-lg shadow-2xl p-10 flex flex-col gap-10 border-r"
         initial={{ x: -100, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.6 }}
@@ -192,8 +192,8 @@ const NotebookPage = () => {
       </motion.div>
 
       {/* Middle Panel: Chat */}
-      <div className="relative z-10 flex-1 flex flex-col bg-neutral-100/50 backdrop-blur-sm">
-        <header className="bg-white/70 backdrop-blur-lg p-8 border-b border-neutral-200 flex items-center justify-between shadow-lg">
+      <div className="relative z-10 flex-1 flex flex-col panel">
+        <header className="panel p-8 border-b flex items-center justify-between">
           <h2 className="text-4xl font-extralight text-neutral-900 tracking-wide">
             {notebook.title}
           </h2>
@@ -209,7 +209,7 @@ const NotebookPage = () => {
         </header>
 
         {/* Chat Messages */}
-        <div className="flex-1 p-10 overflow-y-auto space-y-6 custom-scrollbar">
+  <div className="flex-1 p-10 overflow-y-auto space-y-6 custom-scrollbar">
           {messages.map((msg, index) => (
             <motion.div
               key={msg._id}
@@ -233,19 +233,19 @@ const NotebookPage = () => {
         </div>
 
         {/* Input Box */}
-        <form onSubmit={handleSendMessage} className="p-8 bg-white/80 backdrop-blur-lg border-t border-neutral-200 flex items-center space-x-5 shadow-top">
+  <form onSubmit={handleSendMessage} className="p-8 panel border-t flex items-center space-x-5">
           <input
             type="text"
             placeholder="Ask anything or add a note..."
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            className="flex-1 px-6 py-4 bg-neutral-100 border border-neutral-200 rounded-full text-neutral-800 placeholder-neutral-400 focus:ring-1 focus:ring-neutral-300 focus:border-neutral-300 outline-none transition-all duration-300 font-light"
+            className="flex-1 px-6 py-4 bg-[var(--panel)] border border-[var(--border)] rounded-full text-[var(--text)] placeholder-[var(--muted)] focus:ring-1 focus:ring-[var(--accent)] outline-none transition-all duration-300 font-light"
           />
           <motion.button
             type="submit"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            className="px-8 py-4 rounded-full bg-neutral-900 text-white font-semibold hover:bg-neutral-800 transition-colors duration-300 shadow-md"
+            className="px-8 py-4 rounded-full bg-[var(--text)] text-[var(--panel)] font-semibold hover:opacity-90 transition-colors duration-300 shadow-md"
           >
             Send
           </motion.button>

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Timeline from "../components/Timeline"; // Import the Timeline component
+import Button from '../components/ui/Button';
+
 
 // Check for browser support for Web Speech API
 const SpeechRecognition =
@@ -15,13 +17,13 @@ console.log("SpeechRecognition support:", !!SpeechRecognition);
 console.log("SpeechSynthesis support:", !!synthesis);
 
 const DarkBackground = () => (
-  <div className="absolute inset-0 -z-10 bg-black">
-    <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 animate-pulse-slow" />
+  <div className="absolute inset-0 -z-10 bg-[var(--panel)]">
+    <div className="absolute inset-0 bg-gradient-to-br from-transparent via-[rgba(2,6,23,0.02)] to-transparent" />
     <div
-      className="absolute inset-0 opacity-[0.07]"
+      className="absolute inset-0 opacity-[0.08]"
       style={{
         backgroundImage:
-          "linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px)",
+          "linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(rgba(15,23,42,0.04) 1px, transparent 1px)",
         backgroundSize: "40px 40px",
       }}
     />
@@ -34,19 +36,19 @@ const TypingIndicator = () => (
     exit={{ opacity: 0, y: 10 }}
     className="flex justify-start"
   >
-    <div className="max-w-md px-6 py-4 rounded-2xl shadow-md bg-gray-800/70 text-gray-200 border border-gray-700 flex items-center space-x-2">
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
+  <div className="max-w-md px-6 py-4 rounded-2xl shadow-md bg-surface text-primary border" style={{ borderColor: 'rgba(0,0,0,0.04)' }}>
+        <motion.span
+          className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--palette-3)'}} 
         animate={{ y: [0, -4, 0] }}
         transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
       />
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
+        <motion.span
+          className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--palette-3)'}} 
         animate={{ y: [0, -4, 0] }}
         transition={{ duration: 0.8, delay: 0.2, repeat: Infinity, ease: "easeInOut" }}
       />
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
+        <motion.span
+          className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--palette-3)'}} 
         animate={{ y: [0, -4, 0] }}
         transition={{ duration: 0.8, delay: 0.4, repeat: Infinity, ease: "easeInOut" }}
       />
@@ -55,9 +57,9 @@ const TypingIndicator = () => (
 );
 
 const NotebookPage = (props) => {
-  // Accept id as a prop, fallback to useParams if not provided
-  const params = useParams();
-  const { id, onClose, inline } = props;
+  // Accept id as a prop; (do not use useParams here to avoid undefined id when rendering inline)
+  const { id, inline } = props;
+  const navigate = useNavigate();
 
   const [activeFeature, setActiveFeature] = useState(null);
   const [notebook, setNotebook] = useState(null);
@@ -70,18 +72,23 @@ const NotebookPage = (props) => {
   // const [transcribedText, setTranscribedText] = useState("");
   // const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
+  // Abort controller for feature fetches to allow cancelling when user switches features
+  const featureAbortRef = useRef(null);
   const [storedData, setStoredData] = useState({});
   const [featureData, setFeatureData] = useState({
     summary: { title: "Document Summary", icon: "📄", content: null },
     questions: { title: "Suggested Questions", icon: "🤔", content: null },
     timeline: { title: "Timeline", icon: "⏳", content: null },
+    predictive: { title: "Predictive Output", icon: "🔮", content: null },
   });
+  // Predictive output language state (2-letter codes)
+  const [predictiveLang] = useState('en');
 
   // NEW: State for Text-to-Speech
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false); // Tracks if audio is being processed
-  const [isVoiceSupported, setIsVoiceSupported] = useState(false);
+  // voice support state is handled inline via feature detection where needed
 
   // --- Effects ---
 
@@ -306,28 +313,42 @@ const NotebookPage = (props) => {
 
   // --- Data Fetching Functions ---
 
-  const fetchFeatureData = async (featureKey) => {
+  const fetchFeatureData = async (featureKey, langOverride) => {
     if (!notebook) return;
     setLoadingFeature(true);
 
+    // Abort previous in-flight feature request (if any)
     try {
-      if (storedData[id]?.[featureKey]) {
+      if (featureAbortRef.current) {
+        featureAbortRef.current.abort();
+      }
+    } catch (e) {
+      // ignore
+    }
+    const controller = new AbortController();
+    featureAbortRef.current = controller;
+
+    try {
+  // Determine language to use for predictive feature (override if provided)
+  // Preference: langOverride -> globalLanguage (from header) -> local predictiveLang
+  const langToUse = featureKey === 'predictive' ? (langOverride || predictiveLang) : undefined;
+      const cacheKey = featureKey === 'predictive' ? `${featureKey}:${langToUse}` : featureKey;
+      if (storedData[id]?.[cacheKey]) {
         setFeatureData((prev) => ({
           ...prev,
-          [featureKey]: { ...prev[featureKey], content: storedData[id][featureKey] },
+          [featureKey]: { ...prev[featureKey], content: storedData[id][cacheKey] },
         }));
         setLoadingFeature(false);
         return;
       }
-
       const payload = { user_id: notebook?.user, thread_id: id };
       let content;
 
       if (featureKey === "summary") {
-        const res = await papi.post(`/api/study-guide`, payload);
+        const res = await papi.post(`/api/study-guide`, payload, { signal: controller.signal });
         const studyGuide = res.data.study_guide;
         const formattedContent = studyGuide.split("\n").map((line, index) => {
-          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold text-cyan-400 mt-6">{line.substring(2)}</h1>;
+          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold mt-6" style={{ color: 'var(--palette-3)' }}>{line.substring(2)}</h1>;
           if (line.startsWith("##")) return <h2 key={index} className="text-lg font-semibold text-indigo-300 mt-4">{line.substring(3)}</h2>;
           if (line.startsWith("*")) return <li key={index} className="text-sm text-gray-300 ml-6 list-disc">{line.substring(2)}</li>;
           if (line.trim() === "---") return <hr key={index} className="my-4 border-gray-700" />;
@@ -336,7 +357,7 @@ const NotebookPage = (props) => {
         });
         content = <div className="space-y-2">{formattedContent}</div>;
       } else if (featureKey === "questions") {
-        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 });
+        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 }, { signal: controller.signal });
         const faqMarkdown = res.data.faq_markdown;
         const formattedFAQ = faqMarkdown.split("\n\n").map((block, index) => {
           if (!block.startsWith("### Q:")) return null;
@@ -350,23 +371,74 @@ const NotebookPage = (props) => {
               className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-xl shadow-lg mb-4 cursor-pointer"
               onClick={(e) => e.currentTarget.querySelector(".faq-answer")?.classList.toggle("hidden")}
             >
-              <h3 className="text-lg font-bold text-cyan-300 mb-2">Q: {question}</h3>
+              <h3 className="text-lg font-bold mb-2" style={{ color: 'var(--palette-3)' }}>Q: {question}</h3>
               <p className="faq-answer text-sm text-gray-400 mt-2 hidden">A: {answer}</p>
             </motion.div>
           );
         });
         content = <div className="space-y-4">{formattedFAQ}</div>;
       } else if (featureKey === "timeline") {
-        const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 });
-        const timelineMarkdown = res.data.timeline_markdown || "";
-        content = <Timeline timelineMarkdown={timelineMarkdown} />;
+        const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 }, { signal: controller.signal });
+        // Some backend variants return { success: true, timeline: [], message: '...' }
+        // If timeline array is empty but a message is provided, show that message instead of an empty timeline.
+        const timelineArray = res.data?.timeline;
+        const timelineMarkdown = res.data?.timeline_markdown || "";
+        if (Array.isArray(timelineArray) && timelineArray.length === 0 && res.data?.message) {
+          content = <div className="text-sm text-gray-400 italic">{res.data.message}</div>;
+        } else if (timelineMarkdown && timelineMarkdown.trim()) {
+          content = <Timeline timelineMarkdown={timelineMarkdown} />;
+        } else if (Array.isArray(timelineArray) && timelineArray.length > 0) {
+          // Convert simple array to a markdown table expected by Timeline component
+          const md = ['Date | Event', '---|---', ...timelineArray.map(item => `${item.date || ''} | ${item.event || item.description || ''}`)].join('\n');
+          content = <Timeline timelineMarkdown={md} />;
+        } else {
+          // Fallback: show message if present, otherwise a friendly empty state
+          content = <div className="text-sm text-gray-400 italic">{res.data?.message || 'No timeline events found.'}</div>;
+        }
+      } else if (featureKey === "predictive") {
+        // call predictive-output API
+        try {
+          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
+          const pred = res.data.prediction;
+          const scenarios = pred?.scenarios || [];
+          const disclaimer = pred?.disclaimer || '';
+
+          content = (
+            <div className="space-y-4">
+              {scenarios.map((s, i) => (
+                <div key={i} className="p-4 bg-surface border rounded-md" style={{ borderColor: 'var(--palette-3)' }}>
+                  <h4 className="font-semibold" style={{ color: 'var(--palette-3)' }}>{`Scenario ${i+1}: ${s.outcome}`}</h4>
+                  <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{s.reasoning}</p>
+                </div>
+              ))}
+              {disclaimer && (
+                <div className="mt-4 text-xs text-gray-500 italic">{disclaimer}</div>
+              )}
+            </div>
+          );
+        } catch (err) {
+          if (err.name === 'CanceledError' || err.name === 'AbortError') {
+            // request was aborted; bail silently
+            console.log('Feature fetch aborted:', featureKey);
+            setLoadingFeature(false);
+            return;
+          }
+          console.error('Predictive API failed', err);
+          content = <div className="text-sm text-red-400">Failed to fetch predictive output.</div>;
+        }
       }
 
-      setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [featureKey]: content } }));
-      setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
+  setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [cacheKey]: content } }));
+  setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') {
+        console.log('Feature fetch aborted:', featureKey);
+        return;
+      }
       console.error(err);
     } finally {
+      // clear controller if it hasn't been replaced
+      if (featureAbortRef.current === controller) featureAbortRef.current = null;
       setLoadingFeature(false);
     }
   };
@@ -374,6 +446,13 @@ const NotebookPage = (props) => {
   // --- Event Handlers ---
 
   const handleFeatureClick = (featureKey) => {
+    // if same feature clicked, toggle off
+    if (activeFeature === featureKey) {
+      setActiveFeature(null);
+      // abort any existing fetch
+      try { featureAbortRef.current?.abort(); } catch (e) { }
+      return;
+    }
     setActiveFeature(featureKey);
     fetchFeatureData(featureKey);
   };
@@ -403,28 +482,54 @@ const NotebookPage = (props) => {
       const payload = { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4 };
       const res2 = await papi.post("/api/ask", payload);
 
-      // Parse response
-      let apiAnswer = res2.data.answer;
-      if (typeof apiAnswer === "string") {
-        apiAnswer = apiAnswer.replace(/^```json\n?/, "").replace(/```$/, "");
-        try {
-          apiAnswer = JSON.parse(apiAnswer);
-        } catch (parseError) {
-          throw new Error("API answer is not valid JSON.");
-        }
+      // Parse response (be tolerant: API may return a plain string or JSON)
+      let apiAnswer = res2.data?.answer;
+      let aiContent = "";
+      let followups = [];
+
+      if (apiAnswer == null) {
+        throw new Error("API returned empty answer");
       }
 
-      if (!apiAnswer?.response) throw new Error("API response is missing the 'response' field.");
-      
-      const apiResponse = apiAnswer.response;
-      const aiContent = apiResponse["PLAIN ANSWER"];
+      if (typeof apiAnswer === "string") {
+        // strip fenced codeblocks if present
+        const trimmed = apiAnswer.replace(/^```json\n?/, "").replace(/```$/, "");
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed?.response) {
+            const apiResponse = parsed.response;
+            aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
+            followups = apiResponse.followupquestion || [];
+          } else if (parsed?.answer) {
+            aiContent = parsed.answer;
+          } else {
+            // Fallback: use the original trimmed string
+            aiContent = trimmed;
+          }
+        } catch (parseError) {
+          // Not JSON — treat as plain text answer
+          aiContent = trimmed;
+        }
+      } else if (typeof apiAnswer === "object") {
+        if (apiAnswer?.response) {
+          const apiResponse = apiAnswer.response;
+          aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
+          followups = apiResponse.followupquestion || [];
+        } else if (apiAnswer?.answer) {
+          aiContent = apiAnswer.answer;
+        } else {
+          aiContent = JSON.stringify(apiAnswer);
+        }
+      } else {
+        aiContent = String(apiAnswer);
+      }
 
       // Save the AI's response and get the final message object
       const res3 = await api.post("/api/messages", { chatId: id, content: aiContent, role: "response" });
 
       // Add the final AI message from the server to the chat
       setMessages((prev) => [...prev, res3.data.message]);
-      setFollowUpQuestions(apiResponse.followupquestion || []);
+      setFollowUpQuestions(followups || []);
     } catch (err) {
       console.error("Error sending message:", err);
       // Add a user-friendly error message to the chat
@@ -441,9 +546,10 @@ const NotebookPage = (props) => {
 
   // --- Render Logic ---
 
+
   if (!id) {
     return (
-      <div className="flex items-center justify-center h-screen bg-black text-red-400">
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-[var(--bg)] text-red-600">
         No notebook selected.
       </div>
     );
@@ -451,29 +557,29 @@ const NotebookPage = (props) => {
 
   if (!notebook) {
     return (
-      <div className="flex items-center justify-center h-screen bg-black text-gray-400">
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-[var(--bg)] text-[var(--muted)]">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="w-10 h-10 border-4 border-t-4 border-gray-800 border-t-cyan-400 rounded-full"
+          className="w-10 h-10 border-4 border-t-4 border-[var(--border)] border-t-[var(--accent)] rounded-full"
         />
-        <span className="ml-4 text-cyan-300">Loading notebook...</span>
+        <span className="ml-4 text-[var(--accent)]">Loading notebook...</span>
       </div>
     );
   }
 
   return (
     <div
-      className={`relative flex text-gray-100 font-sans overflow-hidden ${inline ? "rounded-2xl shadow-2xl bg-gray-900" : ""}`}
-      style={inline ? { height: "70vh", minHeight: 400 } : { height: "100vh" }}
+      className={`relative flex font-sans overflow-visible flex-1 min-h-0 bg-[var(--bg)] ${inline ? "rounded-2xl shadow-2xl panel" : ""}`}
+      style={inline ? { height: "70vh", minHeight: 400 } : {}}
     >
       
 
-      <DarkBackground />
+  <DarkBackground />
 
       {/* Left Panel */}
       <motion.div
-        className="relative z-10 w-80 bg-gray-900/70 backdrop-blur-xl shadow-2xl p-8 flex flex-col gap-8 border border-gray-800 rounded-3xl"
+        className="relative z-10 w-80 panel backdrop-blur-xl shadow-2xl p-8 flex flex-col gap-8 border rounded-3xl min-h-0 overflow-y-auto"
         initial={{ x: -100, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.6 }}
@@ -482,19 +588,19 @@ const NotebookPage = (props) => {
         {/* ...sidebar content... */}
         <h1 className="text-4xl font-extrabold tracking-tight">
           <span className="text-gray-100">Legal Sah</span>
-          <span className="bg-gradient-to-r from-cyan-400 to-blue-600 bg-clip-text text-transparent">AI</span>
+          <span className="bg-clip-text text-transparent" style={{ background: 'linear-gradient(90deg, var(--palette-3), var(--palette-2))' }}>AI</span>
         </h1>
         <p className="mt-1 text-sm text-gray-400">Your AI-powered legal assistant</p>
         <div className="flex flex-col gap-4">
           {Object.entries(featureData).map(([key, { icon, title }]) => (
             <motion.div
               key={key}
-              whileHover={{ scale: 1.05, boxShadow: "0 0 20px rgba(56,189,248,0.3)" }}
+              whileHover={{ scale: 1.05, boxShadow: "0 8px 24px rgba(69,104,130,0.12)" }}
               whileTap={{ scale: 0.97 }}
               className={`relative cursor-pointer p-5 rounded-xl transition-all duration-300 border ${
                 activeFeature === key
-                  ? "bg-gradient-to-r from-gray-800 to-gray-900 border-cyan-500"
-                  : "bg-gray-900/40 border-gray-700 hover:border-cyan-400"
+                  ? "bg-gradient-to-r from-gray-800 to-gray-900"
+                  : "bg-gray-900/40 border-gray-700"
               }`}
               onClick={() => handleFeatureClick(key)}
             >
@@ -505,13 +611,18 @@ const NotebookPage = (props) => {
       </motion.div>
 
       {/* Middle Panel */}
-      <div className="relative z-10 flex-1 flex flex-col bg-gray-900/50 backdrop-blur-md border-x border-gray-800 rounded-3xl"
+      <div className="relative z-10 flex-1 flex flex-col panel border-x rounded-3xl min-h-0"
         style={{ height: "100%" }}
       >
         <header className="p-6 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-2xl font-light text-cyan-300 tracking-wide">{notebook.title}</h2>
+          <div className="flex items-center gap-4">
+            {!inline && id && (
+              <Button variant="secondary" onClick={() => navigate('/home?feature=chatpdf')}>← Back</Button>
+            )}
+            <h2 className="text-2xl font-light theme-primary tracking-wide">{notebook.title}</h2>
+          </div>
         </header>
-        <div className="flex-1 p-8 overflow-y-auto space-y-4 custom-scrollbar">
+  <div className="flex-1 p-8 overflow-y-auto space-y-4 custom-scrollbar pb-28 min-h-0">
           {messages.map((msg) => (
             <motion.div
               key={msg._id}
@@ -522,16 +633,16 @@ const NotebookPage = (props) => {
             >
               <div
                 className={`relative max-w-md px-6 py-4 rounded-2xl shadow-md text-sm font-light transition-all duration-300 ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-r from-cyan-600 to-blue-700 text-white"
-                    : "bg-gray-800/70 text-gray-200 border border-gray-700"
+                    msg.role === "user"
+                      ? "bg-[var(--palette-3)] text-white"
+                      : "bg-[var(--card-bg)] text-[var(--text)] border border-[var(--palette-3)]"
                 }`}
               >
-                {msg.content}
+                <div className="whitespace-pre-wrap">{msg.content}</div>
                 {msg.role === "response" && msg.content && (
                   <button
                     onClick={() => handleToggleSpeech(msg)}
-                    className="absolute bottom-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/80 transition-colors"
+                    className="absolute bottom-2 right-2 p-1.5 rounded-full text-muted transition-colors" style={{ background: 'rgba(0,0,0,0.03)' }}
                     aria-label={isSpeaking && speakingMessageId === msg._id ? "Stop speech" : "Play speech"}
                   >
                     {isSpeaking && speakingMessageId === msg._id ? (
@@ -565,7 +676,7 @@ const NotebookPage = (props) => {
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={(e) => handleSendMessage(e, question)}
-                  className="w-full text-left px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg shadow-md hover:opacity-90 transition-all duration-300"
+                      className="w-full text-left px-4 py-2 btn-gradient text-white rounded-lg shadow-md hover:opacity-90 transition-all duration-300"
                 >
                   {question}
                 </motion.button>
@@ -575,7 +686,7 @@ const NotebookPage = (props) => {
           <div ref={chatEndRef} /> {/* Invisible element to scroll to */}
         </div>
 
-        <form onSubmit={handleSendMessage} className="p-6 border-t border-gray-800 flex items-center space-x-4">
+  <form onSubmit={handleSendMessage} className="p-6 border-t panel-border flex items-center space-x-4 bg-[var(--panel)] sticky bottom-0 z-40 min-h-[64px] sticky-input" style={{ borderColor: 'var(--palette-3)' }}>
           <motion.button
             type="button"
             onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
@@ -584,8 +695,8 @@ const NotebookPage = (props) => {
               isRecording
                 ? "bg-red-500"
                 : isProcessingAudio
-                ? "bg-gray-500 cursor-not-allowed"
-                : "bg-gradient-to-r from-cyan-500 to-blue-600"
+                ? "bg-gray-400 cursor-not-allowed"
+                  : "btn-gradient"
             } text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md`}
           >
             {isProcessingAudio ? (
@@ -621,14 +732,15 @@ const NotebookPage = (props) => {
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             disabled={isAiThinking} // Disable input while AI is thinking
-            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 px-5 py-3 bg-[var(--panel)] border rounded-full text-[var(--text)] placeholder-[var(--muted)] outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ borderColor: 'var(--palette-3)' }}
           />
           <motion.button
             type="submit"
             whileHover={{ scale: isAiThinking ? 1 : 1.05 }}
             whileTap={{ scale: isAiThinking ? 1 : 0.95 }}
             disabled={isAiThinking} // Disable button while AI is thinking
-            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-6 py-3 rounded-full btn-gradient text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Send
           </motion.button>
@@ -639,16 +751,19 @@ const NotebookPage = (props) => {
       <AnimatePresence>
         {activeFeature && (
           <motion.div
-            className="relative z-10 w-96 bg-gray-900/80 backdrop-blur-xl shadow-2xl flex flex-col border border-gray-800 rounded-3xl"
+            className="relative z-10 w-96 bg-gray-100/80 backdrop-blur-xl shadow-2xl flex flex-col border border-gray-800 rounded-3xl pb-28"
             initial={{ x: 100, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 100, opacity: 0 }}
             transition={{ duration: 0.6 }}
             style={{ height: "100%" }}
           >
-            <div className="p-6 border-b border-gray-800">
-              <h2 className="text-xl font-semibold text-cyan-300">{featureData[activeFeature].title}</h2>
-              {activeFeature === "questions" && <p className="text-sm text-gray-500 italic">Click to reveal answers</p>}
+            <div className="p-6 border-b  border-gray-800 flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-semibold" style={{ color: 'var(--palette-3)' }}>{featureData[activeFeature]?.title || featureData[activeFeature].title}</h2>
+                {activeFeature === "questions" && <p className="text-sm text-gray-500 italic">Click to reveal answers</p>}
+              </div>
+              
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
               {loadingFeature ? (
@@ -656,7 +771,8 @@ const NotebookPage = (props) => {
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="w-10 h-10 border-4 border-t-4 border-gray-700 border-t-cyan-400 rounded-full"
+                    className="w-10 h-10 border-4 border-t-4 border-gray-700 rounded-full"
+                    style={{ borderTopColor: 'var(--palette-3)' }}
                   />
                 </div>
               ) : (

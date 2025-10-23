@@ -1,1 +1,69 @@
-/* write your css here */
+:root.light-theme {
+	--bg: #f8fafc; /* gray-50 */
+	--panel: #ffffff; /* white */
+	--muted: #6b7280; /* gray-500 */
+	--text: #0f172a; /* gray-900 */
+	--border: #e6eef8; /* light border */
+	--accent: #0ea5e9; /* cyan */
+	--primary: #0b5ed7; /* blue */
+}
+
+:root.dark-theme {
+	--bg: #0b1220;
+	--panel: #111827;
+	--muted: #9ca3af;
+	--text: #e6eef8;
+	--border: #1f2937;
+	--accent: #0ea5e9;
+	--primary: #2563eb;
+}
+
+/* Base layout helpers used by App wrapper */
+.app-root {
+	background-color: var(--bg);
+	color: var(--text);
+}
+
+.panel {
+	background: var(--panel);
+	color: var(--text);
+	border-color: var(--border);
+}
+
+.muted { color: var(--muted); }
+.accent { color: var(--accent); }
+.primary-bg { background-color: var(--primary); }
+.primary { color: var(--primary); }
+
+/* Small utilities to neutralize some dark-tailwind classes when light theme is active */
+.light-theme .bg-black { background-color: var(--panel) !important; }
+.light-theme .bg-gray-900 { background-color: var(--panel) !important; }
+.light-theme .text-gray-100 { color: var(--text) !important; }
+.light-theme .text-gray-200 { color: var(--muted) !important; }
+.light-theme .bg-gray-800 { background-color: var(--panel) !important; }
+.light-theme .border-gray-800 { border-color: var(--border) !important; }
+.light-theme .border-gray-700 { border-color: var(--border) !important; }
+.light-theme .bg-gray-900\/50 { background-color: rgba(255,255,255,0.6) !important; }
+
+/* Make sure rounded shadows look good on light theme */
+.light-theme .shadow-2xl, .light-theme .shadow-3xl { box-shadow: 0 8px 30px rgba(2,6,23,0.08); }
+
+/* Ensure custom-scrollbar is subtle on light theme */
+.light-theme .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.12); }
+
+/* Dark theme overrides to keep Tailwind utility classes working in dark mode */
+:root.dark-theme {
+  --bg: #0b1220;
+  --panel: #0b1220;
+  --muted: #9ca3af;
+  --text: #e6eef8;
+  --border: #1f2937;
+  --accent: #0ea5e9;
+  --primary: #2563eb;
+}
+
+.dark-theme .panel { background: var(--panel) !important; color: var(--text) !important; }
+.dark-theme .bg-white { background: var(--panel) !important; }
+.dark-theme .text-gray-900 { color: var(--text) !important; }
+.dark-theme .bg-white\/90 { background: rgba(0,0,0,0.12) !important; }
+

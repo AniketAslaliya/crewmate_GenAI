@@ -21,8 +21,14 @@ const AuthCallback = () => {
           const res = await api.get("/auth/me", {
             headers: { Authorization: `Bearer ${token}` },
           });
-          setUser(res.data);
-          navigate("/home");
+          const user = res.data.user || res.data;
+          setUser(user);
+          // If user has no role, send them to the complete-registration flow
+          if (!user || !user.role) {
+            navigate('/complete-registration');
+          } else {
+            navigate('/home');
+          }
         } catch (err) {
           setUser(null);
           navigate("/login");

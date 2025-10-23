@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import api from "../Axios/axios";
-import { Navigate } from "react-router-dom";
+// navigation helper removed; using window.location for redirects
 
 
 const useAuthStore = create(
@@ -26,7 +26,8 @@ const useAuthStore = create(
           const res = await api.get("/auth/me", {
             headers: { Authorization: `Bearer ${token}` },
           });
-          set({ user: res.data });
+          // backend returns { user: { ... } }
+          set({ user: res.data.user || res.data });
         } catch {
           set({ user: null });
         }
@@ -35,7 +36,7 @@ const useAuthStore = create(
       logout: () => {
         set({ token: null, user: null });
         sessionStorage.removeItem("auth-storage");
-        Navigate("/login");
+        window.location.href = '/login';
       },
     }),
     {
