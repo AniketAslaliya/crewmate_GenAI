@@ -122,3 +122,5 @@ temp/
 # Vector stores and AI model caches
 vectors/
 */vectors/
+
+myenv/
