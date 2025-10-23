@@ -1,8 +1,0 @@
-.env
-secrets/
-uploads/
-_pycache_/
-*.pyc
-*.log
-.git
-.gitignore
