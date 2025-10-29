@@ -502,10 +502,12 @@ async def transcribe_audio(file: UploadFile, user_id: str = Form(""), thread_id:
 @app.post("/api/download/faq")
 # In api_server.py, replace the old @app.post("/api/faq") function with this one
 
+# In api_server.py
+
 @app.post("/api/faq")
 def faq(req: FAQReq):
-    print("\n--- SERVER CHECK: The /api/faq endpoint was called. ---")
     try:
+        # 1. Generate the FAQ (now returns a list of dicts)
         result = generate_faq(
             req.user_id,
             req.thread_id,
@@ -513,22 +515,48 @@ def faq(req: FAQReq):
             num_questions=req.num_questions
         )
 
+        # Check if FAQ generation was successful
+        if not result.get("success"):
+             # Propagate the error message from the backend
+             raise HTTPException(status_code=422, detail={"message": result.get("message", "Failed to generate FAQ.")})
+
+        faq_list = result.get("faq", [])
+        if not faq_list:
+            # Handle empty FAQ list case
+             raise HTTPException(status_code=422, detail={"message": "No FAQ items were generated."})
+
+        # 2. Translate Question and Answer values if needed
         if req.output_language and req.output_language != 'en':
-            english_markdown = result.get("faq_markdown", "")
-            if english_markdown:
-                translated_markdown = translate_text(english_markdown, req.output_language)
-                if translated_markdown:
-                    result["faq_markdown"] = translated_markdown
-                else:
-                    result["translation_status"] = (
-                        f"Failed to translate to '{req.output_language}'. "
-                        "Check server logs for Google API errors."
-                    )
+            print(f"--- [API FAQ] Translating {len(faq_list)} FAQ items to {req.output_language}... ---")
+            for item in faq_list:
+                # Translate question
+                q_en = item.get("question", "")
+                if q_en:
+                    q_translated = translate_text(q_en, target_language=req.output_language)
+                    if q_translated: item["question"] = q_translated
+                # Translate answer
+                a_en = item.get("answer", "")
+                if a_en and a_en != "Not stated in document." and not a_en.startswith("Error"): # Avoid translating errors
+                    a_translated = translate_text(a_en, target_language=req.output_language)
+                    if a_translated: item["answer"] = a_translated
 
-        return result
+        # 3. Format the final list into Markdown for the response
+        # (Alternatively, you could return the list directly if your frontend prefers that)
+        faq_md_parts = []
+        for item in faq_list:
+             faq_md_parts.append(f"### Q: {item.get('question', '')}")
+             faq_md_parts.append(f"A: {item.get('answer', '')}")
+        faq_markdown = "\n\n".join(faq_md_parts)
 
+        # Return the formatted markdown string
+        return {"success": True, "faq_markdown": faq_markdown}
+
+    except HTTPException as httpe:
+         raise httpe # Re-raise known HTTP exceptions
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
+         # Catch unexpected errors
+         print(f"--- [API FAQ] Unexpected Error: {e} ---")
+         raise HTTPException(status_code=500, detail=f"Error processing FAQ request: {e}")
 
 @app.post("/api/download/timeline")
 def download_timeline(req: TimelineDownloadReq):

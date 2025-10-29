@@ -180,42 +180,262 @@ quick_analyze_for_thread = quick_analyze_thread
 # Keep these four functions exactly as they appeared in the FIRST code version (per instruction)
 
 
-def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: int = 8) -> Dict[str, Any]:
+# In backend_rag/analysis.py
+from .vectorstore_pinecone import get_or_create_index, namespace, query_top_k
+from .embeddings import get_embedding_dimension
+from .models import call_model_system_then_user
+from typing import Any, Dict, List, Optional
+import json # For parsing Agent 1's output
+import re
+
+# In backend_rag/analysis.py
+
+# === LEGAL AGENT 1: Section Classifier / Extractor ===
+def _legal_agent1_extract_sections(context: str) -> Dict[str, str]:
     """
-    Build a study guide from representative snippets stored in Pinecone.
-    (Original implementation retained from the first code block.)
+    Identifies and extracts text corresponding to standard legal sections.
+    Returns a dictionary mapping section names (e.g., 'facts', 'judgment') to their text.
     """
-    try:
-        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
-        ns = namespace(user_id, thread_id)
-        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=max_snippets)
-
-        if not query_result:
-            return {"success": False, "message": "No document excerpts available for study guide."}
-
-        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
-        if not snippets:
-            return {"success": False, "message": "No valid snippets found in Pinecone."}
-
-        context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
-        
-        system_prompt = (
-    "You are a detailed legal document analyst.\n"
-    "Using only the provided document excerpts, produce:\n"
-    "- A plain-English statement of what this document is and its purpose.\n"
-    "- A comprehensive, long-form plain-English summary aimed at a non-lawyer.\n"
-    "- A single-line confidence indicator (High/Medium/Low).\n"
-    "- CRITICAL RULE: All section headings, bullet points, and labels MUST remain in English only. Do not translate any Markdown or label text.\n"
-)
-
-
-        user_prompt = f"Document excerpts:\n\n{context_excerpt}\n\nProduce the Study Guide as requested above."
-
-        guide_text = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
-        return {"success": True, "study_guide": guide_text}
-    except Exception as e:
-        return {"success": False, "message": f"generate_study_guide error: {e}"}
+    print("--- [Legal Agent 1] Identifying and extracting sections... ---")
+    system_prompt = (
+        "You are an expert legal document parser. Analyze the provided text excerpts and identify content belonging to these standard sections: "
+        "'Case Title / Citation', 'Facts of the Case', 'Issues Raised', 'Arguments (Petitioner/Respondent)', 'Judgment / Decision', 'Legal Provisions / Precedents Cited'.\n"
+        "Rules:\n"
+        "- Return a valid JSON object where keys are the section names (use snake_case like 'case_title', 'facts_of_case', 'issues_raised', 'arguments', 'judgment', 'legal_provisions').\n"
+        "- The value for each key should be the extracted text belonging to that section. If a section is not found or empty, use an empty string \"\".\n"
+        "- Extract the core text for each section, omitting redundant headers or boilerplate if possible.\n"
+        "- If arguments for both sides are distinct, combine them under 'arguments'.\n"
+        "- Ensure the output is ONLY the JSON object, nothing else."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract sections into JSON:"
     
+    default_sections = {
+        "case_title": "", "facts_of_case": "", "issues_raised": "", 
+        "arguments": "", "judgment": "", "legal_provisions": ""
+    }
+    
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        # Find JSON within potential ```json ... ``` markers
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            extracted_sections = json.loads(match.group(0))
+            # Validate and merge with defaults
+            validated_sections = {k: extracted_sections.get(k, "") for k in default_sections}
+            print("--- [Legal Agent 1] Sections extracted successfully. ---")
+            return validated_sections
+        else:
+            print("--- [Legal Agent 1] Failed: Could not find JSON in response.")
+            return default_sections
+    except Exception as e:
+        print(f"--- [Legal Agent 1] Failed: {e} ---")
+        return default_sections # Return default structure on error
+
+# === LEGAL AGENT 2: Section Summarization ===
+def _legal_agent2_summarize_section(section_name: str, section_text: str) -> str:
+    """
+    Generates a concise summary for a specific legal section.
+    """
+    if not section_text.strip():
+        return "Not specified in the provided excerpts."
+        
+    print(f"--- [Legal Agent 2] Summarizing section: {section_name}... ---")
+    
+    # Tailor the prompt based on the section
+    prompt_guidance = {
+        "facts_of_case": "Summarize the key facts, events, dates, and parties involved.",
+        "issues_raised": "List the main legal questions or points of contention raised.",
+        "arguments": "Briefly outline the core arguments presented by the petitioner(s) and respondent(s).",
+        "judgment": "State the final decision/verdict of the court and the primary reasoning.",
+        "legal_provisions": "List the key laws, sections, or precedent cases mentioned."
+    }.get(section_name, "Summarize the main points of this section.") # Default prompt
+    
+    system_prompt = (
+        f"You are a legal summarization expert. Based ONLY on the provided text for the '{section_name}' section, {prompt_guidance}\n"
+        "Rules:\n"
+        "- Be concise and use plain English.\n"
+        "- Preserve critical legal details, names, and outcomes.\n"
+        "- If the provided text is insufficient or irrelevant, state 'Insufficient information provided for this section.'\n"
+        "- Output ONLY the summary text."
+    )
+    user_prompt = f"Section Text:\n---\n{section_text}\n---\n\nSummary:"
+    
+    try:
+        summary = call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
+        print(f"--- [Legal Agent 2] Summarized {section_name}. ---")
+        return summary.strip()
+    except Exception as e:
+        print(f"--- [Legal Agent 2] Failed to summarize {section_name}: {e} ---")
+        return f"(Error summarizing {section_name})"
+
+# === LEGAL AGENT 3: Legal Insight Extraction ===
+def _legal_agent3_extract_insights(sections: Dict[str, str]) -> Dict[str, str]:
+    """
+    Extracts key legal insights like verdict, laws, and precedents.
+    Focuses analysis on judgment and legal provisions sections.
+    """
+    print("--- [Legal Agent 3] Extracting legal insights... ---")
+    # Combine relevant sections for analysis
+    context_for_insights = (
+        f"Judgment/Decision:\n{sections.get('judgment', 'Not specified.')}\n\n"
+        f"Legal Provisions/Precedents:\n{sections.get('legal_provisions', 'Not specified.')}\n\n"
+        f"Facts Summary (for context):\n{sections.get('facts_of_case', 'Not specified.')}" # Add facts for context
+    )
+    
+    system_prompt = (
+        "You are a legal insight analyst. Based ONLY on the provided text excerpts (primarily focusing on Judgment and Legal Provisions), "
+        "extract the following key insights. Return a valid JSON object.\n"
+        "Required JSON Keys:\n"
+        "- `verdict`: string (e.g., 'Petition Allowed', 'Appeal Dismissed', 'Partially Allowed', 'Remanded', 'Not specified'). Determine this from the judgment text.\n"
+        "- `key_laws`: list of strings (e.g., ['Constitution of India, Art 21', 'Indian Penal Code, S 302']). Extract specific laws/sections mentioned.\n"
+        "- `key_precedents`: list of strings (e.g., ['Kesavananda Bharati v. State of Kerala', 'Maneka Gandhi v. Union of India']). Extract cited case names.\n"
+        "Rules:\n"
+        "- If information for a key is not found, use an appropriate default (e.g., 'Not specified' for verdict, empty list [] for laws/precedents).\n"
+        "- Be precise in extracting names and section numbers.\n"
+        "- Output ONLY the JSON object."
+    )
+    user_prompt = f"Document Excerpts for Insight Extraction:\n---\n{context_for_insights}\n---\n\nExtract insights into JSON:"
+
+    default_insights = {"verdict": "Not specified", "key_laws": [], "key_precedents": []}
+    
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            insights = json.loads(match.group(0))
+            # Validate and merge with defaults
+            validated_insights = {
+                "verdict": insights.get("verdict", default_insights["verdict"]),
+                "key_laws": insights.get("key_laws", default_insights["key_laws"]),
+                "key_precedents": insights.get("key_precedents", default_insights["key_precedents"]),
+            }
+            print("--- [Legal Agent 3] Insights extracted successfully. ---")
+            return validated_insights
+        else:
+            print("--- [Legal Agent 3] Failed: Could not find JSON in response.")
+            return default_insights
+    except Exception as e:
+        print(f"--- [Legal Agent 3] Failed: {e} ---")
+        return default_insights
+
+# === LEGAL AGENT 4: Formatting Agent ===
+def _legal_agent4_format_summary(
+    sections: Dict[str, str], 
+    summaries: Dict[str, str], 
+    insights: Dict[str, Any]
+) -> str:
+    """
+    Compiles all extracted and summarized information into a final formatted Markdown report.
+    """
+    print("--- [Legal Agent 4] Formatting final summary... ---")
+    
+    # Helper to format lists for Markdown
+    def format_list(items: List[str]) -> str:
+        if not items: return "None specified."
+        return "\n".join([f"- {item}" for item in items])
+
+    # Build the final Markdown string
+    formatted_text = f"""
+## ⚖️ Legal Document Summary
+
+**📘 Case Title:** {summaries.get('case_title', sections.get('case_title', 'Not Specified'))}
+
+---
+
+**🧾 Facts:**
+{summaries.get('facts_of_case', 'Not Specified')}
+
+---
+
+**❓ Issues Raised:**
+{summaries.get('issues_raised', 'Not Specified')}
+
+---
+
+**📚 Arguments:**
+{summaries.get('arguments', 'Not Specified')}
+
+---
+
+**🔍 Judgement / Verdict:**
+**Verdict:** {insights.get('verdict', 'Not Specified')}
+**Summary:** {summaries.get('judgment', 'Not Specified')}
+
+---
+
+**📖 Legal References:**
+**Key Laws & Sections:**
+{format_list(insights.get('key_laws', []))}
+
+**Key Precedents Cited:**
+{format_list(insights.get('key_precedents', []))}
+
+**Full Extracted Text (if available):** {summaries.get('legal_provisions', 'None specified.')}
+"""
+    print("--- [Legal Agent 4] Formatting complete. ---")
+    return formatted_text.strip()
+
+
+# In backend_rag/analysis.py
+
+# === Legal Study Guide Orchestrator ===
+# In backend_rag/analysis.py
+
+# === Legal Study Guide Orchestrator (JSON Output Version) ===
+def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: int = 25) -> Dict[str, Any]:
+    """
+    Orchestrates the legal multi-agent process to generate a structured
+    JSON summary of the document.
+    """
+    print("--- [Legal Study Guide] Starting generation... ---")
+    try:
+        # 1. Get Broad Context
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        initial_hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=max_snippets)
+
+        if not initial_hits: return {"success": False, "message": "No document excerpts available."}
+        snippets = [hit.get("metadata", {}).get("text", "") for hit in initial_hits if hit.get("metadata", {}).get("text", "")]
+        if not snippets: return {"success": False, "message": "No valid text snippets found."}
+        initial_context = "\n\n---\n\n".join(snippets)
+
+        # 2. Agent 1: Extract Sections
+        extracted_sections = _legal_agent1_extract_sections(initial_context)
+
+        # 3. Agent 2: Summarize Key Sections Individually
+        section_summaries = {}
+        sections_to_summarize = ['case_title', 'facts_of_case', 'issues_raised', 'arguments', 'judgment', 'legal_provisions']
+        for section_name in sections_to_summarize:
+            section_text = extracted_sections.get(section_name, "")
+            section_summaries[section_name] = _legal_agent2_summarize_section(section_name, section_text)
+
+        # 4. Agent 3: Extract Insights
+        legal_insights = _legal_agent3_extract_insights(extracted_sections)
+
+        # 5. Compile Final JSON Output (Instead of Formatting Agent)
+        final_json_output = {
+            "case_title": section_summaries.get('case_title', 'Not Specified'),
+            "summary": {
+                "facts": section_summaries.get('facts_of_case', 'Not Specified'),
+                "issues": section_summaries.get('issues_raised', 'Not Specified'),
+                "arguments": section_summaries.get('arguments', 'Not Specified'),
+                "judgment": section_summaries.get('judgment', 'Not Specified')
+            },
+            "insights": {
+                "verdict": legal_insights.get('verdict', 'Not Specified'),
+                "key_laws": legal_insights.get('key_laws', []),
+                "key_precedents": legal_insights.get('key_precedents', []),
+                "legal_provisions_summary": section_summaries.get('legal_provisions', 'Not Specified')
+            }
+        }
+
+        print("--- [Legal Study Guide] Generation complete (JSON format). ---")
+        # Return the structured dictionary in the 'study_guide' field
+        return {"success": True, "study_guide": final_json_output}
+
+    except Exception as e:
+        print(f"--- [Legal Study Guide] Error: {e} ---")
+        return {"success": False, "message": f"generate_study_guide error: {e}"}
 
 def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[str, Any]:
     """
@@ -248,51 +468,116 @@ def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[
     except Exception as e:
         return {"success": False, "message": f"get_term_context error: {e}"}
 
+from .embeddings import get_embedding_dimension
+from .retrieval import retrieve_similar_chunks
+from .prompts import build_strict_system_prompt
 
+# === AGENT 1: Generate Questions ===
+def _faq_agent1_generate_questions(context: str, num_questions: int) -> List[str]:
+    """
+    Uses LLM to generate potential questions based on the provided context.
+    """
+    print(f"--- [FAQ Agent 1] Generating {num_questions} questions... ---")
+    system_prompt = (
+        f"You are an expert at identifying key questions within a document. Based ONLY on the provided text excerpts, "
+        f"generate exactly {num_questions} distinct and relevant questions that a user might ask about the content. "
+        "Focus on important facts, definitions, obligations, or events mentioned.\n"
+        "Rules:\n"
+        "- Output ONLY the questions, each on a new line.\n"
+        "- Do NOT number the questions.\n"
+        "- Do NOT include answers or any other text."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nGenerate the questions:"
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
+        # Split questions by newline and filter out empty lines
+        questions = [q.strip() for q in response.split('\n') if q.strip()]
+        print(f"--- [FAQ Agent 1] Generated {len(questions)} questions. ---")
+        return questions[:num_questions] # Ensure we don't exceed the requested number
+    except Exception as e:
+        print(f"--- [FAQ Agent 1] Failed to generate questions: {e} ---")
+        return []
+
+# === AGENT 2: Find Answers ===
+# In backend_rag/analysis.py
+
+# === AGENT 2: Find Answers (Simplified Version) ===
+def _faq_agent2_find_answers(question: str, user_id: Optional[str], thread_id: str, top_k: int = 4) -> str:
+    """
+    Finds relevant snippets for a specific question using vector search and
+    generates a plain text answer using the LLM.
+    """
+    print(f"--- [FAQ Agent 2] Finding answer for: '{question[:80]}...' ---")
+    try:
+        # 1. Find relevant snippets specifically for this question
+        hits = retrieve_similar_chunks(question, user_id=user_id, thread_id=thread_id, top_k=top_k)
+        if not hits:
+            return "Not stated in document."
+
+        # 2. Build context ONLY from these targeted snippets
+        context_blobs = [f"--- Excerpt ---\n{(hit.get('text') or '').strip()}" for hit in hits]
+        context = "\n\n".join(context_blobs)
+
+        # 3. Use a strict prompt to answer based *only* on this context
+        #    This prompt asks ONLY for the plain answer.
+        system_prompt = (
+            "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
+            "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
+            "Keep the answer concise and in plain English. Do NOT provide confidence levels or next steps.\n\n"
+            f"Document excerpts:\n{context}\n"
+        )
+        user_prompt = question.strip()
+
+        # 4. Get the plain answer string from the LLM
+        answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        print(f"--- [FAQ Agent 2] Answer found. ---")
+        return answer.strip() # Return only the answer string
+            
+    except Exception as e:
+        print(f"--- [FAQ Agent 2] Failed to find answer: {e} ---")
+        return "Error finding answer."
+    
+
+# === FAQ Orchestrator ===
 def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, num_questions: int = 10) -> Dict[str, Any]:
     """
-    Generate an FAQ (questions & answers) based ONLY on the uploaded document excerpts stored in Pinecone.
-    (Retained from the first code block.)
+    Orchestrates the multi-agent process to generate an FAQ list.
+    Returns a structured list of Q&A pairs.
     """
+    print("--- [FAQ Orchestrator] Starting FAQ generation... ---")
     try:
-        index = get_or_create_index(dim=384)  # Example dimension, adjust as needed
+        # 1. Get initial broad context snippets (used for question generation)
+        index = get_or_create_index(dim=get_embedding_dimension()) # Assuming get_embedding_dimension is available
         ns = namespace(user_id, thread_id)
-        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=max_snippets)
+        initial_hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=max_snippets)
 
-        if not query_result:
+        if not initial_hits:
             return {"success": False, "message": "No document excerpts available for FAQ generation."}
 
-        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
+        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in initial_hits if hit.get("metadata", {}).get("text", "").strip()]
         if not snippets:
-            return {"success": False, "message": "No valid snippets found in Pinecone."}
+            return {"success": False, "message": "No valid text snippets found in Pinecone."}
 
-        context_excerpt = "\n\n---\n\n".join([s[:2000] for s in snippets])
-        system_prompt = (
-    "You are an expert FAQ writer for legal/technical documents. "
-    "Using ONLY the provided excerpts (DO NOT use outside knowledge), create a concise FAQ in MARKDOWN.\n\n"
-    "Rules:\n"
-    "- Write exactly between 6 and {nq} Q&A pairs (aim for {nq} if material supports it).\n"
-    "- Each question should be short and practical for a non-expert.\n"
-    "- Each answer must be STRICTLY supported by the excerpts. If not present, write exactly: 'Not stated in document.'\n"
-    "- Keep each answer 1–3 short sentences max. Avoid boilerplate and legalese.\n"
-    "- If you quote, include only a short snippet (<=200 chars) and append '(excerpt)'.\n"
-    "- Do NOT invent numbers, dates, obligations, or parties.\n"
-    "- IMPORTANT:\n"
-    "  - Use Markdown output with ### Q: for questions and A: for answers.\n"
-    "  - The labels ### Q: and A: MUST remain in English only — never translate them.\n"
-    "  - Only the content inside answers/questions may appear in another language if requested.\n"
-    "  - Do not include extra commentary or explanation.\n"
-).format(nq=num_questions)
+        initial_context = "\n\n---\n\n".join([s[:2000] for s in snippets]) # Limit context size
 
+        # 2. Call Agent 1 to generate questions
+        questions = _faq_agent1_generate_questions(initial_context, num_questions)
+        if not questions:
+            return {"success": False, "message": "FAQ Agent 1 failed to generate any questions."}
 
-        user_prompt = (
-            f"Document excerpts:\n\n{context_excerpt}\n\n"
-            "Now produce the FAQ as per instructions."
-        )
+        # 3. Call Agent 2 for each question to find the answer
+        faq_list = []
+        for q in questions:
+            answer = _faq_agent2_find_answers(q, user_id, thread_id)
+            faq_list.append({"question": q, "answer": answer})
 
-        faq_md = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
-        return {"success": True, "faq_markdown": faq_md}
+        print("--- [FAQ Orchestrator] FAQ generation complete. ---")
+        # Return the structured list instead of pre-formatted markdown
+        return {"success": True, "faq": faq_list} 
+
     except Exception as e:
+        print(f"--- [FAQ Orchestrator] Error: {e} ---")
         return {"success": False, "message": f"generate_faq error: {e}"}
         
 import re
