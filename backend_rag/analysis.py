@@ -515,82 +515,87 @@ from bs4 import BeautifulSoup
 from urllib.parse import quote
 from typing import List, Dict
 
-# Optional: a few public free proxy providers (these rotate)
-FREE_PROXY_SOURCES = [
-    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=3000&country=IN",
-    "https://www.proxy-list.download/api/v1/get?type=http",
-]
+# In backend_rag/analysis.py
+# In backend_rag/analysis.py
 
-def get_random_proxy() -> str | None:
-    """Fetch a random proxy from free proxy lists."""
-    try:
-        source = random.choice(FREE_PROXY_SOURCES)
-        proxies = requests.get(source, timeout=5).text.splitlines()
-        return random.choice(proxies) if proxies else None
-    except Exception:
-        return None
+# --- Add these imports at the top of your file ---
+from playwright.sync_api import sync_playwright
+# --- Make sure the other necessary imports are still there ---
+from bs4 import BeautifulSoup
+from urllib.parse import quote
+from typing import List, Dict, Optional
+import os
 
-
+# This is the function you need to replace.
 def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
-    """Scrape Indian Kanoon directly using cloudscraper with proxy rotation."""
+    """
+    Uses Playwright to control a real browser, bypassing anti-bot measures.
+    NOTE: This is resource-intensive and may be difficult to deploy.
+    """
     if not queries:
         return []
 
-    all_results = {}
-    for query in queries:
-        full_query = f'"{query}"'
-        print(f"--- [AGENT 2] Searching with query: '{full_query}' ---")
-        try:
-            scraper = cloudscraper.create_scraper()
-            proxy = get_random_proxy()
-            proxies = {"http": proxy, "https": proxy} if proxy else None
+    all_results: Dict[str, Dict] = {}
 
-            search_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
-            response = scraper.get(search_url, timeout=20, proxies=proxies)
-            response.raise_for_status()
+    try:
+        with sync_playwright() as p:
+            # Launch the browser once for all operations
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            for result in soup.find_all("div", class_="result"):
-                if (title_div := result.find("div", class_="result_title")) and (link := title_div.find("a")):
-                    case_url = "https://indiankanoon.org" + link["href"]
-                    if case_url not in all_results:
-                        all_results[case_url] = {
-                            "case_name": link.get_text(strip=True),
-                            "url": case_url,
-                        }
-        except Exception as e:
-            print(f"--- [AGENT 2] Search failed for query '{query}': {e} ---")
+            # 1. Search for all cases to find their URLs
+            for query in queries:
+                full_query = f'"{query}"'
+                target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
+                print(f"--- [AGENT 2] Navigating to search page for query: '{full_query}' ---")
+                
+                try:
+                    page.goto(target_url, timeout=60000)
+                    html = page.content()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    
+                    for result in soup.find_all('div', class_='result', limit=max_cases):
+                        if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
+                            case_url = "https://indiankanoon.org" + link['href']
+                            if case_url not in all_results:
+                                all_results[case_url] = {"case_name": link.get_text(strip=True), "url": case_url}
+                except Exception as e:
+                    print(f"--- [AGENT 2] Playwright failed during search for query '{query}': {e} ---")
 
-    unique_cases = list(all_results.values())[:max_cases]
-    if not unique_cases:
-        print("--- [AGENT 2] No relevant cases found. ---")
+            unique_cases = list(all_results.values())[:max_cases]
+            if not unique_cases:
+                print("--- [AGENT 2] No relevant case URLs found after searching.")
+                browser.close()
+                return []
+
+            # 2. Scrape each unique case page for its full text
+            print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
+            for case in unique_cases:
+                try:
+                    print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
+                    page.goto(case['url'], timeout=60000)
+                    html = page.content()
+                    
+                    case_soup = BeautifulSoup(html, 'html.parser')
+                    cleaned_text = _clean_scraped_text_heuristic(case_soup)
+                    
+                    if len(cleaned_text) > 300:
+                        case['raw_text'] = cleaned_text[:25000]
+                        print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
+                    else:
+                        case['raw_text'] = ""
+                except Exception as e:
+                    case['raw_text'] = ""
+                    print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
+            
+            # Close the browser when all work is done
+            browser.close()
+
+    except Exception as e:
+        print(f"--- [AGENT 2] A critical error occurred in Playwright setup: {e} ---")
         return []
-
-    print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
-    for case in unique_cases:
-        try:
-            print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
-            scraper = cloudscraper.create_scraper()
-            proxy = get_random_proxy()
-            proxies = {"http": proxy, "https": proxy} if proxy else None
-
-            page_response = scraper.get(case["url"], timeout=20, proxies=proxies)
-            page_response.raise_for_status()
-
-            case_soup = BeautifulSoup(page_response.text, "html.parser")
-            cleaned_text = _clean_scraped_text_heuristic(case_soup)
-
-            if len(cleaned_text) > 300:
-                case["raw_text"] = cleaned_text[:25000]
-                print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
-            else:
-                case["raw_text"] = ""
-                print(f"--- [AGENT 2] FAILED: Could not extract sufficient text for '{case['case_name']}'.")
-        except Exception as e:
-            case["raw_text"] = ""
-            print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
-
-    return [case for case in unique_cases if case.get("raw_text")]
+            
+    return [case for case in unique_cases if case.get('raw_text')]
 
 def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
     raw_text = case.get("raw_text", "")

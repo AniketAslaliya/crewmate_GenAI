@@ -208,47 +208,35 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
 
 # In api_server.py
 
+# In api_server.py
+
 def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
-    """
-    Ingest audio file: transcribe, detect language, optionally translate,
-    chunk, embed, store in vector DB, and return transcript + diagnostics.
-    """
     try:
-        transcript = speech_to_text_from_local_file(local_path)
-        if not transcript or not transcript.strip() or transcript.startswith("(speech error"):
-            return {"success": False, "message": f"Could not produce transcript from audio file. Reason: {transcript}"}
-        
+        # Step 1: Transcribe the audio file
+        speech_result = speech_to_text_from_local_file(local_path)
+        transcript = speech_result.get("transcript", "")
+        detected_lang_code = speech_result.get("detected_language", "en-US")
+
+        if not transcript or transcript.startswith("(speech error"):
+            return {"success": False, "message": f"Could not produce transcript. Reason: {transcript}"}
+
         text = transcript.strip()
+        original_lang = detected_lang_code.split('-')[0]  # e.g., 'gu-IN' → 'gu'
         source = f"audio:{file_name}"
-        diagnostics = {"transcript_length": len(text.split())}
+        diagnostics = {
+            "transcript_length": len(text.split()),
+            "detected_audio_language": detected_lang_code
+        }
 
-        # --- Language Detection & Translation ---
-        detection = detect_language(text)
-        original_lang = 'en'
-        if detection and detection.get('language') and detection.get('confidence', 0) > 0.5:
-            original_lang = detection['language']
+        # ✅ Do NOT translate — store original language
+        text_to_process = text  
 
-        text_to_process = text
-        if original_lang != 'en':
-            translated = translate_text(text, target_language='en')
-            if translated:
-                text_to_process = translated
-                diagnostics['translation'] = f"Detected '{original_lang}', translated to 'en'"
-            else:
-                diagnostics['translation_error'] = f"Detected '{original_lang}', but translation failed."
-        # --- End language step ---
-
-        # --- Chunking & Embedding ---
+        # Step 2: Chunk + Embed + Store as usual
         chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200)
         texts = [c[1] for c in chunks]
         if not texts:
-            return {
-                "success": False,
-                "message": "No chunks created from audio transcript.",
-                "diagnostics": diagnostics,
-                "source": source
-            }
-        
+            return {"success": False, "message": "No chunks created from transcript.", "transcript": transcript}
+
         vecs = embed_texts(texts)
         vecs_list = [v.astype("float32").tolist() for v in vecs]
         ids = [c[0] for c in chunks]
@@ -260,26 +248,27 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
                 "text": texts[i][:4000],
                 "source": source,
                 "original_language": original_lang
-            } for i in range(len(texts))
+            }
+            for i in range(len(texts))
         ]
 
         dim = get_embedding_dimension()
         index = get_or_create_index(dim)
         ns = namespace(user_id, thread_id)
         upsert_chunks(index, ns, vecs_list, ids, metadatas)
-        # --- End vector DB step ---
 
         return {
             "success": True,
-            "message": f"Ingested {len(chunks)} audio chunks (source={source}, lang={original_lang}) into chat {thread_id} for user {user_id}",
-            "transcript": text,           # <-- return the actual transcript here
+            "message": f"Ingested {len(chunks)} audio chunks (source={source}, lang={original_lang})",
+            "transcript": transcript,
             "diagnostics": diagnostics,
             "source": source,
             "original_language": original_lang
         }
-    
+
     except Exception as e:
         return {"success": False, "message": f"_ingest_audio_no_sqlite_save error: {e}"}
+
 
 
 # ----------------------------- Endpoints --------------------------------------

@@ -2,35 +2,24 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-dotenv
+pydantic
 
-# ✅ Pydantic v1 for compatibility
-pydantic==1.10.13
-
-# ✅ Stable LangChain + GenAI combo (Pydantic v1 compatible)
-langchain==0.1.20
-langchain-core==0.1.52
-langchain-google-genai==0.0.9
-google-generativeai==0.3.2  # ✅ compatible with langchain-google-genai==0.0.9
-
-# ✅ Core dependencies
-pinecone  # ✅ renamed package, replaces pinecone-client
+pinecone
 sentence-transformers
-numpy==1.26.4  # ✅ safest for torch and transformers compatibility
+numpy
+langchain-core
+langchain-google-genai
 
-# ✅ Document + image utilities
 PyPDF2
 Pillow
 pdf2image
 python-docx
 
-# ✅ Google services
 google-cloud-vision
 google-cloud-storage
-google-cloud-translate==2.0.1
-
-# ✅ Other tools
 langgraph
 pydub
 httpx
 beautifulsoup4
-cloudscraper
+google-cloud-translate==2.0.1
+playwright==1.44.0

@@ -18,7 +18,8 @@ try:
     from google.cloud import vision_v1 as vision
     from google.cloud import storage as gcs
     from google.oauth2 import service_account
-    from google.cloud import speech_v1 as speech
+    from google.cloud import speech_v2 as speech
+
     _gcloud_import_error = None
 except Exception as e:  # pragma: no cover
     vision = None
@@ -60,18 +61,19 @@ def _get_vision_and_storage_clients():
         _gcs_client = None
         return None, None
 
-
 def _get_speech_and_storage_clients():
     """
-    Create Speech & Storage clients using GOOGLE_APPLICATION_CREDENTIALS.
+    Create Speech (v2) & Storage clients using GOOGLE_APPLICATION_CREDENTIALS.
+    Fully compatible with Speech-to-Text v2.
     Includes detailed logging for debugging credential issues.
     """
     global _speech_client, _gcs_client_for_speech
+
     if not SPEECH_AVAILABLE:
         print("[SPEECH INIT] ❌ Speech/Storage not available in environment.")
         return None, None
 
-    # Reuse cached clients if already initialized
+    # Reuse cached clients
     if _speech_client is not None and _gcs_client_for_speech is not None:
         print("[SPEECH INIT] ✅ Returning existing cached clients.")
         return _speech_client, _gcs_client_for_speech
@@ -84,16 +86,25 @@ def _get_speech_and_storage_clients():
         if key_path and Path(key_path).exists() and service_account is not None:
             print(f"[SPEECH INIT] ✅ Found service account key at: {key_path}")
             creds = service_account.Credentials.from_service_account_file(key_path)
-            _speech_client = speech.SpeechClient(credentials=creds)
+
+            # ✅ Use Speech-to-Text v2 client here
+            from google.cloud import speech_v2
+            _speech_client = speech_v2.SpeechClient(credentials=creds)
+
+            # Google Cloud Storage client (optional)
             _gcs_client_for_speech = gcs.Client(credentials=creds, project=creds.project_id) if gcs else None
 
         # --- CASE 2: No explicit key, try ADC (local gcloud or env) ---
         else:
             print("[SPEECH INIT] ⚠️ No valid key path found. Trying default credentials (ADC)...")
-            _speech_client = speech.SpeechClient()
+
+            # ✅ Use Speech-to-Text v2 client here
+            from google.cloud import speech_v2
+            _speech_client = speech_v2.SpeechClient()
+
             _gcs_client_for_speech = gcs.Client() if gcs else None
 
-        print("[SPEECH INIT] ✅ Speech and Storage clients initialized successfully.")
+        print("[SPEECH INIT] ✅ Speech-to-Text v2 and Storage clients initialized successfully.")
         return _speech_client, _gcs_client_for_speech
 
     except Exception as e:
@@ -101,6 +112,7 @@ def _get_speech_and_storage_clients():
         _speech_client = None
         _gcs_client_for_speech = None
         return None, None
+
 
 
 
@@ -205,6 +217,53 @@ def ocr_pdf_with_google_vision_async_gcs(pdf_path: str) -> str:
 
 
 # ------------------- Speech-to-Text helpers -------------------
+def detect_language_from_audio_bytes(content: bytes) -> str:
+    """
+    Detects spoken language using quick trial transcriptions.
+    Tries Hindi, Gujarati, and English — returns whichever yields the longest transcript.
+    """
+    client, _ = _get_speech_and_storage_clients()
+    if not client:
+        print("--- [LANG DETECT] Speech client not available, defaulting to en-US.")
+        return "en-US"
+
+    try:
+        # Use only the first 10 seconds for detection
+        audio_segment = AudioSegment.from_file(io.BytesIO(content))
+        snippet = audio_segment[:10000]
+        buffer = io.BytesIO()
+        snippet.export(buffer, format="wav")
+        wav_bytes = buffer.getvalue()
+        recognition_audio = speech.RecognitionAudio(content=wav_bytes)
+
+        # Try all candidate languages
+        candidates = ["hi-IN", "gu-IN", "en-US"]
+        scores = {}
+
+        for lang in candidates:
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=snippet.frame_rate,
+                language_code=lang,
+                model="latest_long",
+                audio_channel_count=snippet.channels,
+            )
+            try:
+                response = client.recognize(config=config, audio=recognition_audio)
+                transcript_len = sum(len(r.alternatives[0].transcript.strip()) for r in response.results)
+                scores[lang] = transcript_len
+            except Exception as inner_e:
+                scores[lang] = 0
+
+        detected = max(scores, key=scores.get)
+        print(f"--- [LANG DETECT] Language scores: {scores} → Detected: {detected} ---")
+        return detected if scores[detected] > 5 else "en-US"
+
+    except Exception as e:
+        print(f"--- [LANG DETECT] Error during language detection: {e}, defaulting to en-US.")
+        return "en-US"
+
+    
 
 import io
 import os
@@ -212,85 +271,108 @@ import base64
 import requests
 from pydub import AudioSegment
 
-def speech_to_text_from_bytes(
-    content: bytes,
-    language_code: str = "en-US",
-    enable_automatic_punctuation: bool = True,
-) -> str:
-    """
-    Recognize audio content (bytes) using the Google Speech-to-Text REST API with an API key.
-    Works with GOOGLE_SPEECH_TO_TEXT=AIza... key (no service account needed).
-    Converts audio into 16-bit, 16kHz, mono WAV before sending to API.
-    """
+import os
+import io
+import base64
+import requests
+from pydub import AudioSegment
 
-    api_key = os.getenv("GOOGLE_SPEECH_TO_TEXT")
-    if not api_key:
-        return "(speech error: GOOGLE_SPEECH_TO_TEXT not set)"
+# In backend_rag/ocr.py
 
+# (Make sure the necessary imports are at the top, like speech, AudioSegment, io, etc.)
+# (Also ensure the _get_speech_client() function is present in the file)
+
+def speech_to_text_from_bytes(content: bytes, language_code: str | None = None) -> str:
+    """
+    Transcribes audio using Google Cloud Speech-to-Text v2.
+    If `language_code` is provided, it forces that language.
+    Otherwise, auto-detects using multiple language codes.
+    Returns native-script output (e.g., Hindi → 'यह क्या है', Gujarati → 'આ શું છે').
+    """
     try:
-        # --- AUDIO CONVERSION LOGIC ---
-        # Convert any audio format (mp3, wav, m4a, etc.) into standard 16kHz mono WAV
-        audio = AudioSegment.from_file(io.BytesIO(content))
-        audio = audio.set_sample_width(2).set_frame_rate(16000).set_channels(1)
+        from google.cloud import speech_v2
+        from google.oauth2 import service_account
+        import json
 
-        # Export converted audio as bytes (WAV format)
-        converted_buffer = io.BytesIO()
-        audio.export(converted_buffer, format="wav")
-        converted_bytes = converted_buffer.getvalue()
+        # --- Step 1: Load credentials & project info ---
+        key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if not key_path or not Path(key_path).exists():
+            return "(speech error: GOOGLE_APPLICATION_CREDENTIALS missing or invalid path)"
 
-        # --- PREPARE REQUEST PAYLOAD ---
-        audio_b64 = base64.b64encode(converted_bytes).decode("utf-8")
-        payload = {
-            "config": {
-                "languageCode": language_code,
-                "enableAutomaticPunctuation": enable_automatic_punctuation,
-                "encoding": "LINEAR16",
-                "sampleRateHertz": 16000
-            },
-            "audio": {"content": audio_b64}
-        }
+        with open(key_path, "r", encoding="utf-8") as f:
+            creds_data = json.load(f)
+        project_id = creds_data.get("project_id")
+        if not project_id:
+            return "(speech error: project_id missing in service account JSON)"
 
-        # --- CALL GOOGLE SPEECH-TO-TEXT REST API ---
-        response = requests.post(
-            f"https://speech.googleapis.com/v1/speech:recognize?key={api_key}",
-            json=payload,
-            timeout=120
+        creds = service_account.Credentials.from_service_account_file(key_path)
+        client = speech_v2.SpeechClient(credentials=creds)
+
+        # --- Step 2: Prepare audio (normalize) ---
+        audio_segment = AudioSegment.from_file(io.BytesIO(content))
+        audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
+        buf = io.BytesIO()
+        audio_segment.export(buf, format="wav")
+        wav_bytes = buf.getvalue()
+
+        # --- Step 3: Build language list ---
+        if language_code:
+            languages = [language_code]
+        else:
+            languages = ["hi-IN", "gu-IN", "en-US"]  # Auto-detect among these (add more if needed)
+
+        # --- Step 4: Create RecognizeRequest ---
+        request = speech_v2.RecognizeRequest(
+            recognizer=f"projects/{project_id}/locations/global/recognizers/_",
+            config=speech_v2.RecognitionConfig(
+                auto_decoding_config={},
+                language_codes=languages,
+                model="long",
+                features=speech_v2.RecognitionFeatures(
+                    enable_automatic_punctuation=True,
+                    enable_spoken_punctuation=True,
+                ),
+            ),
+            content=wav_bytes,
         )
 
-        if response.status_code != 200:
-            return f"(speech error: API returned status {response.status_code}, details: {response.text})"
+        # --- Step 5: Transcribe ---
+        response = client.recognize(request=request)
 
-        data = response.json()
-        if "results" not in data:
-            return f"(speech error: unexpected API response: {data})"
+        transcript = ""
+        detected_lang = None
+        for result in response.results:
+            transcript += result.alternatives[0].transcript.strip() + " "
+            if result.language_code:
+                detected_lang = result.language_code
 
-        # --- EXTRACT TRANSCRIPT ---
-        transcript_parts = [r["alternatives"][0]["transcript"] for r in data["results"] if "alternatives" in r]
-        transcript = " ".join(transcript_parts).strip()
-        return transcript if transcript else "(speech error: empty transcript)"
+        transcript = transcript.strip()
+        print(f"[SPEECH V2] ✅ Transcript: {transcript}")
+        if detected_lang:
+            print(f"[SPEECH V2] 🌐 Detected Language: {detected_lang}")
+
+        return transcript or "(speech error: empty transcript)"
 
     except Exception as e:
         return f"(speech error: {e})"
 
 
-
-def speech_to_text_from_local_file(
-    audio_path: str,
-    language_code: str = "en-US",
-    enable_automatic_punctuation: bool = True,
-) -> str:
+def speech_to_text_from_local_file(audio_path: str) -> dict:
     """
-    Reads an audio file from a local path and transcribes it.
-    This function now acts as a simple wrapper around speech_to_text_from_bytes.
+    Orchestrator function: reads a local file, detects the language from its
+    audio, then gets the full transcript in that language.
+    Returns a dictionary with the transcript and detected language.
     """
     try:
         with open(audio_path, "rb") as f:
             content = f.read()
-        # Call the main bytes function WITHOUT the encoding_hint
-        return speech_to_text_from_bytes(
-            content=content,
-            language_code=language_code,
-            enable_automatic_punctuation=enable_automatic_punctuation,
-        )
+
+        # First Pass: Detect language from the audio bytes
+        detected_language = detect_language_from_audio_bytes(content)
+
+        # Second Pass: Transcribe the full audio using the detected language
+        transcript = speech_to_text_from_bytes(content, language_code=detected_language)
+        
+        return {"transcript": transcript, "detected_language": detected_language}
     except Exception as e:
-        return f"(speech error: {e})"
+        return {"transcript": f"(speech error: {e})", "detected_language": "unknown"}
