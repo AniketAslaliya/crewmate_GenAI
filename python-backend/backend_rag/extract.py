@@ -93,7 +93,7 @@ def extract_text_with_diagnostics(file: str, pdf_ocr_pages: int = 5) -> Dict[str
 
         if os.getenv("VISION_GCS_BUCKET"):
             diag["pdf_vision_mode"] = {"mode": "gcs_async", "bucket": os.getenv("VISION_GCS_BUCKET")}
-            t2 = ocr_pdf_with_google_vision_async_gcs(file, max_pages=pdf_ocr_pages)
+            t2 = ocr_pdf_with_google_vision_async_gcs(file)
             diag["pdf_vision"] = {"ok": bool(t2 and t2.strip()), "len": len(t2) if t2 else 0}
             if t2 and t2.strip():
                 return {"text": t2, "source": "pdf_vision_gcs_async", "diagnostics": diag}

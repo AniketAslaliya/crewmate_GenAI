@@ -1,8 +1,8 @@
-import wave
+from zenrows import ZenRowsClient
 
-with wave.open("harvard.wav", "rb") as wf:
-    print("Channels:", wf.getnchannels())
-    print("Sample width (bytes):", wf.getsampwidth())
-    print("Frame rate (Hz):", wf.getframerate())
-    print("Frames:", wf.getnframes())
-    print("Duration (sec):", wf.getnframes() / float(wf.getframerate()))
+client = ZenRowsClient("4921bf05195b4c8e5cf378adf00137702ec5c95d")
+url = "https://httpbin.io/anything"
+
+response = client.get(url)
+
+print(response.text)

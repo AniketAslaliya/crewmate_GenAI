@@ -12,6 +12,7 @@ from .config import DEFAULT_GOOGLE_MODEL, DEFAULT_MODEL_TEMPERATURE
 # Single shared chat model (Gemini via LangChain wrapper)
 model = ChatGoogleGenerativeAI(
     model=DEFAULT_GOOGLE_MODEL,
+    convert_system_message_to_human=True,
     temperature=DEFAULT_MODEL_TEMPERATURE,
     google_api_key=os.getenv("GOOGLE_API_KEY"),
 )
@@ -33,6 +34,7 @@ def call_model_system_then_user(system_prompt: str, user_prompt: str, temperatur
         tmp_model = ChatGoogleGenerativeAI(
             model=os.getenv("GOOGLE_MODEL", DEFAULT_GOOGLE_MODEL),
             temperature=float(temperature),
+            convert_system_message_to_human=True,
             google_api_key=os.getenv("GOOGLE_API_KEY"),
         )
         resp = tmp_model.invoke([sys, hum])

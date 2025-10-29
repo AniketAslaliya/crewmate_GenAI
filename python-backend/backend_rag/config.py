@@ -7,11 +7,7 @@ from dotenv import load_dotenv
 # Load .env once
 load_dotenv()
 
-# Paths
-BASE_DIR: Path = Path(__file__).parent
-VECTOR_DIR: Path = BASE_DIR / "vectors"
-VECTOR_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH: Path = BASE_DIR / "chatbot.db"
+
 
 # Models / knobs
 DEFAULT_GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")

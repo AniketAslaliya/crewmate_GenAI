@@ -19,3 +19,7 @@ google-cloud-vision
 google-cloud-storage
 langgraph
 pydub
+httpx
+beautifulsoup4
+google-cloud-translate==2.0.1
+playwright==1.44.0

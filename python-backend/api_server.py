@@ -1,3 +1,4 @@
+# full updated file with corrected endpoints for JSON responses
 from __future__ import annotations
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
@@ -5,8 +6,12 @@ import os
 from pathlib import Path
 import tempfile
 from typing import Optional
+import re
+import json
 
 # Ensure all backend modules are correctly imported
+# In api_server.py, near other backend imports
+from backend_rag.Translation import detect_language, translate_text
 from backend_rag.vectorstore_pinecone import get_or_create_index, upsert_chunks, delete_namespace, namespace, query_top_k, namespace_count
 from backend_rag.embeddings import embed_texts, get_embedding_dimension
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
@@ -21,6 +26,8 @@ from backend_rag.analysis import (
     quick_analyze_for_thread as quick_analyze_thread,
     generate_faq,
     generate_timeline,
+    suggest_case_law,
+    generate_predictive_output, 
 )
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
@@ -49,7 +56,7 @@ except Exception:
             "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
             "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
             "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
-            f"Document excerpts:\n{context}\n"@app.post("/api/ask")
+            f"Document excerpts:\n{context}\n"
         )
 
 # ----------------------------- FastAPI app ------------------------------------
@@ -68,30 +75,51 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------- Models -----------------------------------------
+# In api_server.py, update these models
+
 class StudyGuideReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+    output_language: Optional[str] = 'en' # Add this
+
+class PredictiveOutputReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    output_language: Optional[str] = 'en' # Add this
+
+
+
+
 
 class QuickAnalyzeReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+
 
 class FAQReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     max_snippets: int = 8
     num_questions: int = 10
+    output_language: Optional[str] = 'en' # Add this
 
 class TimelineReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     max_snippets: int = 10
+    output_language: Optional[str] = 'en' # Add this
 
 class AskReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
     query: str
     top_k: int = 4
+    output_language: Optional[str] = 'en' # Add this
+
+class CaseLawReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    output_language: Optional[str] = 'en' # Add this
 
 class FAQDownloadReq(BaseModel):
     user_id: Optional[str] = None
@@ -106,15 +134,14 @@ class StudyGuideDownloadReq(BaseModel):
     thread_id: str
 
 
+
 # ----------------------------- Utils ------------------------------------------
 def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
-    """Return a download response with Content-Disposition: attachment; filename=..."""
     buf = io.BytesIO(text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(buf, media_type=media_type, headers=headers)
 
 def _reset_vector_store(user_id: Optional[str], thread_id: str):
-    """Delete the Pinecone namespace for this (user, thread)."""
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
@@ -122,6 +149,8 @@ def _reset_vector_store(user_id: Optional[str], thread_id: str):
         delete_namespace(index, ns)
     except Exception:
         pass
+
+# In api_server.py
 
 def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     extraction = extract_text_with_diagnostics(local_path)
@@ -132,51 +161,115 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
     if not text:
         return {"success": False, "message": "No text extracted from file.", "diagnostics": diagnostics, "source": source}
 
-    chunks = chunk_text(text, chunk_size=1000, overlap=200)
+    # --- NEW: Language Detection & Translation Step ---
+    detection = detect_language(text)
+    original_lang = 'en' # Default to English
+    if detection and detection.get('language') and detection.get('confidence', 0) > 0.5:
+        original_lang = detection['language']
+
+    text_to_process = text
+    if original_lang != 'en':
+        translated = translate_text(text, target_language='en')
+        if translated:
+            text_to_process = translated
+            diagnostics['translation'] = f"Detected '{original_lang}', translated to 'en'"
+        else:
+            # If translation fails, proceed with original text but log it
+            diagnostics['translation_error'] = f"Detected '{original_lang}', but translation failed."
+
+    # --- End of New Step ---
+
+    chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200) # Use the processed text
     texts = [c[1] for c in chunks]
     if not texts:
         return {"success": False, "message": "No chunks created from file.", "diagnostics": diagnostics, "source": source}
-
+    
     vecs = embed_texts(texts)
     vecs_list = [v.astype("float32").tolist() for v in vecs]
     ids = [c[0] for c in chunks]
-    metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000]} for i in range(len(texts))]
+    
+    # --- MODIFIED: Add original_lang to metadata ---
+    metadatas = [
+        {
+            "file_name": file_name,
+            "chunk_id": ids[i],
+            "text": texts[i][:4000],
+            "original_language": original_lang  # Store the detected language
+        } for i in range(len(texts))
+    ]
+    # --- End of Modification ---
 
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
     upsert_chunks(index, ns, vecs_list, ids, metadatas)
+    
+    return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}, lang={original_lang}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
 
-    return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
+# In api_server.py
+
+# In api_server.py
 
 def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
     try:
-        transcript = speech_to_text_from_local_file(local_path)
-        if not transcript or not transcript.strip() or transcript.startswith("(speech error"):
-            return {"success": False, "message": f"Could not produce transcript from audio file. Reason: {transcript}"}
+        # Step 1: Transcribe the audio file
+        speech_result = speech_to_text_from_local_file(local_path)
+        transcript = speech_result.get("transcript", "")
+        detected_lang_code = speech_result.get("detected_language", "en-US")
+
+        if not transcript or transcript.startswith("(speech error"):
+            return {"success": False, "message": f"Could not produce transcript. Reason: {transcript}"}
 
         text = transcript.strip()
+        original_lang = detected_lang_code.split('-')[0]  # e.g., 'gu-IN' → 'gu'
         source = f"audio:{file_name}"
-        diagnostics = {"transcript_length": len(text.split())}
+        diagnostics = {
+            "transcript_length": len(text.split()),
+            "detected_audio_language": detected_lang_code
+        }
 
-        chunks = chunk_text(text, chunk_size=1000, overlap=200)
+        # ✅ Do NOT translate — store original language
+        text_to_process = text  
+
+        # Step 2: Chunk + Embed + Store as usual
+        chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200)
         texts = [c[1] for c in chunks]
         if not texts:
-            return {"success": False, "message": "No chunks created from audio transcript.", "diagnostics": diagnostics, "source": source}
+            return {"success": False, "message": "No chunks created from transcript.", "transcript": transcript}
 
         vecs = embed_texts(texts)
         vecs_list = [v.astype("float32").tolist() for v in vecs]
         ids = [c[0] for c in chunks]
-        metadatas = [{"file_name": file_name, "chunk_id": ids[i], "text": texts[i][:4000], "source": source} for i in range(len(texts))]
+
+        metadatas = [
+            {
+                "file_name": file_name,
+                "chunk_id": ids[i],
+                "text": texts[i][:4000],
+                "source": source,
+                "original_language": original_lang
+            }
+            for i in range(len(texts))
+        ]
 
         dim = get_embedding_dimension()
         index = get_or_create_index(dim)
         ns = namespace(user_id, thread_id)
         upsert_chunks(index, ns, vecs_list, ids, metadatas)
 
-        return {"success": True, "message": f"Ingested {len(chunks)} audio chunks (source={source}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
+        return {
+            "success": True,
+            "message": f"Ingested {len(chunks)} audio chunks (source={source}, lang={original_lang})",
+            "transcript": transcript,
+            "diagnostics": diagnostics,
+            "source": source,
+            "original_language": original_lang
+        }
+
     except Exception as e:
         return {"success": False, "message": f"_ingest_audio_no_sqlite_save error: {e}"}
+
+
 
 # ----------------------------- Endpoints --------------------------------------
 @app.get("/api/health")
@@ -185,67 +278,94 @@ def health():
 
 @app.post("/api/study-guide")
 def study_guide(req: StudyGuideReq):
+    print("\n--- SERVER CHECK: The /api/study-guide endpoint was called. ---")
     try:
         result = generate_study_guide(req.user_id, req.thread_id)
+        if req.output_language and req.output_language != 'en':
+            english_text = result.get("study_guide", "")
+            if english_text:
+                translated_text = translate_text(english_text, req.output_language)
+                if translated_text:
+                    result["study_guide"] = translated_text
 
-        # Ensure we always return a string, not None
-        study_guide = result.get("study_guide") or "No study guide could be generated."
+        return result
 
-        return {"success": True, "study_guide": study_guide}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
-
 
 @app.post("/api/quick-analyze")
 def api_quick_analyze(req: QuickAnalyzeReq):
     try:
         out = quick_analyze_thread(req.user_id, req.thread_id)
-
-        # Ensure the function returns a dict with success=True/False
         if not out.get("success"):
             raise HTTPException(status_code=422, detail=out)
-
         return out
-
     except Exception as e:
-        # Catch unexpected issues
-        raise HTTPException(
-            status_code=500,
-            detail={"success": False, "message": f"quick_analyze error: {str(e)}"}
-        )
+        raise HTTPException(status_code=500, detail={"success": False, "message": f"quick_analyze error: {str(e)}"})
 
-
-@app.post("/api/faq")
-def faq(req: FAQReq):
-    try:
-        result = generate_faq(req.user_id, req.thread_id, max_snippets=req.max_snippets, num_questions=req.num_questions)
-        return {"success": True, "faq_markdown": result.get("faq_markdown")}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
 
 @app.post("/api/timeline")
 def timeline(req: TimelineReq):
+    print("\n--- SERVER CHECK: The /api/timeline endpoint was called. ---")
     try:
         result = generate_timeline(req.user_id, req.thread_id, max_snippets=req.max_snippets)
-        return {"success": True, "timeline_markdown": result.get("timeline_markdown")}
+        if req.output_language and req.output_language != 'en':
+            timeline_events = result.get("timeline", [])
+            for item in timeline_events:
+                event = item.get("event", "")
+                if event:
+                    translated_event = translate_text(event, req.output_language)
+                    if translated_event:
+                        item["event"] = translated_event
+
+        return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
 
+@app.post("/api/predictive-output")
+def api_predictive_output(req: PredictiveOutputReq):
+    print("\n--- SERVER CHECK: The /api/predictive-output endpoint was called. ---")
+    try:
+        result = generate_predictive_output(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+
+        if req.output_language and req.output_language != 'en':
+            prediction = result.get("prediction", {})
+            disclaimer = prediction.get("disclaimer", "")
+            if disclaimer:
+                translated_disclaimer = translate_text(disclaimer, req.output_language)
+                if translated_disclaimer:
+                    prediction["disclaimer"] = translated_disclaimer
+
+            scenarios = prediction.get("scenarios", [])
+            for scenario in scenarios:
+                outcome = scenario.get("outcome", "")
+                if outcome:
+                    translated_outcome = translate_text(outcome, req.output_language)
+                    if translated_outcome:
+                        scenario["outcome"] = translated_outcome
+                reasoning = scenario.get("reasoning", "")
+                if reasoning:
+                    translated_reasoning = translate_text(reasoning, req.output_language)
+                    if translated_reasoning:
+                        scenario["reasoning"] = translated_reasoning
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating predictive output: {e}")
+
+    
 @app.post("/api/ingest")
-async def ingest(
-    user_id: Optional[str] = Form(default=None),
-    thread_id: str = Form(...),
-    file: UploadFile = File(...),
-    replace: bool = Form(False),
-):
+async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = Form(...), file: UploadFile = File(...), replace: bool = Form(False)):
     if replace:
         _reset_vector_store(user_id, thread_id)
-
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
-
     result = _ingest_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
@@ -256,34 +376,54 @@ async def ingest_audio(
     user_id: Optional[str] = Form(default=None),
     thread_id: str = Form(...),
     file: UploadFile = File(...),
-    replace: bool = Form(False),
+    replace: bool = Form(False)
 ):
     if replace:
         _reset_vector_store(user_id, thread_id)
-
+    
     save_name = f"{thread_id}_{file.filename}"
     local_path = UPLOAD_DIR / save_name
     with local_path.open("wb") as f:
         f.write(await file.read())
-
+    
     result = _ingest_audio_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
+    
     return result
-from fastapi.responses import JSONResponse
+
+# In api_server.py
+
+# In api_server.py
+import json
+import html
+
+
 @app.post("/api/ask")
 def api_ask(req: AskReq):
+    # --- Step 1: Translate query to English if needed ---
+    query_to_process = req.query
+    query_lang_detection = detect_language(req.query)
+    query_lang = 'en'
+    if query_lang_detection and query_lang_detection.get('language') != 'en':
+        query_lang = query_lang_detection.get('language')
+        translated_query = translate_text(req.query, target_language='en')
+        if translated_query:
+            query_to_process = translated_query
 
-
-        
-    # ---------------------------------------------------
-
-    hits = retrieve_similar_chunks(req.query, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
+    # --- Step 2: Retrieve similar chunks ---
+    hits = retrieve_similar_chunks(query_to_process, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
+    
     if not hits:
-        return {"success": True, "answer": "Not stated in document.", "sources": []}
+        not_found_msg = "Not stated in document."
+        if req.output_language and req.output_language != 'en':
+            translated_not_found = translate_text(not_found_msg, target_language=req.output_language)
+            not_found_msg = translated_not_found or not_found_msg
+        return {"success": True, "answer": not_found_msg, "sources": []}
 
-    context_blobs = []
-    sources = []
+    # --- Step 3: Prepare context ---
+    context_blobs, sources = [], []
     for r in hits:
         text = (r.get("text") or "")[:1200].replace("\n", " ")
         fn = r.get("file_name") or "document"
@@ -292,67 +432,117 @@ def api_ask(req: AskReq):
 
     context = "\n\n".join(context_blobs)
     system_prompt = _build_strict_prompt(context)
-    user_prompt = req.query.strip()
-    answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+    user_prompt = query_to_process.strip()
 
-    return {"success": True, "answer": answer.strip(), "sources": sources}
+    # --- Step 4: Get English LLM answer ---
+    english_answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+    final_answer = english_answer.strip()
+
+    # --- Step 5: Translate answer if needed ---
+    if req.output_language and req.output_language != 'en':
+        translated_answer = translate_text(final_answer, target_language=req.output_language)
+        if translated_answer:
+            final_answer = translated_answer
+
+    # --- Step 6: Decode HTML entities and JSON if applicable ---
+    final_answer = html.unescape(final_answer)  # Removes &quot;, &#39;, etc.
+
+    # Try parsing JSON-looking strings safely
+    try:
+        maybe_json = json.loads(final_answer)
+        final_answer = maybe_json  # Keep as dict if valid JSON
+    except (json.JSONDecodeError, TypeError):
+        pass  # Keep as plain text if not JSON
+
+    return {"success": True, "answer": final_answer, "sources": sources}
+
+
+@app.post("/api/suggest-case-law")
+def api_suggest_case_law(req: CaseLawReq):
+    print("\n--- SERVER CHECK: The /api/suggest-case-law endpoint was called. ---")
+    try:
+        result = suggest_case_law(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+
+        if req.output_language and req.output_language != 'en':
+            suggested_cases = result.get("suggested_cases", [])
+            for case in suggested_cases:
+                details = case.get("details", "")
+                if details:
+                    translated_details = translate_text(details, req.output_language)
+                    if translated_details:
+                        case["details"] = translated_details
+                outcome = case.get("outcome", "")
+                if outcome:
+                    translated_outcome = translate_text(outcome, req.output_language)
+                    if translated_outcome:
+                        case["outcome"] = translated_outcome
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error suggesting case law: {e}")
 
 @app.post("/api/transcribe-audio")
-async def transcribe_audio(
-    file: UploadFile,
-    user_id: str = Form(""),
-    thread_id: str = Form(""),
-):
+async def transcribe_audio(file: UploadFile, user_id: str = Form(""), thread_id: str = Form("")):
     try:
         audio_bytes = await file.read()
-        
         try:
             AudioSegment.from_file(io.BytesIO(audio_bytes))
         except Exception as e:
-            error_message = f"Pydub/FFMPEG failed to decode audio. Error: {e}"
-            return JSONResponse(
-                content={"success": False, "transcript": f"(speech error: {error_message})"},
-                status_code=422,
-            )
-
-        transcript = speech_to_text_from_bytes(
-            content=audio_bytes,
-            language_code="en-US",
-            enable_automatic_punctuation=True,
-        )
-
+            return JSONResponse(content={"success": False, "transcript": f"(speech error: Pydub/FFMPEG failed to decode audio. Error: {e})"}, status_code=422)
+        transcript = speech_to_text_from_bytes(content=audio_bytes, language_code="en-US", enable_automatic_punctuation=True)
         if not transcript or transcript.startswith("(speech error"):
-            return JSONResponse(
-                content={"success": False, "transcript": transcript or ""},
-                status_code=422,
-            )
-
+            return JSONResponse(content={"success": False, "transcript": transcript or ""}, status_code=422)
         return {"success": True, "transcript": transcript}
-
     except Exception as e:
-        return JSONResponse(
-            content={"success": False, "error": str(e)}, status_code=500
-        )
+        return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
 
 @app.post("/api/download/faq")
-def download_faq(req: FAQDownloadReq):
-    out = generate_faq(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    faq_text = out.get("faq_markdown") or ""
-    if not faq_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty FAQ content."})
-    base = f"thread_{req.thread_id}"
-    return _stream_text_file(faq_text, f"{base}_faq.md", media_type="text/markdown; charset=utf-8")
+# In api_server.py, replace the old @app.post("/api/faq") function with this one
+
+@app.post("/api/faq")
+def faq(req: FAQReq):
+    print("\n--- SERVER CHECK: The /api/faq endpoint was called. ---")
+    try:
+        result = generate_faq(
+            req.user_id,
+            req.thread_id,
+            max_snippets=req.max_snippets,
+            num_questions=req.num_questions
+        )
+
+        if req.output_language and req.output_language != 'en':
+            english_markdown = result.get("faq_markdown", "")
+            if english_markdown:
+                translated_markdown = translate_text(english_markdown, req.output_language)
+                if translated_markdown:
+                    result["faq_markdown"] = translated_markdown
+                else:
+                    result["translation_status"] = (
+                        f"Failed to translate to '{req.output_language}'. "
+                        "Check server logs for Google API errors."
+                    )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating FAQ: {e}")
 
 @app.post("/api/download/timeline")
 def download_timeline(req: TimelineDownloadReq):
     out = generate_timeline(req.user_id, req.thread_id)
     if not out.get("success"):
         raise HTTPException(status_code=422, detail=out)
-    timeline_text = out.get("timeline_markdown") or ""
-    if not timeline_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty timeline content."})
+    timeline_list = out.get("timeline", [])
+    if not timeline_list:
+        message = out.get("message", "Empty timeline content.")
+        raise HTTPException(status_code=422, detail={"message": message})
+    timeline_text_parts = ["| Date | Event |", "|---|---|"]
+    for item in timeline_list:
+        timeline_text_parts.append(f"| {item.get('date', '')} | {item.get('event', '')} |")
+    timeline_text = "\n".join(timeline_text_parts)
     base = f"thread_{req.thread_id}"
     return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
 
@@ -390,10 +580,5 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
             if isinstance(md.get(key), str) and md[key].strip():
                 preview = md[key][:120]
                 break
-        out.append({
-            "id": m.get("id"),
-            "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0,
-            "keys": list(md.keys())[:20],
-            "preview": preview,
-        })
+        out.append({"id": m.get("id"), "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0, "keys": list(md.keys())[:20], "preview": preview})
     return {"namespace": ns, "samples": out}
