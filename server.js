@@ -11,6 +11,7 @@ import authRoutes from "./routes/routes.js";
 import chatRoutes from "./routes/chatroutes.js";
 import messageRoutes from "./routes/messageroutes.js";
 import lawyersRouter from "./routes/lawyers.js";
+import formsRouter from "./routes/forms.js";
 import http from "http";
 import { Server } from "socket.io";
 import crypto from "crypto";
@@ -35,6 +36,7 @@ app.use("/auth", authRoutes);
 app.use("/api", chatRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/lawyers", lawyersRouter);
+app.use("/api/forms", formsRouter);
 app.get("/", (req, res) => res.json({ ok: true }));
 
 // Message encryption helper (same logic as messageController)

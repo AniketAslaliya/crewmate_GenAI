@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import { uploadDocument, deleteChat, getUserChats} from "../controllers/chatController.js";
 import authMiddleware from "../middlewares/auth.js";
 import lawyersRouter from "./lawyers.js";
+import formsRouter from './forms.js';
 const router = Router();
 
 const signJwt = (payload) =>
