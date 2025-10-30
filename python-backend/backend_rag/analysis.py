@@ -13,7 +13,6 @@ from urllib.parse import quote
 import httpx
 
 # External dependencies used across versions
-import cloudscraper
 from bs4 import BeautifulSoup, NavigableString
 
 from .extract import extract_text_with_diagnostics
@@ -794,7 +793,6 @@ def _clean_scraped_text_heuristic(soup: BeautifulSoup) -> str:
     return "\n".join(cleaned_lines).strip()
 
 import random
-import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote

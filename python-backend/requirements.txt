@@ -21,5 +21,6 @@ langgraph
 pydub
 httpx
 beautifulsoup4
-google-cloud-translate==2.0.1
-playwright==1.44.0
+google-cloud-translate==3.11.3
+python-docx  # For handling .docx files
+reportlab

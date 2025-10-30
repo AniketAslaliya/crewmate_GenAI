@@ -54,6 +54,18 @@ STRICT_SYSTEM_PROMPT_TEMPLATE = (
 )
 
 
+WEB_ANSWER_SYSTEM_PROMPT = (
+    "You are a helpful assistant. Your user has asked a question that could not be answered by their uploaded document.\n"
+    "Your task is to answer the user's original question based *only* on the provided web search results.\n"
+    "Rules:\n"
+    "- Synthesize a clear, concise answer to the user's question.\n"
+    "- If the web search results do not provide an answer, state that you could not find the information online.\n"
+    "- Do not mention 'confidence' or the previous document search.\n"
+    "- Your response should be a plain-text answer, not JSON.\n"
+    # --- THIS IS THE UPDATED LINE ---
+    "- Start the answer with 'That information was not in your document, so I performed a web search. Here is what I found:'\n\n"
+    "WEB SEARCH RESULTS:\n{web_context}\n"
+)
 
 FALLBACK_SYSTEM_PROMPT = (
     "No document context provided. You are a legal-document assistant.\n\n"

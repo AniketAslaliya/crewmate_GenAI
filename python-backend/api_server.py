@@ -23,6 +23,12 @@ from backend_rag.form_processing import (
     fill_docx_form       # Functional implementation
     # Assuming OcrResult class is defined in form_processing.py or imported there
 )
+# In api_server.py, at the top with other imports
+
+from backend_rag.prompts import build_strict_system_prompt as _build_strict_prompt
+from backend_rag.prompts import WEB_ANSWER_SYSTEM_PROMPT
+from backend_rag.web_search import google_search
+from backend_rag.models import model # Import both models
 # --- END: ADDED FOR FORM FILLING (Imports) ---
 # Ensure all backend modules are correctly imported
 # In api_server.py, near other backend imports
@@ -448,61 +454,90 @@ import json
 import html
 
 
+
 @app.post("/api/ask")
 def api_ask(req: AskReq):
     # --- Step 1: Translate query to English if needed ---
     query_to_process = req.query
-    query_lang_detection = detect_language(req.query)
-    query_lang = 'en'
-    if query_lang_detection and query_lang_detection.get('language') != 'en':
-        query_lang = query_lang_detection.get('language')
-        translated_query = translate_text(req.query, target_language='en')
-        if translated_query:
-            query_to_process = translated_query
+    if req.query.strip():
+        query_lang_detection = detect_language(req.query)
+        if query_lang_detection and query_lang_detection.get('language') != 'en':
+            translated_query = translate_text(req.query, target_language='en')
+            if translated_query:
+                query_to_process = translated_query
 
     # --- Step 2: Retrieve similar chunks ---
     hits = retrieve_similar_chunks(query_to_process, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
+    sources = []
     
     if not hits:
-        not_found_msg = "Not stated in document."
-        if req.output_language and req.output_language != 'en':
-            translated_not_found = translate_text(not_found_msg, target_language=req.output_language)
-            not_found_msg = translated_not_found or not_found_msg
-        return {"success": True, "answer": not_found_msg, "sources": []}
+        print("--- [API Ask] No RAG results. Proceeding to web search. ---")
+        context_combined = "No relevant document excerpts found."
+        rag_answer_json = None
+    else:
+        # --- Step 3: Prepare context and get RAG answer ---
+        context_blobs = []
+        for r in hits:
+            text = (r.get("text") or "").replace("\n", " ")
+            fn = r.get("file_name") or "document"
+            context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
+            sources.append({"file_name": fn, "preview": text[:300]})
 
-    # --- Step 3: Prepare context ---
-    context_blobs, sources = [], []
-    for r in hits:
-        text = (r.get("text") or "")[:1200].replace("\n", " ")
-        fn = r.get("file_name") or "document"
-        context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
-        sources.append({"file_name": fn, "preview": text[:300]})
+        context_combined = "\n\n".join(context_blobs)
 
-    context = "\n\n".join(context_blobs)
-    system_prompt = _build_strict_prompt(context)
-    user_prompt = query_to_process.strip()
+    # Use the correct JSON-based prompt
+    system_prompt_rag = _build_strict_prompt(context_combined)
+    user_prompt_rag = query_to_process.strip()
 
-    # --- Step 4: Get English LLM answer ---
-    english_answer = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
-    final_answer = english_answer.strip()
-
-    # --- Step 5: Translate answer if needed ---
-    if req.output_language and req.output_language != 'en':
-        translated_answer = translate_text(final_answer, target_language=req.output_language)
-        if translated_answer:
-            final_answer = translated_answer
-
-    # --- Step 6: Decode HTML entities and JSON if applicable ---
-    final_answer = html.unescape(final_answer)  # Removes &quot;, &#39;, etc.
-
-    # Try parsing JSON-looking strings safely
+    # Get the JSON response from the RAG model
+    rag_answer_json_string = call_model_system_then_user(
+        system_prompt_rag, user_prompt_rag, temperature=0.0
+    )
+    
+    # --- Step 4: Check Confidence and Decide to Web Search ---
+    final_answer_string = ""
     try:
-        maybe_json = json.loads(final_answer)
-        final_answer = maybe_json  # Keep as dict if valid JSON
-    except (json.JSONDecodeError, TypeError):
-        pass  # Keep as plain text if not JSON
+        json_match = re.search(r'\{.*\}', rag_answer_json_string, re.DOTALL)
+        if not json_match:
+            final_answer_string = rag_answer_json_string
+        else:
+            rag_json = json.loads(json_match.group(0))
+            confidence = rag_json.get("response", {}).get("ASSESSMENT", {}).get("CONFIDENCE", "High").lower()
+            plain_answer = rag_json.get("response", {}).get("PLAIN ANSWER", "")
 
-    return {"success": True, "answer": final_answer, "sources": sources}
+            # Check for low confidence or "Not stated"
+            if confidence == "low" or "not stated in document" in plain_answer.lower():
+                # --- THIS IS THE CORRECTED LOG MESSAGE ---
+                print(f"--- [API Ask] RAG answer was '{plain_answer}' (Confidence: {confidence}). Proceeding to web search. ---")
+                
+                # --- Step 5: Perform Web Search ---
+                web_context = google_search(query_to_process)
+                
+                system_prompt_web = WEB_ANSWER_SYSTEM_PROMPT.format(web_context=web_context)
+                user_prompt_web = query_to_process
+                
+                # Call the web_model for summarization
+                web_answer = call_model_system_then_user(
+                    system_prompt_web, user_prompt_web
+                )
+                final_answer_string = web_answer
+                sources = [] # Clear document sources, as this is a web answer
+            else:
+                # Confidence is high, use the RAG answer
+                final_answer_string = plain_answer
+                
+    except Exception as e:
+        print(f"--- [API Ask] Error parsing JSON or routing: {e} ---")
+        final_answer_string = rag_answer_json_string # Fallback
+
+    # --- Step 6: Translate the final string answer if needed ---
+    final_answer_translated = final_answer_string
+    if req.output_language and req.output_language != 'en' and final_answer_string:
+        translated = translate_text(final_answer_string, target_language=req.output_language)
+        if translated:
+            final_answer_translated = translated
+
+    return {"success": True, "answer": final_answer_translated, "sources": sources}
 
 
 @app.post("/api/suggest-case-law")
