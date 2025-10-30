@@ -21,9 +21,9 @@ export function applyPalette(palette = {}){
 }
 
 export const defaultPalette = {
-  p1: '#463F3A',
-  p2: '#8A817C',
-  p3: '#BCB8B1',
-  p4: '#F4F3EE',
-  p5: '#E0AFA0'
+  p1: '#0046FF', // primary
+  p2: '#476BFF',
+  p3: '#AEBEFF',
+  p4: '#F6F9FF',
+  p5: '#00C2FF'
 };

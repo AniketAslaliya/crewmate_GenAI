@@ -2,6 +2,7 @@ import "./App.css";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import Home from "./pages/Home";
+import LegalDesk from "./pages/LegalDesk";
 import Login from "./pages/Login";
 import NotebookPage from "./pages/NotebookPage";
 import FindLawyer from "./pages/FindLawyer";
@@ -12,59 +13,24 @@ import MyClients from "./pages/MyClients";
 import CompleteRegistration from './pages/CompleteRegistration';
 import ProtectedRoute from "./components/ProtectedRoute";
 import Sidebar from "./components/Sidebar";
+import Header from "./components/Header";
 import Footer from "./components/Footer";
 import api from "./Axios/axios";
+import { MdMenu } from 'react-icons/md';
 import useAuthStore from "./context/AuthContext";
 import AuthCallback from "./pages/AuthCallback";
+import FormAutoFill from './pages/FormAutoFill';
 import { applyPalette, defaultPalette } from './utils/palette';
-import Button from './components/ui/Button';
 // import { LanguageProvider, useLanguage } from './context/LanguageContext';
 // Google Translate widget loader
-function GoogleTranslateWidget() {
-  // Only load once
-  useEffect(() => {
-    if (window.google && window.google.translate) return;
-    const script = document.createElement('script');
-    script.src = 'https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit';
-    script.async = true;
-    document.body.appendChild(script);
-    window.googleTranslateElementInit = () => {
-      new window.google.translate.TranslateElement({
-        pageLanguage: 'en',
-        includedLanguages: 'en,hi,gu,bn,mr',
-        layout: window.google.translate.TranslateElement.InlineLayout.SIMPLE
-      }, 'google_translate_element');
-      // Hide the top bar injected by Google Translate
-      const hideBar = () => {
-        const gtBar = document.querySelector('iframe.goog-te-banner-frame');
-        if (gtBar) {
-          gtBar.style.display = 'none';
-        }
-        const body = document.querySelector('body');
-        if (body) {
-          body.style.top = '0px';
-        }
-        const googBar = document.getElementById('goog-gt-tt');
-        if (googBar) {
-          googBar.style.display = 'none';
-        }
-      };
-      setTimeout(hideBar, 500);
-      setTimeout(hideBar, 1500);
-      setTimeout(hideBar, 3000);
-      // Also hide on language change
-      document.addEventListener('DOMSubtreeModified', hideBar);
-    };
-  }, []);
-  return <div id="google_translate_element" style={{ minWidth: 120 }} />;
-}
+ 
 
 
 function App() {
   const token = useAuthStore((state) => state.token);
   const setUser = useAuthStore((state) => state.setUser);
   const [theme] = useState("light");
-  const authUser = useAuthStore((s) => s.user);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -91,36 +57,11 @@ function App() {
     <Router>
       <div className="app-root min-h-screen">
       {/* LanguageProvider removed, not needed for Google Translate widget */}
-  <header className="w-full border-b bg-surface" style={{ borderColor: 'rgba(0,0,0,0.04)' }}>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex h-16 items-center justify-between">
-              <div className="flex items-center gap-6">
-                <div className="rounded-md px-4 py-2 cursor-pointer shadow-sm" onClick={()=> window.location.href = '/home'} style={{ borderRadius: 'var(--radius-md)', background: 'var(--btn-gradient)' }}>
-                  <div className="text-sm font-semibold text-primary">Legal SahAI</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <GoogleTranslateWidget />
-                {authUser ? (
-                  <div className="flex items-center gap-3">
-                    <img src={authUser.picture || `https://avatar.vercel.sh/${authUser._id || 'guest'}.png`} alt="avatar" className="w-10 h-10 rounded-full border" />
-                    <div className="text-sm">
-                      <div className="font-medium text-primary">{authUser.name || 'User'}</div>
-                      <div className="text-xs text-muted">{authUser.role === 'lawyer' ? 'Lawyer' : 'Helpseeker'}</div>
-                    </div>
-                    <Button variant="secondary" className="ml-2" onClick={() => { useAuthStore.getState().logout(); window.location.href = '/login'; }}>Logout</Button>
-                  </div>
-                ) : (
-                  <a href="/login"><Button variant="primary">Sign in</Button></a>
-                )}
-              </div>
-            </div>
-          </div>
-  </header>
+  {/* header moved inside the right-side app column so it scrolls with main content */}
 
         
 
-  <main className="w-full px-0 sm:px-0 lg:px-0 py-0 flex-1 overflow-auto">
+  <main className=" w-full px-0 sm:px-0 lg:px-0 py-0 flex-1 overflow-auto">
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
@@ -129,10 +70,17 @@ function App() {
             <Route
               path="/*"
               element={
-                <div className="flex w-full h-full min-h-0">
-                  <Sidebar />
+                <div className="flex w-full h-[100vh] min-h-0 overflow-y-clip ">
+                  <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)}  />
+                  {/* small open button when sidebar is closed */}
+                  {!sidebarOpen && (
+                    <button onClick={() => setSidebarOpen(true)} className=" fixed top-4 left-4 z-50 p-2 rounded-md bg-white shadow-md text-primary/90 hover:bg-gray-50">
+                      <MdMenu size={20} />
+                    </button>
+                  )}
                   <div className="flex-1 min-h-0 flex flex-col">
-                    <div className="flex-1 min-h-0 overflow-auto px-4 sm:px-6 lg:px-8 py-6">
+                            {/* <Header /> */}
+                            <div className="flex-1 min-h-0 overflow-auto ">
                       <Routes>
                       <Route
                         path="/home"
@@ -143,7 +91,15 @@ function App() {
                         }
                       />
                       <Route
-                        path="/legaldesk/:id"
+                        path="/legal-desk"
+                        element={
+                          <ProtectedRoute>
+                            <LegalDesk />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/legal-desk/:id"
                         element={
                           <ProtectedRoute>
                             <NotebookPage />
@@ -190,7 +146,18 @@ function App() {
                           </ProtectedRoute>
                         }
                       />
+                      <Route
+                        path="/forms/auto-fill"
+                        element={
+                          <ProtectedRoute>
+                            <FormAutoFill />
+                          </ProtectedRoute>
+                        }
+                      />
                       <Route path="/chat/:id" element={<ProtectedRoute><ChatView /></ProtectedRoute>} />
+                      {/* Chats list (role-aware). ChatView reads ?target=lawyer|client and filters connections accordingly. */}
+                      <Route path="/chats" element={<ProtectedRoute><ChatView /></ProtectedRoute>} />
+                      <Route path="/chats/:id" element={<ProtectedRoute><ChatView /></ProtectedRoute>} />
                       <Route path="*" element={<Navigate to={'/home'} />} />
                       </Routes>
                     </div>
@@ -200,7 +167,7 @@ function App() {
             />
           </Routes>
         </main>
-        <Footer />
+        {/* <Footer /> */}
       </div>
     </Router>
   );

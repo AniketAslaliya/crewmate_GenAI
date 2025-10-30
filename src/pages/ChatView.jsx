@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../Axios/axios';
 import { initSocket } from '../utils/socket';
 import useAuthStore from '../context/AuthContext';
@@ -18,6 +18,23 @@ const ChatView = () => {
   const scrollRef = useRef(null);
 
   const isLawyer = user?.role === 'lawyer';
+  const location = useLocation();
+  const qp = new URLSearchParams(location.search);
+  const target = qp.get('target'); // optional: 'lawyer' or 'client'
+
+  // Helper: normalize different possible shapes of lastMessage coming from the API
+  const extractLastMessage = (lm) => {
+    if (!lm) return null;
+    let m = lm;
+    // If API returns an array, take the last item
+    if (Array.isArray(m)) m = m[m.length - 1] || null;
+    // If wrapper object { lastMessage: {...} }
+    if (m && m.lastMessage) m = m.lastMessage;
+    if (!m) return null;
+    const content = m.content || m.text || m.message || m.body || m.msg || (typeof m === 'string' ? m : null);
+    const created = m.createdAt || m.created_at || m.created || m.timestamp || m.time || null;
+    return { content, created };
+  };
 
   // If the current user is a lawyer, redirect them to the lawyer requests page
   // Previously lawyers were redirected away from chat; allow lawyers to use the chat UI now.
@@ -37,14 +54,42 @@ const ChatView = () => {
             chat: chatId,
             peer,
             lastMessage: c.lastMessage || null,
-            unread: c.unread || 0
+            unread: c.unread || 0,
+            raw: c // keep the original connection for fallbacks when peer may be only an id
           };
         });
-        setConnections(normalized);
+
+        // If a target filter is provided, filter normalized list by peer role.
+        // Some backend responses may include only ids on `to`/`from` instead of full user objects,
+        // so be resilient: prefer peer.role when available, otherwise inspect raw.from/raw.to or
+        // fall back to assumptions based on the current user's role and which side contains the peer.
+        let filtered = normalized;
+        if (target === 'lawyer') {
+          filtered = normalized.filter(n => {
+            if (n.peer && typeof n.peer === 'object' && n.peer.role) return n.peer.role === 'lawyer';
+            // if raw.to exists and current user is not a lawyer, it's likely the lawyer side
+            if (!isLawyer && n.raw && n.raw.to) return true;
+            // if raw.from exists and current user is a lawyer, the from side is likely the client, so skip
+            if (isLawyer && n.raw && n.raw.to && typeof n.raw.to === 'object' && n.raw.to.role === 'lawyer') return true;
+            return false;
+          });
+        }
+        if (target === 'client' || target === 'helpseeker') {
+          filtered = normalized.filter(n => {
+            if (n.peer && typeof n.peer === 'object' && n.peer.role) return n.peer.role !== 'lawyer';
+            // if current user is lawyer and raw.from exists, treat from as the client
+            if (isLawyer && n.raw && n.raw.from) return true;
+            // otherwise be conservative and exclude entries that look like lawyer-only
+            return false;
+          });
+        }
+
+        // If no matching peers found, do not redirect — show a friendly empty state instead
+        setConnections(filtered);
       }catch(e){ console.error(e); }
     };
     fetchConnections();
-  }, [isLawyer]);
+  }, [isLawyer, navigate, target]);
 
   // init socket once
   useEffect(()=>{
@@ -184,51 +229,56 @@ const ChatView = () => {
   // Lawyers may use the chat UI just like helpseekers. (No early return.)
 
   return (
-  <div className="h-full flex bg-[var(--color-bg)] border rounded overflow-hidden min-h-0">
+  <div className="h-[100vh] flex bg-[var(--bg)] overflow-hidden rounded min-h-0 ">
       {/* Sidebar */}
-  <div className="w-80 border-r flex flex-col min-h-0 h-full bg-card" style={{borderColor:'var(--palette-3)'}}>
-        <div className="p-4 border-b flex items-center gap-3">
-          <img src={user?.picture} className="w-10 h-10 rounded-full" alt="me" />
+  <div className="w-80 border-r flex flex-col min-h-0 h-full bg-[var(--panel)]" style={{borderColor:'var(--palette-3)'}}>
+    <div className="p-3 border-b flex items-center gap-3 bg-[var(--panel)]" style={{borderColor:'var(--border)'}}>
+          <img src={user?.picture} className="w-9 h-9 rounded-full" alt="me" />
           <div>
             <div className="font-semibold">{user?.name}</div>
             <div className="text-xs text-[var(--color-muted)]">{isLawyer ? 'Lawyer' : 'Helpseeker'}</div>
           </div>
         </div>
-        <div className="p-3">
-          <input placeholder="Search or start new chat" className="w-full p-2 border rounded text-sm" />
+        <div className="p-2">
+          <input placeholder="Search or start new chat" className="w-full p-2 border rounded text-sm bg-white/40 text-[var(--text)] placeholder-[var(--muted)]" />
         </div>
         <div className="flex-1 overflow-y-auto">
-          {connections.map(c => (
-            <div key={c.id} onClick={()=>openChat(c.chat)} className={`p-3 border-b hover:bg-[var(--palette-4)] cursor-pointer flex items-center gap-3 ${c.chat===activeChat? 'bg-[var(--palette-4)]' : ''}`}>
-              <img src={c.peer?.picture} className="w-12 h-12 rounded-full" alt="peer" />
-              <div className="flex-1">
-                <div className="flex justify-between items-center">
-                  <div className="font-semibold">{c.peer?.name}</div>
-                  <div className="text-xs text-[var(--color-muted)]">{c.lastMessage ? new Date(c.lastMessage.createdAt).toLocaleTimeString() : ''}</div>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="text-sm text-[var(--color-muted)] truncate">{c.lastMessage ? c.lastMessage.content : 'No messages yet'}</div>
-                  {c.unread > 0 && <div className="ml-2 bg-[var(--palette-1)] text-white text-xs px-2 rounded-full">{c.unread}</div>}
+          {connections.map(c => {
+            const lm = extractLastMessage(c.lastMessage);
+            const timeStr = lm && lm.created ? (() => { try { return new Date(lm.created).toLocaleTimeString(); } catch(e){ return ''; } })() : '';
+            const preview = lm && lm.content ? lm.content : 'No messages yet';
+            return (
+              <div key={c.id} onClick={()=>openChat(c.chat)} className={`p-2 border-b hover:bg-[var(--palette-4)] cursor-pointer flex items-center gap-3 ${c.chat===activeChat? 'bg-[var(--palette-4)]' : ''}`}>
+                <img src={c.peer?.picture} className="w-10 h-10 rounded-full border" alt="peer" />
+                <div className="flex-1">
+                  <div className="flex justify-between items-center">
+                    <div className="font-semibold text-[var(--text)]">{c.peer?.name}</div>
+                    <div className="text-xs text-[var(--muted)]">{timeStr}</div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-[var(--muted)] truncate">{preview}</div>
+                    {c.unread > 0 && <div className="ml-2 bg-[var(--palette-1)] text-white text-xs px-2 rounded-full">{c.unread}</div>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       {/* Main Chat Pane */}
-  <div className="flex-1 flex flex-col min-h-0 overflow-hidden h-full">
-        {/* header */}
-        <div className="p-4 border-b flex items-center gap-3" style={{borderColor:'var(--palette-3)'}}>
+  <div className="flex-1 flex flex-col min-h-0 overflow-hidden h-full ">
+        {/* header (static) */}
+  <div className="flex-none p-3 border-b flex items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
           {activeChat ? (
             (() => {
               const conn = connections.find(x=>x.chat===activeChat);
               return (
                 <>
-                  <img src={conn?.peer?.picture} className="w-10 h-10 rounded-full" alt="peer" />
+                  <img src={conn?.peer?.picture} className="w-9 h-9 rounded-full" alt="peer" />
                   <div>
                     <div className="font-semibold">{conn?.peer?.name}</div>
-                    <div className="text-xs text-[var(--color-muted)]">{conn?.peer?.specialties || ''}</div>
+                    <div className="text-xs text-[var(--muted)]">{conn?.peer?.specialties || ''}</div>
                   </div>
                 </>
               );
@@ -239,13 +289,15 @@ const ChatView = () => {
         </div>
 
   {/* messages */}
-  <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 bg-[var(--palette-4)]">
+  <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-3 bg-[var(--palette-4)]">
           {activeChat ? (
             messages.map(m => (
               <div key={m._id} className={`mb-3 flex ${m.user === user?._id ? 'justify-end' : 'justify-start'}`}>
-                <div className={`${m.user === user?._id ? 'bg-[var(--palette-1)] text-white' : 'bg-card text-[var(--color-primary)]'} max-w-[60%] px-4 py-2 rounded-lg shadow`}> 
+                <div className={`${m.user === user?._id ? 'bg-[var(--palette-1)] text-white rounded-tl-lg rounded-br-lg rounded-bl-lg' : 'bg-[var(--panel)] text-[var(--text)] rounded-tr-lg rounded-br-lg rounded-bl-lg'} max-w-[70%] px-3 py-2`}> 
                   <div className="break-words">{m.content}</div>
-                  <div className="text-xs text-[var(--palette-4)] mt-1 text-right">{new Date(m.createdAt).toLocaleTimeString()}</div>
+                    <span className={`text-xs flex ${m.user === user?._id ? 'bg-[var(--palette-1)] text-[var(--panel)] justify-end' : 'bg-[var(--panel)] text-neutral-400 justify-end'}`}>
+                      {m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
                 </div>
               </div>
             ))
@@ -255,10 +307,10 @@ const ChatView = () => {
         </div>
 
         {/* input */}
-        <div className="p-3 border-t flex items-center gap-2 flex-shrink-0 h-14" style={{borderColor:'var(--palette-3)'}}>
-          <button className="p-2 text-[var(--color-muted)] hover:bg-[var(--palette-4)] rounded">😊</button>
-          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Type a message" className="flex-1 p-2 border rounded h-10" />
-          <button onClick={sendMessage} className="px-4 py-2 btn-gradient text-white rounded">Send</button>
+  <div className="flex-none p-2 border-t flex items-center gap-2 flex-shrink-0" style={{borderColor:'var(--border)', background: 'var(--panel)'}}>
+          {/* <button className="p-2 text-[var(--muted)] hover:bg-[var(--palette-4)] rounded">😊</button> */}
+          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Type a message" className="flex-1 p-2 border rounded h-9 bg-white text-[var(--text)] placeholder-[var(--muted)]" />
+          <button onClick={sendMessage} className="px-3 py-1 btn-primary text-white rounded">Send</button>
         </div>
       </div>
     </div>
