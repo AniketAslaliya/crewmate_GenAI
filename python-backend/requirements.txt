@@ -24,3 +24,4 @@ beautifulsoup4
 google-cloud-translate==3.11.3
 python-docx  # For handling .docx files
 reportlab
+pdfplumber

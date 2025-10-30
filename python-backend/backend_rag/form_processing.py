@@ -72,47 +72,7 @@ def _generate_field_description(field_label: str, field_type: str) -> str:
 
 # In backend_rag/form_processing.py
 
-def find_word_bbox(text_to_find: str, ocr_pages: List[OcrPage]) -> Optional[List[int]]:
-    """Helper: Finds the bbox of the first occurrence of a specific text label (more robust)."""
-    if not text_to_find: return None
-    search_text_lower = ' '.join(text_to_find.lower().split()) # Normalize whitespace
-    if not search_text_lower: return None
-
-    for page in ocr_pages:
-        page_words = page.words
-        # Try finding exact multi-word matches first
-        search_words = search_text_lower.split()
-        num_search_words = len(search_words)
-        for i in range(len(page_words) - num_search_words + 1):
-            phrase_match = True
-            phrase_bbox = None
-            current_bbox = [float('inf'), float('inf'), float('-inf'), float('-inf')] # min_x, min_y, max_x, max_y
-
-            for j in range(num_search_words):
-                ocr_word = page_words[i+j].text.lower().strip()
-                search_word = search_words[j]
-                if ocr_word != search_word:
-                    phrase_match = False
-                    break
-                # Combine bounding boxes for the phrase
-                word_bbox = page_words[i+j].bbox
-                current_bbox[0] = min(current_bbox[0], word_bbox[0])
-                current_bbox[1] = min(current_bbox[1], word_bbox[1])
-                current_bbox[2] = max(current_bbox[2], word_bbox[2])
-                current_bbox[3] = max(current_bbox[3], word_bbox[3])
-
-            if phrase_match:
-                print(f"--- [find_word_bbox] Found exact phrase match for '{text_to_find}'")
-                return [int(c) for c in current_bbox] # Return combined bbox
-
-        # Fallback: Find first word if exact phrase fails
-        first_search_word = search_words[0]
-        for word in page_words:
-            if first_search_word == word.text.lower().strip():
-                print(f"--- [find_word_bbox] Found first word match for '{text_to_find}'")
-                return word.bbox # Return first word's bbox as approximation
-    print(f"--- [find_word_bbox] Could not find bbox for '{text_to_find}'")
-    return None
+import pdfplumber
 
 def _batch_generate_descriptions(fields_info: List[Dict]) -> Dict[str, str]:
     """Generates descriptions for multiple fields in a single LLM call."""
@@ -158,59 +118,7 @@ def _batch_generate_descriptions(fields_info: List[Dict]) -> Dict[str, str]:
         
     return descriptions
 
-def find_nearby_blank_bbox(label_bbox: List[int], ocr_pages: List[OcrPage], max_x_distance: int = 300, y_tolerance: int = 10) -> List[int]:
-    """
-    Improved Heuristic: Tries to find empty space to the right on the same line.
-    Falls back to estimating or returning label bbox if no clear blank is found.
-    """
-    if not label_bbox or len(label_bbox) != 4: return [0, 0, 0, 0] # Default empty
 
-    label_xmin, label_ymin, label_xmax, label_ymax = label_bbox
-    label_y_mid = (label_ymin + label_ymax) / 2
-
-    # Define search area primarily to the right, within vertical tolerance
-    search_xmin = label_xmax + 5 # Small gap after label
-    search_xmax_limit = label_xmax + max_x_distance
-    search_ymin = label_y_mid - y_tolerance
-    search_ymax = label_y_mid + y_tolerance
-
-    closest_word_to_right_xmin = float('inf')
-
-    # Look for any words starting immediately to the right on the same line
-    for page in ocr_pages: # Assuming relevant words are on the same page
-        for word in page.words:
-            word_bbox = word.bbox
-            word_y_mid = (word_bbox[1] + word_bbox[3]) / 2
-
-            # Check if word starts to the right and is vertically aligned
-            if word_bbox[0] >= search_xmin and \
-               word_bbox[0] < search_xmax_limit and \
-               abs(word_y_mid - label_y_mid) <= y_tolerance:
-                 closest_word_to_right_xmin = min(closest_word_to_right_xmin, word_bbox[0])
-
-    # Estimate blank bbox based on findings
-    blank_xmin = label_xmax + 10 # Start slightly after label
-    blank_ymin = label_ymin
-    blank_ymax = label_ymax
-
-    if closest_word_to_right_xmin != float('inf'):
-        # Found a word to the right, blank ends just before it
-        blank_xmax = closest_word_to_right_xmin - 5
-    else:
-        # No word found nearby to the right, estimate a default width
-        blank_xmax = blank_xmin + 200 # Default width guess
-
-    # Basic validation
-    if blank_xmax <= blank_xmin:
-        print(f"--- [find_nearby_blank_bbox] Could not estimate valid blank. Returning label bbox for label at {label_bbox}")
-        return label_bbox # Return LABEL bbox as fallback if estimation fails
-
-    estimated_bbox = [int(c) for c in [blank_xmin, blank_ymin, blank_xmax, blank_ymax]]
-    print(f"--- [find_nearby_blank_bbox] Estimated blank bbox: {estimated_bbox} for label at {label_bbox}")
-    return estimated_bbox
-
-# --- Field Detection & Classification (V2 with Bounding Boxes & Description) ---
-# In backend_rag/form_processing.py
 
 # In backend_rag/form_processing.py
 def _batch_generate_suggestions(fields_info: List[Dict], context: str) -> Dict[str, List[str]]:
@@ -265,72 +173,123 @@ def _batch_generate_suggestions(fields_info: List[Dict], context: str) -> Dict[s
 
     return suggestions_by_id
 
+# [In form_processing.py]
+
 def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
     """
-    V2.2: Detects fields via LLM, maps bbox, calls batch description generation.
+    V3: Detects fields via LLM using text + bbox data for spatial reasoning.
     """
-    print("--- [Form Processing V2.2] Detecting fields, bbox, getting descriptions... ---")
+    print("--- [Form Processing V3] Detecting fields using spatial layout... ---")
+    
+    # 1. Serialize OCR data for the LLM
+    # We send the LLM a JSON list of all words and their coordinates
+    page_data_for_llm = []
+    word_count = 0
+    for page in ocr_result.pages:
+        # Limit the data sent to the LLM to avoid exceeding context limits
+        if word_count > 4000: 
+            print("--- [Form Processing V3] Word limit reached, truncating data for LLM.")
+            break
+        
+        # Convert list of Pydantic OcrWord objects to a list of simple dicts
+        words_list = [w.model_dump() for w in page.words]
+        
+        page_data_for_llm.append({
+            "page_number": page.page_number,
+            "width": page.width,
+            "height": page.height,
+            "words": words_list
+        })
+        word_count += len(page.words)
+    
+    if word_count == 0:
+        print("--- [Form Processing V3] No words found in OCR result.")
+        return []
 
-    full_text = "\n".join(" ".join(word.text for word in page.words) for page in ocr_result.pages)
-    context_snippet = full_text[:8000]
-    if not context_snippet.strip(): return []
-
-    # 1. LLM Call to Identify Fields (Label ::: Type format)
+    # 2. LLM Call to Identify Fields AND their blank bboxes
     system_prompt_detect = (
-       "You are an expert form field detector... [Your existing V2.1 prompt asking for 'Label ::: Type' list] ..." # Keep your working V2.1 prompt
+        "You are an expert form layout analyst. You will receive JSON data containing words and their exact bounding boxes `[xmin, ymin, xmax, ymax]` for a form.\n"
+        "Your task is to identify all fillable fields (like text inputs, checkboxes) and return a valid JSON list `[]`.\n"
+        "For each field, find the label (e.g., 'First Name') AND determine the bounding box of the **blank input area** next to or below it.\n\n"
+        "RULES:\n"
+        "- `label_text`: The text of the field's label.\n"
+        "- `semantic_type`: The data type (e.g., 'name', 'date', 'address', 'phone', 'checkbox', 'signature').\n"
+        "- `bbox`: The **coordinates of the blank input space** [xmin, ymin, xmax, ymax]. Estimate this from the layout.\n"
+        "- `page_number`: The page number where the field is located.\n"
+        "- Do NOT return coordinates for the label, only for the input area.\n"
+        "- Be precise. Estimate the blank space coordinates based on surrounding words.\n"
+        "- Output ONLY the JSON list."
     )
-    user_prompt_detect = f"OCR Text Snippet:\n---\n{context_snippet}\n---\n\nList detected fields (Label ::: Type):"
+    
+    llm_input_json = json.dumps(page_data_for_llm, default=int) # Use default=int to handle any non-serializable types
+    
+    # Simple truncation if input is too large (better handling is advised)
+    if len(llm_input_json) > 100000: 
+         llm_input_json = llm_input_json[:100000]
+         
+    user_prompt_detect = f"Form OCR Data:\n---\n{llm_input_json}\n---\n\nIdentified Fields JSON List:"
 
-    llm_identified_fields_info = [] # Store temporary info for description generation
-    detected_fields_final = [] # Store final field dicts
-
+    detected_fields_final = []
     try:
         response = call_model_system_then_user(
             system_prompt_detect, user_prompt_detect, temperature=0.0, model_instance=model
         )
-        llm_lines = [line.strip() for line in response.split('\n') if ':::' in line]
-        print(f"--- [Form Processing V2.2] LLM identified {len(llm_lines)} potential fields.")
+        
+        print(f"--- [Form Processing V3] Raw LLM Response:\n{response}\n---")
+        
+        match = re.search(r'\[.*\]', response, re.DOTALL)
+        if not match:
+            print("--- [Form Processing V3] LLM did not return a valid JSON list.")
+            return []
+        
+        llm_fields = json.loads(match.group(0))
+        print(f"--- [Form Processing V3] LLM identified {len(llm_fields)} fields.")
 
-        # Prepare list for batch description
+        # 3. Prepare list for batch description
         temp_field_list_for_desc = []
-        parsed_fields_temp = {} # Store intermediate data by label
-        for i, line in enumerate(llm_lines):
-            parts = line.split(':::')
-            if len(parts) == 2:
-                label_text_raw = parts[0].strip()
-                label_text = label_text_raw[:-1].strip() if label_text_raw.endswith(':') else label_text_raw
-                semantic_type = parts[1].strip().lower()
-                
-                temp_field_list_for_desc.append({"label_text": label_text_raw, "semantic_type": semantic_type}) # Use raw label for dict key
-                parsed_fields_temp[label_text_raw] = {'label_clean': label_text, 'type': semantic_type, 'id': f"field_{i}"}
+        parsed_fields_temp = {} # Use an index or new ID
+        
+        for i, field_data in enumerate(llm_fields):
+            # Validate the data from the LLM
+            if not isinstance(field_data.get('bbox'), list) or len(field_data['bbox']) != 4:
+                print(f"Skipping malformed field from LLM (bad bbox): {field_data}")
+                continue
 
-        # 2. Single LLM Call to Generate All Descriptions
+            field_id = f"field_{i}"
+            label_text = field_data.get('label_text', 'Unknown')
+            semantic_type = field_data.get('semantic_type', 'text').lower()
+            
+            temp_field_list_for_desc.append({"label_text": label_text, "semantic_type": semantic_type})
+            parsed_fields_temp[field_id] = field_data # Store all LLM data
+
+        # 4. Single LLM Call to Generate All Descriptions (This function is still useful!)
         field_descriptions = _batch_generate_descriptions(temp_field_list_for_desc)
 
-        # 3. Map Coordinates and Compile Final Field List
-        for label_raw, desc_data in parsed_fields_temp.items():
-            label_clean = desc_data['label_clean']
-            semantic_type = desc_data['type']
-            field_id = desc_data['id']
-
-            label_bbox = find_word_bbox(label_clean, ocr_result.pages) # Use clean label for bbox lookup
-            field_bbox = find_nearby_blank_bbox(label_bbox, ocr_result.pages) if label_bbox else [0,0,0,0]
-            if field_bbox == [0,0,0,0] and label_bbox: field_bbox = label_bbox
-
+        # 5. Compile Final Field List
+        for field_id, field_data in parsed_fields_temp.items():
+            label_text = field_data['label_text']
+            semantic_type = field_data['semantic_type']
+            
             is_sensitive = semantic_type in ['pan', 'address', 'phone', 'email', 'amount']
-            description = field_descriptions.get(label_raw, "Enter the required information.") # Get description using raw label key
+            # Get description using the label as key
+            description = field_descriptions.get(label_text, "Enter the required information.") 
 
             field = {
-                'id': field_id, 'label_text': label_clean, 'bbox': field_bbox,
-                'semantic_type': semantic_type, 'confidence': 'Medium',
-                'is_sensitive': is_sensitive, 'description': description, 'value': ""
+                'id': field_id,
+                'label_text': label_text,
+                'bbox': field_data['bbox'], # <-- This is the BBOX from the LLM
+                'semantic_type': semantic_type,
+                'confidence': 'High', # LLM provided this directly
+                'is_sensitive': is_sensitive,
+                'description': description,
+                'value': ""
             }
             detected_fields_final.append(field)
 
-        print(f"--- [Form Processing V2.2] Processed {len(detected_fields_final)} fields after mapping and descriptions.")
+        print(f"--- [Form Processing V3] Processed {len(detected_fields_final)} fields after descriptions.")
 
     except Exception as e:
-        print(f"--- [Form Processing V2.2] Error during field processing: {e} ---")
+        print(f"--- [Form Processing V3] Error during field processing: {e} ---")
 
     return detected_fields_final
         

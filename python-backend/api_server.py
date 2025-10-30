@@ -695,7 +695,7 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
     return {"namespace": ns, "samples": out}
 
 # --- START: ADDED FOR FORM FILLING (API Endpoints) ---
-
+import pdfplumber
 @app.post("/api/forms/analyze", response_model=FormAnalyzeResponse)
 async def analyze_form(
     file: UploadFile = File(...),
@@ -720,31 +720,58 @@ async def analyze_form(
         print(f"--- [/api/forms/analyze] Saved temp file: {temp_file_path} ---")
 
         # 1. Extract Text & Layout (OCR)
+        # This is the original text extraction, which might be different from pdfplumber's
         extraction = extract_text_with_diagnostics(str(temp_file_path))
         full_text = extraction.get("text", "") # Get the FULL text
         if not full_text:
-             raise HTTPException(status_code=422, detail="Could not extract text from the document.")
+             print("--- [Form Analyze] extract_text_with_diagnostics found no text. ---")
+             # We might still proceed if pdfplumber can find layout data
 
-        # --- CORRECTED SIMULATION (Ensure it uses FULL text) ---
-        # This simulation needs to be replaced with your actual detailed OCR output mapping.
-        # It MUST generate OcrWord objects for ALL relevant text parts, including labels.
-        # For simulation, let's just split the full text into words:
-        simulated_words = []
-        current_y = 10
-        for word_text in full_text.split(): # Use the full_text here
-             # Create basic bbox based on word index (VERY ROUGH ESTIMATE)
-             bbox = [10, current_y, 10 + len(word_text)*8, current_y + 15]
-             simulated_words.append(OcrWord(text=word_text, bbox=bbox))
-             current_y += 5 # Simple vertical spacing simulation
+        # --- START: REPLACED BLOCK ---
+        # --- NEW: Real Layout Extraction (using pdfplumber) ---
+        all_pages = []
+        try:
+            with pdfplumber.open(temp_file_path) as pdf:
+                if not pdf.pages:
+                    raise HTTPException(status_code=422, detail="PDF file has no pages.")
+                    
+                for i, page in enumerate(pdf.pages):
+                    page_words = []
+                    # extract_words() is the key function. It gets all words and their coords.
+                    words = page.extract_words(x_tolerance=2, y_tolerance=2, keep_blank_chars=False)
+                    
+                    for word in words:
+                        # pdfplumber format: {'text': '...', 'x0': ..., 'top': ..., 'x1': ..., 'bottom': ...}
+                        # Convert to your Pydantic model [xmin, ymin, xmax, ymax]
+                        bbox = [
+                            int(word['x0']), 
+                            int(word['top']), 
+                            int(word['x1']), 
+                            int(word['bottom'])
+                        ]
+                        page_words.append(OcrWord(text=word['text'], bbox=bbox))
+                    
+                    all_pages.append(OcrPage(
+                        page_number=i + 1,
+                        width=int(page.width),
+                        height=int(page.height),
+                        words=page_words
+                    ))
+            
+            detailed_ocr_result = DetailedOcrResult(pages=all_pages)
+            
+            if not any(p.words for p in detailed_ocr_result.pages):
+                 # This happens if the PDF is an IMAGE (a scan).
+                 # pdfplumber only works on text-based PDFs.
+                 print("--- [Form Analyze] pdfplumber found no text. This may be a scanned (image) PDF.")
+                 # FOR SCANNED PDFs: You would need a real OCR service here, like Google Vision AI or Tesseract.
+                 # For now, we will raise an error.
+                 raise HTTPException(status_code=422, detail="Could not extract text layout. This may be a scanned (image) PDF, which requires a full OCR service.")
 
-        simulated_page = OcrPage(
-            page_number=1,
-            width=600,
-            height=800, # Adjust if known
-            words=simulated_words # Pass ALL simulated words
-        )
-        detailed_ocr_result = DetailedOcrResult(pages=[simulated_page])
-        # --- End Simulation ---
+        except Exception as e:
+            print(f"--- [Form Analyze] pdfplumber failed: {e} ---")
+            raise HTTPException(status_code=422, detail=f"Failed to parse document layout: {e}")
+        # --- END: REPLACED BLOCK ---
 
         # 2. Detect & Classify Fields (Pass the object with full text representation)
         detected_fields_raw = detect_form_fields(detailed_ocr_result)
@@ -772,6 +799,8 @@ async def analyze_form(
         for field_data in detected_fields_raw:
              suggestions = []
              if not field_data.get('is_sensitive', False):
+                 # Note: This still uses the old single-field suggestion function.
+                 # You may want to adapt this to use the batch function from form_processing.py
                  suggestions = generate_field_suggestions(field_data, context_summary)
              
              field_obj = DetectedField(
