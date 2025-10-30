@@ -11,17 +11,29 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     return v if v is not None and str(v).strip() != "" else default
 
 
-def get_pc() -> Pinecone:
+# --- MODIFIED: Client for Account B (Document RAG) ---
+def get_pc_rag() -> Pinecone:
+    """Gets the Pinecone client for the primary RAG index."""
     api_key = _env("PINECONE_API_KEY")
     if not api_key:
-        raise RuntimeError("PINECONE_API_KEY is not set")
+        raise RuntimeError("PINECONE_API_KEY (for document RAG) is not set")
+    return Pinecone(api_key=api_key)
+
+
+# --- NEW: Client for Account A (General Legal KB) ---
+def get_pc_general() -> Pinecone:
+    """Gets the Pinecone client for the general legal knowledge base."""
+    api_key = _env("PINECONE_GENERAL_API_KEY")
+    if not api_key:
+        raise RuntimeError("PINECONE_GENERAL_API_KEY (for general KB) is not set")
     return Pinecone(api_key=api_key)
 
 
 def get_or_create_index(dim: int):
-    """Ensure the serverless index exists; return a handle."""
-    pc = get_pc()
-    name = _env("PINECONE_INDEX_NAME", "rag-index")
+    """Ensure the serverless index FOR DOCUMENT RAG exists; return a handle."""
+    # Uses the RAG client (Account B)
+    pc = get_pc_rag() 
+    name = _env("PINECONE_INDEX_NAME", "rag-index") # Reads 'rag-api' from .env
     cloud = _env("PINECONE_CLOUD", "aws")
     region = _env("PINECONE_REGION", "us-east-1")
 
@@ -71,3 +83,28 @@ def namespace_count(index, ns: str) -> int:
     """Count the number of vectors in the given namespace."""
     stats = index.describe_index_stats()
     return stats.get("namespaces", {}).get(ns, {}).get("vector_count", 0)
+
+
+def get_general_legal_index():
+    """
+    Ensure the GENERAL legal knowledge base index exists; return a handle.
+    """
+    # Uses the GENERAL client (Account A)
+    pc = get_pc_general() 
+    
+    name = "legal-knowledge-base-384" # Hardcoded name of the index on Account A
+    cloud = _env("PINECONE_CLOUD", "aws")
+    region = _env("PINECONE_REGION", "us-east-1")
+    dim = 384 
+
+    existing = {i["name"]: i for i in pc.list_indexes().get("indexes", [])}
+    if name not in existing:
+        # This should not happen, but it's safe to have
+        print(f"WARNING: General legal index '{name}' not found on this account. Attempting to create it.")
+        pc.create_index(
+            name=name,
+            dimension=dim,
+            metric="cosine",
+            spec=ServerlessSpec(cloud=cloud, region=region),
+        )
+    return pc.Index(name)

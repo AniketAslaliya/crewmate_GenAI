@@ -40,6 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydub import AudioSegment
 
+from backend_rag.retrieval import retrieve_similar_chunks, retrieve_general_legal_chunks
 from backend_rag.extract import extract_text_with_diagnostics
 from backend_rag.chunking import chunk_text
 from backend_rag.analysis import (
@@ -50,6 +51,12 @@ from backend_rag.analysis import (
     suggest_case_law,
     generate_predictive_output, 
 )
+from backend_rag.prompts import (
+    build_strict_system_prompt as _build_strict_prompt, 
+    WEB_ANSWER_SYSTEM_PROMPT,
+    GENERAL_LEGAL_QA_PROMPT  
+)
+
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
 
@@ -186,6 +193,10 @@ class TimelineDownloadReq(BaseModel):
 class StudyGuideDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+
+class GeneralAskReq(BaseModel):
+    query: str
+    output_language: Optional[str] = 'en'
 
 
 
@@ -893,3 +904,60 @@ async def export_filled_form(req: FormExportRequest = Body(...)):
         raise HTTPException(status_code=500, detail=f"Failed to export form: {e}")
 
 # --- END: ADDED FOR FORM FILLING (API Endpoints) ---
+
+
+# [Add in api_server.py, in the Endpoints section, e.g., after /api/ask]
+
+@app.post("/api/general-ask")
+def api_general_ask(req: GeneralAskReq):
+    """
+    Answers a general legal question using the main (non-thread)
+    legal knowledge base.
+    """
+    try:
+        # --- Step 1: Translate query to English if needed ---
+        query_to_process = req.query
+        if req.query.strip():
+            query_lang_detection = detect_language(req.query)
+            if query_lang_detection and query_lang_detection.get('language') != 'en':
+                translated_query = translate_text(req.query, target_language='en')
+                if translated_query:
+                    query_to_process = translated_query
+                    print(f"--- [API GeneralAsk] Translated query to: {query_to_process}")
+
+        # --- Step 2: Retrieve from GENERAL knowledge base ---
+        # Use our new retrieval function. We'll get 5 good candidates.
+        hits = retrieve_general_legal_chunks(query_to_process, top_k=5)
+        
+        context_combined = ""
+        if not hits:
+            print("--- [API GeneralAsk] No relevant chunks found in general DB.")
+            context_combined = "(No relevant information found)"
+        else:
+            context_blobs = []
+            for i, r in enumerate(hits):
+                # The 'text' field from our new function contains the 'answer'
+                snippet = (r.get("text") or "").replace("\n", " ")
+                context_blobs.append(f"--- Relevant Information [{i+1}] ---\n{snippet}\n")
+            context_combined = "\n\n".join(context_blobs)
+
+        # --- Step 3: Call LLM with Fail-Safe Prompt ---
+        system_prompt = GENERAL_LEGAL_QA_PROMPT.format(context=context_combined)
+        user_prompt = query_to_process.strip()
+
+        final_answer_string = call_model_system_then_user(
+            system_prompt, user_prompt, temperature=0.0
+        )
+
+        # --- Step 4: Translate final answer if needed ---
+        final_answer_translated = final_answer_string
+        if req.output_language and req.output_language != 'en' and final_answer_string:
+            translated = translate_text(final_answer_string, target_language=req.output_language)
+            if translated:
+                final_answer_translated = translated
+
+        return {"success": True, "answer": final_answer_translated}
+
+    except Exception as e:
+        print(f"--- [API GeneralAsk] Error: {e} ---")
+        raise HTTPException(status_code=500, detail=f"Failed to process general query: {e}")
