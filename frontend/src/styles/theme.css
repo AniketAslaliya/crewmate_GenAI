@@ -1,0 +1,150 @@
+/* Apple-inspired theme for light mode derived from provided palette image */
+:root{
+  --palette-1: #0046FF; /* primary vivid blue */
+  --palette-2: #476BFF; /* muted blue (support) */
+  --palette-3: #AEBEFF; /* soft pale blue / surface border */
+  --palette-3-dark: #003bbf; /* darker shade for active states */
+  --palette-4: #F6F9FF; /* very light bluish background */
+  --palette-5: #00C2FF; /* accent / cyan */
+
+  /* semantic colors */
+  --color-bg: var(--palette-4);
+  --color-surface: rgba(255,255,255,0.76);
+  --color-primary: var(--palette-1);
+  --color-muted: var(--palette-2);
+  --color-accent: var(--palette-5);
+  --color-text: #0F1724;
+  --color-subtext: #6B7280;
+
+  /* button and glass tokens */
+  --btn-gradient: linear-gradient(90deg, rgba(255,255,255,0.94), rgba(246,244,243,0.96));
+  --btn-gloss: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.12));
+  --glass-bg: rgba(255,255,255,0.48);
+  --glass-border: rgba(255,255,255,0.45);
+
+  /* shadows and radii */
+  --shadow-soft: 0 8px 30px rgba(15,23,42,0.06);
+  --shadow-elev: 0 18px 50px rgba(15,23,42,0.10);
+  /* Disable shadows globally when requested */
+  /* Consumers can re-enable by setting these to non-none values */
+  --shadow-none: none;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+/* Convenience aliases used across components */
+:root{
+  --bg: var(--color-bg);
+  --panel: var(--color-surface);
+  --card-bg: rgba(255,255,255,0.9);
+  --border: rgba(15,23,42,0.06);
+  --muted: var(--color-subtext);
+  --text: var(--color-text);
+  --accent: var(--color-accent);
+}
+
+/* helper classes */
+.theme-primary { color: var(--color-primary); }
+.theme-accent { color: var(--color-accent); }
+.bg-theme { background-color: var(--color-bg); }
+.bg-surface { background-color: var(--color-surface); }
+.text-primary { color: var(--color-text); }
+.text-muted { color: var(--color-subtext); }
+.btn-gradient { background-color: var(--palette-1); color: white; border: none; border-radius: var(--radius-sm); padding: 0.5rem 0.9rem; }
+
+/* Primary button - solid high-contrast */
+.btn-primary {
+  background-color: var(--palette-1);
+  color: white !important;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.btn-primary:hover { filter: brightness(0.95); }
+.btn-primary:active { transform: translateY(0); }
+
+/* Secondary - frosted glass but with high-contrast text and clear border */
+.btn-secondary {
+  background: var(--glass-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--palette-1);
+  border: 1px solid rgba(15,23,42,0.06);
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-md);
+}
+
+/* Danger / accent - bold but elegant */
+.btn-accent {
+  background: var(--palette-5);
+  color: white;
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.9rem;
+}
+
+.sticky-input { box-shadow: 0 -12px 30px rgba(2,6,23,0.04); border-top: 1px solid rgba(0,0,0,0.04); }
+.text-inverse { color: white; }
+
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,255,255,0.7));
+  box-shadow: var(--shadow-none);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.6);
+}
+
+/* Input styling */
+.input {
+  background: rgba(255,255,255,0.6);
+  border: 1px solid rgba(12,17,23,0.06);
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+/* subtle motion helpers */
+.motion-safe { transition: all 300ms cubic-bezier(.2,.8,.2,1); }
+
+/* Ensure app background and body use theme tokens so stray tailwind grays get overridden */
+html, body, #root {
+  background: var(--color-bg) !important;
+  color: var(--color-text) !important;
+  /* Global font: TikTok Sans with sensible fallbacks */
+  font-family: 'TikTok Sans', ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app-root {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+/* Ensure the chosen font applies to all page content, overriding component-level font declarations when needed */
+html, body, #root, .app-root, .page, .container, .content, * {
+  font-family: 'TikTok Sans', ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol" !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Neutralize Tailwind shadow utilities to remove shadows globally */
+.shadow, .shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl, .shadow-3xl, .shadow-4xl {
+  box-shadow: none !important;
+}
+
+/* Ensure custom token-based shadows are also disabled */
+.apple-soft, .apple-elev {
+  box-shadow: none !important;
+}
+
+/* Buttons and elevated UI elements - remove shadows */
+.btn-primary, .btn-secondary, .btn-accent, .card, .panel {
+  box-shadow: none !important;
+}
+
+/* Reduce letter spacing for headings globally to match `tracking-tight` */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.025em;
+}

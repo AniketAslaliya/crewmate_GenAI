@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Timeline from "../components/Timeline"; // Import the Timeline component
+import Button from '../components/ui/Button';
+import { FaComments, FaFileAlt, FaQuestionCircle, FaHistory, FaMagic, FaArrowLeft, FaPaperPlane, FaMicrophone, FaPlay, FaPause } from 'react-icons/fa';
+
 
 // Check for browser support for Web Speech API
 const SpeechRecognition =
@@ -15,13 +18,13 @@ console.log("SpeechRecognition support:", !!SpeechRecognition);
 console.log("SpeechSynthesis support:", !!synthesis);
 
 const DarkBackground = () => (
-  <div className="absolute inset-0 -z-10 bg-black">
-    <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-gray-900 animate-pulse-slow" />
+  <div className="absolute inset-0 -z-10 bg-[var(--panel)]">
+    <div className="absolute inset-0 bg-gradient-to-br from-transparent via-[rgba(2,6,23,0.02)] to-transparent" />
     <div
-      className="absolute inset-0 opacity-[0.07]"
+      className="absolute inset-0 opacity-[0.08]"
       style={{
         backgroundImage:
-          "linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px)",
+          "linear-gradient(90deg, rgba(15,23,42,0.04) 1px, transparent 1px), linear-gradient(rgba(15,23,42,0.04) 1px, transparent 1px)",
         backgroundSize: "40px 40px",
       }}
     />
@@ -29,37 +32,94 @@ const DarkBackground = () => (
 );
 const TypingIndicator = () => (
   <motion.div
-    initial={{ opacity: 0, y: 10 }}
+    initial={{ opacity: 0, y: 8 }}
     animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: 10 }}
+    exit={{ opacity: 0, y: 8 }}
     className="flex justify-start"
+    aria-live="polite"
   >
-    <div className="max-w-md px-6 py-4 rounded-2xl shadow-md bg-gray-800/70 text-gray-200 border border-gray-700 flex items-center space-x-2">
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
-        animate={{ y: [0, -4, 0] }}
-        transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
-        animate={{ y: [0, -4, 0] }}
-        transition={{ duration: 0.8, delay: 0.2, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.span
-        className="w-2 h-2 bg-cyan-400 rounded-full"
-        animate={{ y: [0, -4, 0] }}
-        transition={{ duration: 0.8, delay: 0.4, repeat: Infinity, ease: "easeInOut" }}
-      />
+    <div className="max-w-md px-4 py-3 rounded-2xl shadow-sm bg-[var(--card-bg)] text-[var(--text)] border border-[var(--border)]">
+      <div className="flex items-center gap-3">
+        <div className="flex items-end gap-1">
+          <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }} />
+          <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, delay: 0.15, repeat: Infinity, ease: 'easeInOut' }} />
+          <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, delay: 0.3, repeat: Infinity, ease: 'easeInOut' }} />
+        </div>
+        <div className="text-sm text-gray-400">Thinking...</div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <div className="h-2 bg-[rgba(255,255,255,0.06)] rounded w-3/4 animate-pulse" />
+        <div className="h-2 bg-[rgba(255,255,255,0.04)] rounded w-1/2 animate-pulse" />
+      </div>
     </div>
   </motion.div>
 );
 
-const NotebookPage = (props) => {
-  // Accept id as a prop, fallback to useParams if not provided
-  const params = useParams();
-  const { id, onClose, inline } = props;
+// Creative centered loader for non-chat features
+const FeatureLoader = ({ feature }) => {
+  const labelMap = {
+    summary: 'Document Summary',
+    questions: 'Suggested Questions',
+    timeline: 'Timeline',
+    predictive: 'Predictive Output',
+  };
+  const label = labelMap[feature] || 'Results';
 
-  const [activeFeature, setActiveFeature] = useState(null);
+  return (
+    <div className="h-full w-full flex items-center justify-center">
+      <div className="flex flex-col items-center gap-6">
+        <div className="relative flex items-center justify-center">
+          <motion.div
+            className="absolute w-56 h-40 rounded-2xl"
+            style={{
+              background: 'linear-gradient(135deg, rgba(0,70,255,0.14), rgba(3,14,85,0.08))',
+              filter: 'blur(18px)'
+            }}
+            animate={{ scale: [1, 1.05, 1] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
+          />
+
+          <div className="relative z-10 flex items-center gap-3">
+            {[0,1,2].map((i) => (
+              <motion.div
+                key={i}
+                className="w-36 h-24 bg-[var(--card-bg)] border border-[var(--border)] rounded-2xl shadow-lg flex items-center justify-center text-sm text-[var(--muted)]"
+                initial={{ y: 8, rotate: i === 1 ? -4 : 4, opacity: 0.95 }}
+                animate={{ y: [0, -8, 0], rotate: i === 1 ? [-4, 0, -4] : [4, 0, 4] }}
+                transition={{ duration: 1.6 + i * 0.18, repeat: Infinity, ease: 'easeInOut', delay: i * 0.06 }}
+              >
+                <div className="px-3 text-center">
+                  <div className="font-medium text-[var(--text)]">{label}</div>
+                  <div className="text-xs text-[var(--muted)] mt-1">Preparing results…</div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center gap-2">
+          <div className="text-sm text-gray-400 font-semibold">Generating {label}…</div>
+          <div className="w-56 h-2 rounded-full bg-[rgba(0,70,255,0.12)] overflow-hidden">
+            <motion.div className="h-full bg-[var(--palette-3)]" initial={{ width: '12%' }} animate={{ width: ['12%','68%','34%','100%'] }} transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const NotebookPage = (props) => {
+  // Accept id as a prop when rendered inline, otherwise read from route params.
+  // This makes the component usable both as an inline panel (parent passes `id`) and
+  // as a full page mounted by React Router at `/legal-desk/:id`.
+  const params = useParams();
+  const { id: propId, inline } = props;
+  const id = propId || params.id;
+  const navigate = useNavigate();
+
+  // Default to chat feature for quicker access
+  const [activeFeature, setActiveFeature] = useState('chat');
   const [notebook, setNotebook] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
@@ -70,18 +130,24 @@ const NotebookPage = (props) => {
   // const [transcribedText, setTranscribedText] = useState("");
   // const recognitionRef = useRef(null);
   const chatEndRef = useRef(null);
+  // Abort controller for feature fetches to allow cancelling when user switches features
+  const featureAbortRef = useRef(null);
   const [storedData, setStoredData] = useState({});
   const [featureData, setFeatureData] = useState({
-    summary: { title: "Document Summary", icon: "📄", content: null },
-    questions: { title: "Suggested Questions", icon: "🤔", content: null },
-    timeline: { title: "Timeline", icon: "⏳", content: null },
+    chat: { title: "Chat with PDF", icon: <FaComments />, content: null },
+    summary: { title: "Document Summary", icon: <FaFileAlt />, content: null },
+    questions: { title: "Suggested Questions", icon: <FaQuestionCircle />, content: null },
+    timeline: { title: "Timeline", icon: <FaHistory />, content: null },
+    predictive: { title: "Predictive Output", icon: <FaMagic />, content: null },
   });
+  // Predictive output language state (2-letter codes)
+  const [predictiveLang] = useState('en');
 
   // NEW: State for Text-to-Speech
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false); // Tracks if audio is being processed
-  const [isVoiceSupported, setIsVoiceSupported] = useState(false);
+  // voice support state is handled inline via feature detection where needed
 
   // --- Effects ---
 
@@ -306,28 +372,42 @@ const NotebookPage = (props) => {
 
   // --- Data Fetching Functions ---
 
-  const fetchFeatureData = async (featureKey) => {
+  const fetchFeatureData = async (featureKey, langOverride) => {
     if (!notebook) return;
     setLoadingFeature(true);
 
+    // Abort previous in-flight feature request (if any)
     try {
-      if (storedData[id]?.[featureKey]) {
+      if (featureAbortRef.current) {
+        featureAbortRef.current.abort();
+      }
+    } catch (e) {
+      // ignore
+    }
+    const controller = new AbortController();
+    featureAbortRef.current = controller;
+
+    try {
+  // Determine language to use for predictive feature (override if provided)
+  // Preference: langOverride -> globalLanguage (from header) -> local predictiveLang
+  const langToUse = featureKey === 'predictive' ? (langOverride || predictiveLang) : undefined;
+      const cacheKey = featureKey === 'predictive' ? `${featureKey}:${langToUse}` : featureKey;
+      if (storedData[id]?.[cacheKey]) {
         setFeatureData((prev) => ({
           ...prev,
-          [featureKey]: { ...prev[featureKey], content: storedData[id][featureKey] },
+          [featureKey]: { ...prev[featureKey], content: storedData[id][cacheKey] },
         }));
         setLoadingFeature(false);
         return;
       }
-
       const payload = { user_id: notebook?.user, thread_id: id };
       let content;
 
       if (featureKey === "summary") {
-        const res = await papi.post(`/api/study-guide`, payload);
+        const res = await papi.post(`/api/study-guide`, payload, { signal: controller.signal });
         const studyGuide = res.data.study_guide;
         const formattedContent = studyGuide.split("\n").map((line, index) => {
-          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold text-cyan-400 mt-6">{line.substring(2)}</h1>;
+          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold mt-6" style={{ color: 'var(--palette-3)' }}>{line.substring(2)}</h1>;
           if (line.startsWith("##")) return <h2 key={index} className="text-lg font-semibold text-indigo-300 mt-4">{line.substring(3)}</h2>;
           if (line.startsWith("*")) return <li key={index} className="text-sm text-gray-300 ml-6 list-disc">{line.substring(2)}</li>;
           if (line.trim() === "---") return <hr key={index} className="my-4 border-gray-700" />;
@@ -336,7 +416,7 @@ const NotebookPage = (props) => {
         });
         content = <div className="space-y-2">{formattedContent}</div>;
       } else if (featureKey === "questions") {
-        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 });
+        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 }, { signal: controller.signal });
         const faqMarkdown = res.data.faq_markdown;
         const formattedFAQ = faqMarkdown.split("\n\n").map((block, index) => {
           if (!block.startsWith("### Q:")) return null;
@@ -347,26 +427,77 @@ const NotebookPage = (props) => {
             <motion.div
               key={index}
               whileHover={{ scale: 1.02 }}
-              className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-xl shadow-lg mb-4 cursor-pointer"
+              className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-none shadow-lg mb-4 cursor-pointer"
               onClick={(e) => e.currentTarget.querySelector(".faq-answer")?.classList.toggle("hidden")}
             >
-              <h3 className="text-lg font-bold text-cyan-300 mb-2">Q: {question}</h3>
+              <h3 className="text-lg font-bold mb-2" style={{ color: 'var(--palette-3)' }}>Q: {question}</h3>
               <p className="faq-answer text-sm text-gray-400 mt-2 hidden">A: {answer}</p>
             </motion.div>
           );
         });
         content = <div className="space-y-4">{formattedFAQ}</div>;
       } else if (featureKey === "timeline") {
-        const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 });
-        const timelineMarkdown = res.data.timeline_markdown || "";
-        content = <Timeline timelineMarkdown={timelineMarkdown} />;
+        const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 }, { signal: controller.signal });
+        // Some backend variants return { success: true, timeline: [], message: '...' }
+        // If timeline array is empty but a message is provided, show that message instead of an empty timeline.
+        const timelineArray = res.data?.timeline;
+        const timelineMarkdown = res.data?.timeline_markdown || "";
+        if (Array.isArray(timelineArray) && timelineArray.length === 0 && res.data?.message) {
+          content = <div className="text-sm text-gray-400 italic">{res.data.message}</div>;
+        } else if (timelineMarkdown && timelineMarkdown.trim()) {
+          content = <Timeline timelineMarkdown={timelineMarkdown} />;
+        } else if (Array.isArray(timelineArray) && timelineArray.length > 0) {
+          // Convert simple array to a markdown table expected by Timeline component
+          const md = ['Date | Event', '---|---', ...timelineArray.map(item => `${item.date || ''} | ${item.event || item.description || ''}`)].join('\n');
+          content = <Timeline timelineMarkdown={md} />;
+        } else {
+          // Fallback: show message if present, otherwise a friendly empty state
+          content = <div className="text-sm text-gray-400 italic">{res.data?.message || 'No timeline events found.'}</div>;
+        }
+      } else if (featureKey === "predictive") {
+        // call predictive-output API
+        try {
+          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
+          const pred = res.data.prediction;
+          const scenarios = pred?.scenarios || [];
+          const disclaimer = pred?.disclaimer || '';
+
+          content = (
+            <div className="space-y-4">
+              {scenarios.map((s, i) => (
+                <div key={i} className="p-4 bg-surface border rounded-none" style={{ borderColor: 'var(--palette-3)' }}>
+                  <h4 className="font-semibold" style={{ color: 'var(--palette-3)' }}>{`Scenario ${i+1}: ${s.outcome}`}</h4>
+                  <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{s.reasoning}</p>
+                </div>
+              ))}
+              {disclaimer && (
+                <div className="mt-4 text-xs text-gray-500 italic">{disclaimer}</div>
+              )}
+            </div>
+          );
+        } catch (err) {
+          if (err.name === 'CanceledError' || err.name === 'AbortError') {
+            // request was aborted; bail silently
+            console.log('Feature fetch aborted:', featureKey);
+            setLoadingFeature(false);
+            return;
+          }
+          console.error('Predictive API failed', err);
+          content = <div className="text-sm text-red-400">Failed to fetch predictive output.</div>;
+        }
       }
 
-      setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [featureKey]: content } }));
-      setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
+  setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [cacheKey]: content } }));
+  setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
     } catch (err) {
+      if (err.name === 'CanceledError' || err.name === 'AbortError') {
+        console.log('Feature fetch aborted:', featureKey);
+        return;
+      }
       console.error(err);
     } finally {
+      // clear controller if it hasn't been replaced
+      if (featureAbortRef.current === controller) featureAbortRef.current = null;
       setLoadingFeature(false);
     }
   };
@@ -374,6 +505,19 @@ const NotebookPage = (props) => {
   // --- Event Handlers ---
 
   const handleFeatureClick = (featureKey) => {
+    // if same feature clicked, toggle off
+    if (activeFeature === featureKey) {
+      setActiveFeature(null);
+      try { featureAbortRef.current?.abort(); } catch (e) { }
+      return;
+    }
+
+    // Chat is a live feature that doesn't require a fetch; render it directly
+    if (featureKey === 'chat') {
+      setActiveFeature('chat');
+      return;
+    }
+
     setActiveFeature(featureKey);
     fetchFeatureData(featureKey);
   };
@@ -403,28 +547,54 @@ const NotebookPage = (props) => {
       const payload = { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4 };
       const res2 = await papi.post("/api/ask", payload);
 
-      // Parse response
-      let apiAnswer = res2.data.answer;
-      if (typeof apiAnswer === "string") {
-        apiAnswer = apiAnswer.replace(/^```json\n?/, "").replace(/```$/, "");
-        try {
-          apiAnswer = JSON.parse(apiAnswer);
-        } catch (parseError) {
-          throw new Error("API answer is not valid JSON.");
-        }
+      // Parse response (be tolerant: API may return a plain string or JSON)
+      let apiAnswer = res2.data?.answer;
+      let aiContent = "";
+      let followups = [];
+
+      if (apiAnswer == null) {
+        throw new Error("API returned empty answer");
       }
 
-      if (!apiAnswer?.response) throw new Error("API response is missing the 'response' field.");
-      
-      const apiResponse = apiAnswer.response;
-      const aiContent = apiResponse["PLAIN ANSWER"];
+      if (typeof apiAnswer === "string") {
+        // strip fenced codeblocks if present
+        const trimmed = apiAnswer.replace(/^```json\n?/, "").replace(/```$/, "");
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed?.response) {
+            const apiResponse = parsed.response;
+            aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
+            followups = apiResponse.followupquestion || [];
+          } else if (parsed?.answer) {
+            aiContent = parsed.answer;
+          } else {
+            // Fallback: use the original trimmed string
+            aiContent = trimmed;
+          }
+        } catch (parseError) {
+          // Not JSON — treat as plain text answer
+          aiContent = trimmed;
+        }
+      } else if (typeof apiAnswer === "object") {
+        if (apiAnswer?.response) {
+          const apiResponse = apiAnswer.response;
+          aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
+          followups = apiResponse.followupquestion || [];
+        } else if (apiAnswer?.answer) {
+          aiContent = apiAnswer.answer;
+        } else {
+          aiContent = JSON.stringify(apiAnswer);
+        }
+      } else {
+        aiContent = String(apiAnswer);
+      }
 
       // Save the AI's response and get the final message object
       const res3 = await api.post("/api/messages", { chatId: id, content: aiContent, role: "response" });
 
       // Add the final AI message from the server to the chat
       setMessages((prev) => [...prev, res3.data.message]);
-      setFollowUpQuestions(apiResponse.followupquestion || []);
+      setFollowUpQuestions(followups || []);
     } catch (err) {
       console.error("Error sending message:", err);
       // Add a user-friendly error message to the chat
@@ -441,9 +611,10 @@ const NotebookPage = (props) => {
 
   // --- Render Logic ---
 
+
   if (!id) {
     return (
-      <div className="flex items-center justify-center h-screen bg-black text-red-400">
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-[var(--bg)] text-red-600">
         No notebook selected.
       </div>
     );
@@ -451,229 +622,149 @@ const NotebookPage = (props) => {
 
   if (!notebook) {
     return (
-      <div className="flex items-center justify-center h-screen bg-black text-gray-400">
+      <div className="flex-1 min-h-0 flex items-center justify-center bg-[var(--bg)] text-[var(--muted)]">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="w-10 h-10 border-4 border-t-4 border-gray-800 border-t-cyan-400 rounded-full"
+          className="w-10 h-10 border-4 border-t-4 border-[var(--border)] border-t-[var(--accent)] rounded-full"
         />
-        <span className="ml-4 text-cyan-300">Loading notebook...</span>
+        <span className="ml-4 text-[var(--accent)]">Loading notebook...</span>
       </div>
     );
   }
 
   return (
     <div
-      className={`relative flex text-gray-100 font-sans overflow-hidden ${inline ? "rounded-2xl shadow-2xl bg-gray-900" : ""}`}
-      style={inline ? { height: "70vh", minHeight: 400 } : { height: "100vh" }}
+      className={`relative flex font-sans overflow-visible flex-1 min-h-0 bg-[var(--bg)] ${inline ? "panel rounded-none" : ""}`}
+      style={inline ? { height: "70vh", minHeight: 400 } : {}}
     >
       
 
-      <DarkBackground />
+  <DarkBackground />
 
-      {/* Left Panel */}
-      <motion.div
-        className="relative z-10 w-80 bg-gray-900/70 backdrop-blur-xl shadow-2xl p-8 flex flex-col gap-8 border border-gray-800 rounded-3xl"
-        initial={{ x: -100, opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        transition={{ duration: 0.6 }}
-        style={{ height: "100%" }}
-      >
-        {/* ...sidebar content... */}
-        <h1 className="text-4xl font-extrabold tracking-tight">
-          <span className="text-gray-100">Legal Sah</span>
-          <span className="bg-gradient-to-r from-cyan-400 to-blue-600 bg-clip-text text-transparent">AI</span>
-        </h1>
-        <p className="mt-1 text-sm text-gray-400">Your AI-powered legal assistant</p>
-        <div className="flex flex-col gap-4">
-          {Object.entries(featureData).map(([key, { icon, title }]) => (
-            <motion.div
-              key={key}
-              whileHover={{ scale: 1.05, boxShadow: "0 0 20px rgba(56,189,248,0.3)" }}
-              whileTap={{ scale: 0.97 }}
-              className={`relative cursor-pointer p-5 rounded-xl transition-all duration-300 border ${
-                activeFeature === key
-                  ? "bg-gradient-to-r from-gray-800 to-gray-900 border-cyan-500"
-                  : "bg-gray-900/40 border-gray-700 hover:border-cyan-400"
-              }`}
-              onClick={() => handleFeatureClick(key)}
-            >
-              <h3 className="flex items-center gap-3 font-bold text-lg">{icon} {title}</h3>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
+      {/* Feature navbar has been moved into the main output header to make the output workspace primary */}
 
-      {/* Middle Panel */}
-      <div className="relative z-10 flex-1 flex flex-col bg-gray-900/50 backdrop-blur-md border-x border-gray-800 rounded-3xl"
-        style={{ height: "100%" }}
-      >
-        <header className="p-6 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-2xl font-light text-cyan-300 tracking-wide">{notebook.title}</h2>
-        </header>
-        <div className="flex-1 p-8 overflow-y-auto space-y-4 custom-scrollbar">
-          {messages.map((msg) => (
-            <motion.div
-              key={msg._id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`relative max-w-md px-6 py-4 rounded-2xl shadow-md text-sm font-light transition-all duration-300 ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-r from-cyan-600 to-blue-700 text-white"
-                    : "bg-gray-800/70 text-gray-200 border border-gray-700"
+      {/* Output Workspace (right side) */}
+  <div className="relative z-10 flex-1 panel rounded-none min-h-0 bg-[var(--bg)] border-l flex flex-col" style={{ height: "100%" }}>
+        <header className="p-4 md:p-6 border-b flex items-center justify-between gap-3 flex-shrink-0">
+          {/* Left: Back button (separated) */}
+          <div className="flex items-center min-w-[120px]">
+            {!inline && id && (
+              <Button variant="secondary" onClick={() => navigate('/legal-desk')} aria-label="Back to Legal Desk">
+                <FaArrowLeft className="inline-block w-4 mr-2" />
+                {/* <span className="hidden sm:inline">Back</span> */}
+              </Button>
+            )}
+          </div>
+
+          {/* Center: Notebook title - prominent heading */}
+          <div className="flex-1 text-center px-2">
+            <h1 className="text-lg md:text-2xl lg:text-3xl font-semibold leading-tight text-[var(--text)]">{notebook.title}</h1>
+          </div>
+
+          {/* Right: Horizontal feature navbar inside header */}
+          <nav className="flex items-center gap-2 overflow-auto" role="tablist" aria-label="Notebook features">
+            {Object.entries(featureData).map(([key, { icon, title }]) => (
+              <button
+                key={key}
+                onClick={() => handleFeatureClick(key)}
+                role="tab"
+                aria-selected={activeFeature === key}
+                tabIndex={0}
+                className={`flex items-center gap-2 whitespace-nowrap py-2 px-3 text-sm font-medium transition-all duration-150 ${
+                  activeFeature === key ? 'border-b-2 font-semibold' : 'opacity-95 hover:opacity-100'
                 }`}
+                style={{
+                  color: activeFeature === key ? 'var(--palette-1, #003bbf)' : '#71719F',
+                  borderColor: activeFeature === key ? 'var(--palette-3-dark, #003bbf)' : undefined,
+                }}
               >
-                {msg.content}
-                {msg.role === "response" && msg.content && (
-                  <button
-                    onClick={() => handleToggleSpeech(msg)}
-                    className="absolute bottom-2 right-2 p-1.5 bg-gray-900/50 rounded-full text-gray-300 hover:bg-gray-900/80 transition-colors"
-                    aria-label={isSpeaking && speakingMessageId === msg._id ? "Stop speech" : "Play speech"}
-                  >
-                    {isSpeaking && speakingMessageId === msg._id ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
-                      </svg>
-                    )}
-                  </button>
-                )}
+                <span className="text-lg">{icon}</span>
+                <span className="hidden md:inline">{title}</span>
+              </button>
+            ))}
+          </nav>
+        </header>
+
+  <div className="flex-1 p-3 custom-scrollbar flex flex-col min-h-[80vh] max-h-[80vh]">
+          {activeFeature ? (
+            activeFeature === 'chat' ? (
+              // Render chat UI in the output workspace with fixed input at bottom
+              <div className="flex flex-col flex-1 overflow-y-scroll scrollbar-hide ">
+                {/* Scrollable chat messages area */}
+                <div className="flex-1  space-y-4 pb-4 custom-scrollbar m-3 ">
+                  {messages.map((msg) => (
+                    <motion.div key={msg._id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`relative max-w-[72%] px-5 py-3 shadow-sm transition-colors duration-150 ${
+                          msg.role === 'user'
+                            ? 'bg-[var(--palette-1)] text-white rounded-tl-2xl rounded-bl-2xl rounded-tr-none rounded-br-2xl hover:brightness-95'
+                            : 'bg-[var(--card-bg)] text-[var(--text)] rounded-tr-2xl rounded-br-2xl rounded-tl-none rounded-bl-2xl border border-[var(--border)] hover:border-[var(--palette-3)]'
+                        }`}
+                        style={{
+                          // Slightly larger, more readable text
+                          fontSize: '0.95rem',
+                          lineHeight: '1.45',
+                        }}
+                      >
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                        <div className="mt-3 flex items-center justify-end gap-2 text-[11px] opacity-80">
+                          {/* status / play control (timestamp removed) */}
+                          {msg.role !== 'user' && msg.content && (
+                                <button onClick={() => handleToggleSpeech(msg)} aria-label={isSpeaking && speakingMessageId === msg._id ? 'Stop speech' : 'Play speech'} className="p-1.5 text-[var(--muted)] hover:text-[var(--text)] transition-colors bg-[var(--bg)] rounded-full border border-[var(--border)] hover:border-[var(--palette-3)] pl-2">
+                              {isSpeaking && speakingMessageId === msg._id ? <FaPause /> : <FaPlay />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+
+                  {isAiThinking && <TypingIndicator />}
+
+                  {followUpQuestions.length > 0 && (  
+                    <div className="mt-4 space-y-2">
+                      <h3 className="text-gray-400 text-sm font-semibold">Follow-up Questions:</h3>
+                      {followUpQuestions.map((question, index) => (
+                        <motion.button key={index} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} onClick={(e) => handleSendMessage(e, question)} className="w-full text-left px-4 py-2 bg-[var(--palette-2)] text-white rounded-md shadow-sm hover:opacity-95 transition-all duration-200">{question}</motion.button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Fixed input area at bottom */}
+                <div className="flex-shrink-0 pt-4 mt-4 border-t border-[var(--border)] bg-[var(--bg)] sticky bottom-0">
+                  <form onSubmit={handleSendMessage} className="flex items-center gap-3">
+                    <motion.button type="button" onClick={isRecording ? stopVoiceRecording : startVoiceRecording} disabled={isProcessingAudio} className={`px-4 py-2 rounded-md ${isRecording ? 'bg-red-500 text-white' : isProcessingAudio ? 'bg-gray-400 text-white' : 'bg-[var(--panel)] text-[var(--text)] border border-[var(--border)]'} `}>
+                      {isProcessingAudio ? '...' : isRecording ? 'Stop' : (<><FaMicrophone className="inline-block mr-2" />Voice</>) }
+                    </motion.button>
+                    <input type="text" placeholder={isAiThinking ? 'Generating response...' : 'Ask anything or add a note...'} value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isAiThinking} className="flex-1 px-4 py-2 border rounded-md bg-[var(--panel)] text-[var(--text)] placeholder-[var(--muted)]" style={{ borderColor: 'var(--palette-3)' }} />
+                    <motion.button type="submit" className="px-4 py-2 rounded-md bg-[var(--palette-1)] text-white hover:brightness-95"><FaPaperPlane className="inline-block mr-2" />Send</motion.button>
+                  </form>
+                </div>
               </div>
-            </motion.div>
-          ))}
-
-          {/* **IMPROVEMENT 3: Render Typing Indicator** */}
-          {isAiThinking && <TypingIndicator />}
-
-          {followUpQuestions.length > 0 && (
-            <div className="mt-4 space-y-2">
-              <h3 className="text-gray-400 text-sm font-semibold">Follow-up Questions:</h3>
-              {followUpQuestions.map((question, index) => (
-                <motion.button
-                  key={index}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={(e) => handleSendMessage(e, question)}
-                  className="w-full text-left px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg shadow-md hover:opacity-90 transition-all duration-300"
-                >
-                  {question}
-                </motion.button>
-              ))}
+            ) : (
+              // Render regular feature output
+              loadingFeature ? (
+                <FeatureLoader feature={activeFeature} />
+              ) : (
+                <motion.div key={activeFeature} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 text-sm text-gray-300">
+                  {featureData[activeFeature]?.content}
+                </motion.div>
+              )
+            )
+          ) : (
+            <div className="text-center text-gray-400 mt-16">
+              <h3 className="text-lg font-semibold">Select a feature to view output</h3>
+              <p className="text-sm mt-2">Choose a feature from the left to display results here (chat, summary, timeline, etc.).</p>
             </div>
           )}
-          <div ref={chatEndRef} /> {/* Invisible element to scroll to */}
         </div>
-
-        <form onSubmit={handleSendMessage} className="p-6 border-t border-gray-800 flex items-center space-x-4">
-          <motion.button
-            type="button"
-            onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
-            disabled={isProcessingAudio} // Disable button only while processing audio
-            className={`px-6 py-3 rounded-full ${
-              isRecording
-                ? "bg-red-500"
-                : isProcessingAudio
-                ? "bg-gray-500 cursor-not-allowed"
-                : "bg-gradient-to-r from-cyan-500 to-blue-600"
-            } text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md`}
-          >
-            {isProcessingAudio ? (
-              <svg
-                className="animate-spin h-5 w-5 text-white mx-auto"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8v8H4z"
-                ></path>
-              </svg>
-            ) : isRecording ? (
-              "Stop"
-            ) : (
-              "Voice"
-            )}
-          </motion.button>
-          <input
-            type="text"
-            placeholder={isAiThinking ? "Generating response..." : "Ask anything or add a note..."}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            disabled={isAiThinking} // Disable input while AI is thinking
-            className="flex-1 px-5 py-3 bg-gray-800/70 border border-gray-700 rounded-full text-gray-200 placeholder-gray-500 focus:ring-1 focus:ring-cyan-400 outline-none transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-          <motion.button
-            type="submit"
-            whileHover={{ scale: isAiThinking ? 1 : 1.05 }}
-            whileTap={{ scale: isAiThinking ? 1 : 0.95 }}
-            disabled={isAiThinking} // Disable button while AI is thinking
-            className="px-6 py-3 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold hover:opacity-90 transition-all duration-300 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Send
-          </motion.button>
-        </form>
       </div>
 
-      {/* Right Panel */}
-      <AnimatePresence>
-        {activeFeature && (
-          <motion.div
-            className="relative z-10 w-96 bg-gray-900/80 backdrop-blur-xl shadow-2xl flex flex-col border border-gray-800 rounded-3xl"
-            initial={{ x: 100, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 100, opacity: 0 }}
-            transition={{ duration: 0.6 }}
-            style={{ height: "100%" }}
-          >
-            <div className="p-6 border-b border-gray-800">
-              <h2 className="text-xl font-semibold text-cyan-300">{featureData[activeFeature].title}</h2>
-              {activeFeature === "questions" && <p className="text-sm text-gray-500 italic">Click to reveal answers</p>}
-            </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-              {loadingFeature ? (
-                <div className="flex items-center justify-center h-full">
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="w-10 h-10 border-4 border-t-4 border-gray-700 border-t-cyan-400 rounded-full"
-                  />
-                </div>
-              ) : (
-                <motion.div
-                  key={activeFeature}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="space-y-4 text-sm text-gray-300"
-                >
-                  {featureData[activeFeature].content}
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      
     </div>
   );
 };
