@@ -67,8 +67,23 @@ export const sendMessage = async (req, res) => {
     // Decrypt the content before sending it back to the frontend
     const decryptedMessage = {
       ...message.toObject(),
+      // ensure `user` is an id string (not a populated object) for frontend consistency
+      user: message.user && message.user._id ? message.user._id : message.user,
       content: decrypt(message.content),
     };
+
+    // emit via socket io so connected clients receive the message in realtime
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        io.to(chatId).emit('new_message', {
+          ...decryptedMessage,
+          content: decryptedMessage.content,
+        });
+      }
+    } catch (emitErr) {
+      console.error('Failed to emit socket message from REST send:', emitErr);
+    }
 
     res.status(201).json({ message: decryptedMessage });
   } catch (err) {
@@ -88,11 +103,15 @@ export const getMessagesByChat = async (req, res) => {
       .sort({ createdAt: 1 }) // oldest first
       .populate("user", "name email");
 
-    // Decrypt the content of each message
-    const decryptedMessages = messages.map((message) => ({
-      ...message.toObject(),
-      content: decrypt(message.content), // Decrypt content
-    }));
+    // Decrypt the content of each message and normalize `user` to the id string
+    const decryptedMessages = messages.map((message) => {
+      const obj = message.toObject();
+      return {
+        ...obj,
+        user: obj.user && obj.user._id ? obj.user._id : obj.user,
+        content: decrypt(message.content), // Decrypt content
+      };
+    });
 
     res.json({ messages: decryptedMessages });
   } catch (err) {

@@ -10,7 +10,7 @@ const UserSchema = new mongoose.Schema(
     },
     email: {
       type: String,
-      required: true,
+        required: true,
       index: true,
     },
     name: {
@@ -20,6 +20,48 @@ const UserSchema = new mongoose.Schema(
     picture: {
       type: String,
     },
+    role: {
+        type: String,
+        enum: ["helpseeker", "lawyer"],
+        default: null,
+    },
+      // Local auth password (bcrypt hash). If user signs in with Google this can be empty/null
+      password: {
+        type: String,
+      },
+    bio: { type: String },
+    phone: { type: String },
+  specialties: { type: [String], default: [] },
+  location: { type: String },
+  city: { type: String },
+  // years of professional experience
+  yearsExperience: { type: Number, default: 0 },
+  // consultation fee per session in local currency
+  fee: { type: Number, default: 0 },
+  // supported consultation modes: in-person, video, chat, phone
+  modes: { type: [String], default: [] },
+  // languages spoken
+  languages: { type: [String], default: [] },
+  // courts the lawyer practices in
+  courts: { type: [String], default: [] },
+  // verified/licensed flag
+  verified: { type: Boolean, default: false },
+  // average rating from clients
+  rating: { type: Number, default: 0 },
+  // whether offers a free first consultation
+  freeFirst: { type: Boolean, default: false },
+  // firm type: independent or firm
+  firmType: { type: String, enum: ['independent','firm'], default: 'independent' },
+  // education history
+  education: { type: [String], default: [] },
+  // success rate or cases handled percent
+  successRate: { type: Number, default: 0 },
+  // average response time in hours
+  responseTimeHours: { type: Number, default: 24 },
+  // affiliated organization or law firm
+  organization: { type: String },
+  // indicates lawyer completed onboarding (filled required profile fields)
+  isOnboarded: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -6,6 +6,7 @@ export const uploadDocument = async (req, res) => {
     const chat = new Chat({
       user: req.user.id,
       title: req.body.title || "Untitled notebook",
+      channel: 'legal_desk',
     });
 
     await chat.save();
@@ -44,7 +45,8 @@ export const deleteChat = async (req, res) => {
 // Get all chats of logged-in user
 export const getUserChats = async (req, res) => {
   try {
-    const chats = await Chat.find({ user: req.user.id }).sort({ createdAt: -1 });
+    // return only legal-desk chats (dossiers) for the user's notebook view
+    const chats = await Chat.find({ user: req.user.id, channel: 'legal_desk' }).sort({ createdAt: -1 });
 
     res.json({ chats });
   } catch (err) {

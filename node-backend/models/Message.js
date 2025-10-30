@@ -13,14 +13,20 @@ const MessageSchema = new mongoose.Schema(
       required: true,
     },
     role: {
-      type: String,
-      enum: ["user", "response"], // user = sender, response = AI/system
-      required: true,
+        type: String,
+        enum: ["user", "response", "lawyer", "ai", "system"], // preserve old values and allow explicit lawyer/ai/system
+        required: true,
     },
     content: {
       type: String,
       required: true,
     },
+      // channel indicates which subsystem the message belongs to.
+      // 'private' = user <-> lawyer chat, 'legal_desk' = AI/legal document assistant, others possible
+      channel: {
+        type: String,
+        default: 'private',
+      },
   },
   { timestamps: true }
 );
