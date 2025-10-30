@@ -19,7 +19,7 @@ model = ChatGoogleGenerativeAI(
 
 
 
-def call_model_system_then_user(system_prompt: str, user_prompt: str, temperature: Optional[float] = None) -> str:
+def call_model_system_then_user(system_prompt: str, user_prompt: str, temperature: Optional[float] = None,model_instance=model) -> str:
     """
     Invoke LLM with [System, Human] messages. Optionally override temperature.
     Returns the content string (or a simple error string on failure).

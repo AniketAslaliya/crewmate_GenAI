@@ -8,7 +8,22 @@ import tempfile
 from typing import Optional
 import re
 import json
-
+from typing import List, Optional, Dict, Any # Ensure List is included
+# --- START: ADDED FOR FORM FILLING (Ensure these imports are present) ---
+import json # Likely already there
+import shutil
+from fastapi import Body, APIRouter # Add Body and APIRouter if you plan to use it
+from pydantic import Field as PydanticField # If needed for complex models
+from backend_rag.form_processing import DetailedOcrResult, OcrPage, OcrWord
+# Import the new form processing functions
+from backend_rag.form_processing import (
+    detect_form_fields,
+    generate_field_suggestions,
+    fill_pdf_form,       # Placeholder function
+    fill_docx_form       # Functional implementation
+    # Assuming OcrResult class is defined in form_processing.py or imported there
+)
+# --- END: ADDED FOR FORM FILLING (Imports) ---
 # Ensure all backend modules are correctly imported
 # In api_server.py, near other backend imports
 from backend_rag.Translation import detect_language, translate_text
@@ -88,7 +103,40 @@ class PredictiveOutputReq(BaseModel):
     output_language: Optional[str] = 'en' # Add this
 
 
+# --- START: ADDED FOR FORM FILLING (Pydantic Models) ---
+class DetectedField(BaseModel):
+    id: str
+    label_text: Optional[str] = ""
+    bbox: List[int] 
+    semantic_type: str
+    confidence: str
+    is_sensitive: bool
+    description: Optional[str] = "Enter the required information." # Add this line
+    suggestions: List[str] = []
+    value: str = ""
 
+class FormAnalyzeResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
+    form_id: str # ID for tracking this form instance
+    fields: List[DetectedField] = []
+
+class FieldValue(BaseModel):
+    id: str
+    value: str
+
+class FormExportRequest(BaseModel):
+    form_id: str # ID received from analyze response
+    field_values: List[FieldValue]
+    export_format: str = "docx" # Default to docx as it's implemented
+    original_filename: Optional[str] = None # Important for finding the template/original
+
+# Rebuild new models too
+DetectedField.model_rebuild()
+FormAnalyzeResponse.model_rebuild()
+FieldValue.model_rebuild()
+FormExportRequest.model_rebuild()
+# --- END: ADDED FOR FORM FILLING (Pydantic Models) ---
 
 
 class QuickAnalyzeReq(BaseModel):
@@ -610,3 +658,174 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
                 break
         out.append({"id": m.get("id"), "score": float(m.get("score", 0.0)) if isinstance(m, dict) else 0.0, "keys": list(md.keys())[:20], "preview": preview})
     return {"namespace": ns, "samples": out}
+
+# --- START: ADDED FOR FORM FILLING (API Endpoints) ---
+
+@app.post("/api/forms/analyze", response_model=FormAnalyzeResponse)
+async def analyze_form(
+    file: UploadFile = File(...),
+    user_id: Optional[str] = Form(None),
+    thread_id: Optional[str] = Form(None) # Optional thread ID for context RAG
+):
+    """
+    Uploads a form, performs OCR (if needed), detects fields, classifies them,
+    and returns initial suggestions.
+    """
+    print(f"--- [/api/forms/analyze] Received upload: {file.filename} ---")
+    
+    # Ensure UPLOAD_DIR exists (you might already have this)
+    # UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads")) # Defined earlier
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    
+    temp_form_id = f"form_{user_id or 'anon'}_{thread_id or 'temp'}_{os.urandom(4).hex()}"
+    temp_file_path = UPLOAD_DIR / f"{temp_form_id}_{file.filename}"
+    try:
+        with temp_file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        print(f"--- [/api/forms/analyze] Saved temp file: {temp_file_path} ---")
+
+        # 1. Extract Text & Layout (OCR)
+        extraction = extract_text_with_diagnostics(str(temp_file_path))
+        full_text = extraction.get("text", "") # Get the FULL text
+        if not full_text:
+             raise HTTPException(status_code=422, detail="Could not extract text from the document.")
+
+        # --- CORRECTED SIMULATION (Ensure it uses FULL text) ---
+        # This simulation needs to be replaced with your actual detailed OCR output mapping.
+        # It MUST generate OcrWord objects for ALL relevant text parts, including labels.
+        # For simulation, let's just split the full text into words:
+        simulated_words = []
+        current_y = 10
+        for word_text in full_text.split(): # Use the full_text here
+             # Create basic bbox based on word index (VERY ROUGH ESTIMATE)
+             bbox = [10, current_y, 10 + len(word_text)*8, current_y + 15]
+             simulated_words.append(OcrWord(text=word_text, bbox=bbox))
+             current_y += 5 # Simple vertical spacing simulation
+
+        simulated_page = OcrPage(
+            page_number=1,
+            width=600,
+            height=800, # Adjust if known
+            words=simulated_words # Pass ALL simulated words
+        )
+        detailed_ocr_result = DetailedOcrResult(pages=[simulated_page])
+        # --- End Simulation ---
+
+        # 2. Detect & Classify Fields (Pass the object with full text representation)
+        detected_fields_raw = detect_form_fields(detailed_ocr_result)
+        if not detected_fields_raw:
+             raise HTTPException(status_code=422, detail="Could not detect any fields in the document.")
+
+        # 3. (Optional) Get Context using RAG based on thread_id
+        context_summary = "General context." # Default
+        if thread_id:
+            try:
+                # --- CORRECTED VARIABLE NAME HERE ---
+                # Use the actual OCR result object, not the simulation variable name
+                context_query = " ".join(w.text for p in detailed_ocr_result.pages for w in p.words[:20]) # Use text from the result
+                # --- End Correction ---
+
+                hits = retrieve_similar_chunks(context_query, user_id=user_id, thread_id=thread_id, top_k=3)
+                if hits:
+                    context_summary = " ".join([h.get("text", "") for h in hits])
+                    print(f"--- [/api/forms/analyze] Retrieved context for suggestions. ---")
+            except Exception as e:
+                print(f"--- [/api/forms/analyze] Failed to retrieve RAG context: {e} ---")
+
+        # 4. Generate Initial Suggestions (only for non-sensitive)
+        final_fields = []
+        for field_data in detected_fields_raw:
+             suggestions = []
+             if not field_data.get('is_sensitive', False):
+                 suggestions = generate_field_suggestions(field_data, context_summary)
+             
+             field_obj = DetectedField(
+                 id=field_data['id'],
+                 label_text=field_data.get('label_text'),
+                 bbox=field_data['bbox'], 
+                 semantic_type=field_data['semantic_type'],
+                 confidence=field_data['confidence'],
+                 is_sensitive=field_data['is_sensitive'],
+                 description=field_data.get('description', 'Enter the required information.'), # Pass description
+                 suggestions=suggestions,
+                 value=""
+             )
+             final_fields.append(field_obj)
+
+        return FormAnalyzeResponse(
+            success=True,
+            form_id=temp_form_id,
+            fields=final_fields
+        )
+
+    except HTTPException as httpe: raise httpe
+    except Exception as e:
+         print(f"--- [/api/forms/analyze] Error: {e} ---")
+         raise HTTPException(status_code=500, detail=f"Failed to analyze form: {e}")
+    # Note: Temporary file is NOT deleted here, needed for export
+
+@app.post("/api/forms/export")
+async def export_filled_form(req: FormExportRequest = Body(...)):
+    """
+    Receives final field values and generates a filled PDF or DOCX file.
+    """
+    print(f"--- [/api/forms/export] Request received for form ID: {req.form_id}, format: {req.export_format} ---")
+    
+    # Find the original uploaded file path based on form_id and filename
+    # This requires req.original_filename to be sent from frontend
+    if not req.original_filename:
+        raise HTTPException(status_code=400, detail="Missing original_filename in request for export.")
+        
+    original_file_path = UPLOAD_DIR / f"{req.form_id}_{req.original_filename}"
+    if not original_file_path.exists():
+         print(f"--- [/api/forms/export] Original file not found at expected path: {original_file_path} ---")
+         raise HTTPException(status_code=404, detail="Original form file not found for export. It might have been cleaned up.")
+
+    # Prepare data for filling functions {field_id: value}
+    field_data_dict = {fv.id: fv.value for fv in req.field_values}
+
+    # Define output path
+    output_filename = f"filled_{req.form_id}.{req.export_format}"
+    output_path = UPLOAD_DIR / output_filename
+
+    try:
+        if req.export_format == "pdf":
+            # NOTE: fill_pdf_form is a placeholder unless you implement AcroForm filling
+            fill_pdf_form(str(original_file_path), str(output_path), field_data_dict)
+            media_type = "application/pdf"
+        elif req.export_format == "docx":
+            fill_docx_form(str(original_file_path), str(output_path), field_data_dict)
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported export format.")
+
+        # Check if file was created
+        if not output_path.exists():
+             raise HTTPException(status_code=500, detail="Export failed: Output file not generated.")
+
+        # Stream the file back
+        def iterfile():
+            try:
+                with open(output_path, mode="rb") as file_like:
+                    yield from file_like
+            finally:
+                 # Clean up the generated filled file after streaming
+                 if output_path.exists():
+                     output_path.unlink()
+                     print(f"--- [/api/forms/export] Cleaned up exported file: {output_path} ---")
+                 # Optionally clean up the original uploaded file now too
+                 # if original_file_path.exists():
+                 #    original_file_path.unlink()
+
+        headers = {'Content-Disposition': f'attachment; filename="{output_filename}"'}
+        return StreamingResponse(iterfile(), media_type=media_type, headers=headers)
+
+    except HTTPException as httpe:
+        raise httpe
+    except Exception as e:
+        print(f"--- [/api/forms/export] Error: {e} ---")
+        # Clean up potentially corrupted output file on error
+        if output_path.exists(): output_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Failed to export form: {e}")
+
+# --- END: ADDED FOR FORM FILLING (API Endpoints) ---
