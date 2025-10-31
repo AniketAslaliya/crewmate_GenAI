@@ -175,6 +175,8 @@ def _batch_generate_suggestions(fields_info: List[Dict], context: str) -> Dict[s
 
 # [In form_processing.py]
 
+# [In backend_rag/form_processing.py]
+
 def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
     """
     V3: Detects fields via LLM using text + bbox data for spatial reasoning.
@@ -182,16 +184,13 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
     print("--- [Form Processing V3] Detecting fields using spatial layout... ---")
     
     # 1. Serialize OCR data for the LLM
-    # We send the LLM a JSON list of all words and their coordinates
     page_data_for_llm = []
     word_count = 0
     for page in ocr_result.pages:
-        # Limit the data sent to the LLM to avoid exceeding context limits
         if word_count > 4000: 
             print("--- [Form Processing V3] Word limit reached, truncating data for LLM.")
             break
         
-        # Convert list of Pydantic OcrWord objects to a list of simple dicts
         words_list = [w.model_dump() for w in page.words]
         
         page_data_for_llm.append({
@@ -215,15 +214,14 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
         "- `label_text`: The text of the field's label.\n"
         "- `semantic_type`: The data type (e.g., 'name', 'date', 'address', 'phone', 'checkbox', 'signature').\n"
         "- `bbox`: The **coordinates of the blank input space** [xmin, ymin, xmax, ymax]. Estimate this from the layout.\n"
-        "- `page_number`: The page number where the field is located.\n"
+        "- `page_number`: The page number where the field is located. **This is a required field.**\n"
         "- Do NOT return coordinates for the label, only for the input area.\n"
         "- Be precise. Estimate the blank space coordinates based on surrounding words.\n"
         "- Output ONLY the JSON list."
     )
     
-    llm_input_json = json.dumps(page_data_for_llm, default=int) # Use default=int to handle any non-serializable types
+    llm_input_json = json.dumps(page_data_for_llm, default=int)
     
-    # Simple truncation if input is too large (better handling is advised)
     if len(llm_input_json) > 100000: 
          llm_input_json = llm_input_json[:100000]
          
@@ -247,39 +245,44 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
 
         # 3. Prepare list for batch description
         temp_field_list_for_desc = []
-        parsed_fields_temp = {} # Use an index or new ID
+        parsed_fields_temp = {} 
         
         for i, field_data in enumerate(llm_fields):
-            # Validate the data from the LLM
             if not isinstance(field_data.get('bbox'), list) or len(field_data['bbox']) != 4:
                 print(f"Skipping malformed field from LLM (bad bbox): {field_data}")
                 continue
+            
+            # --- *** ADDED VALIDATION *** ---
+            if 'page_number' not in field_data or not isinstance(field_data.get('page_number'), int):
+                print(f"Skipping malformed field from LLM (missing or invalid page_number): {field_data}")
+                continue # Skip fields that don't have a page number
 
             field_id = f"field_{i}"
             label_text = field_data.get('label_text', 'Unknown')
             semantic_type = field_data.get('semantic_type', 'text').lower()
             
             temp_field_list_for_desc.append({"label_text": label_text, "semantic_type": semantic_type})
-            parsed_fields_temp[field_id] = field_data # Store all LLM data
+            parsed_fields_temp[field_id] = field_data 
 
-        # 4. Single LLM Call to Generate All Descriptions (This function is still useful!)
+        # 4. Single LLM Call to Generate All Descriptions
         field_descriptions = _batch_generate_descriptions(temp_field_list_for_desc)
 
         # 5. Compile Final Field List
         for field_id, field_data in parsed_fields_temp.items():
             label_text = field_data['label_text']
             semantic_type = field_data['semantic_type']
+            page_number = field_data['page_number'] # <-- *** GET THE PAGE NUMBER ***
             
             is_sensitive = semantic_type in ['pan', 'address', 'phone', 'email', 'amount']
-            # Get description using the label as key
             description = field_descriptions.get(label_text, "Enter the required information.") 
 
             field = {
                 'id': field_id,
                 'label_text': label_text,
-                'bbox': field_data['bbox'], # <-- This is the BBOX from the LLM
+                'bbox': field_data['bbox'], 
+                'page_number': page_number, # <-- *** ADD IT TO THE DICTIONARY ***
                 'semantic_type': semantic_type,
-                'confidence': 'High', # LLM provided this directly
+                'confidence': 'High', 
                 'is_sensitive': is_sensitive,
                 'description': description,
                 'value': ""
