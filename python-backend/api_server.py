@@ -937,7 +937,12 @@ def api_general_ask(req: GeneralAskReq):
         )
 
         # Translation if needed...
-        return {"success": True, "answer": final_answer}
+        final_answer_translated = final_answer
+        if req.output_language and req.output_language != 'en' and final_answer:
+            translated = translate_text(final_answer, target_language=req.output_language)
+            if translated:
+                final_answer_translated = translated
+        return {"success": True, "answer": final_answer_translated}
 
     except Exception as e:
         print(f"--- [API GeneralAsk] Error: {e} ---")
