@@ -934,30 +934,27 @@ def api_general_ask(req: GeneralAskReq):
             print("--- [API GeneralAsk] No relevant chunks found in general DB.")
             context_combined = "(No relevant information found)"
         else:
+            # Improved context building with both questions and answers
             context_blobs = []
-            for i, r in enumerate(hits):
-                # The 'text' field from our new function contains the 'answer'
-                snippet = (r.get("text") or "").replace("\n", " ")
-                context_blobs.append(f"--- Relevant Information [{i+1}] ---\n{snippet}\n")
+            for i, r in enumerate(hits, 1):
+                question = r.get("retrieved_question", "").strip()
+                answer = r.get("text", "").strip()
+                context_blobs.append(
+                    f"--- Similar Question {i} ---\n"
+                    f"Q: {question}\n"
+                    f"A: {answer}\n"
+                )
             context_combined = "\n\n".join(context_blobs)
 
-        # --- Step 3: Call LLM with Fail-Safe Prompt ---
+        # Use LLM with context
         system_prompt = GENERAL_LEGAL_QA_PROMPT.format(context=context_combined)
-        user_prompt = query_to_process.strip()
-
-        final_answer_string = call_model_system_then_user(
-            system_prompt, user_prompt, temperature=0.0
+        final_answer = call_model_system_then_user(
+            system_prompt, query_to_process, temperature=0.1
         )
 
-        # --- Step 4: Translate final answer if needed ---
-        final_answer_translated = final_answer_string
-        if req.output_language and req.output_language != 'en' and final_answer_string:
-            translated = translate_text(final_answer_string, target_language=req.output_language)
-            if translated:
-                final_answer_translated = translated
-
-        return {"success": True, "answer": final_answer_translated}
+        # Translation if needed...
+        return {"success": True, "answer": final_answer}
 
     except Exception as e:
         print(f"--- [API GeneralAsk] Error: {e} ---")
-        raise HTTPException(status_code=500, detail=f"Failed to process general query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

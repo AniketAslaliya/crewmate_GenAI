@@ -5,7 +5,7 @@ import os
 from typing import Optional, List, Dict
 
 from backend_rag.embeddings import embed_texts, get_embedding_dimension
-# Import both index functions
+# Import all our helper functions
 from backend_rag.vectorstore_pinecone import get_or_create_index, namespace, query_top_k, get_general_legal_index
 
 # Optional CrossEncoder reranker
@@ -21,21 +21,22 @@ except Exception:
 
 
 def _rerank(query: str, candidates: List[Dict], top_k: int, text_key: str = "text") -> List[Dict]:
-    """
-    Reranks candidates using the CrossEncoder.
-    Accepts a 'text_key' to find the correct metadata field.
-    """
+    """Enhanced reranking that considers both question and answer content"""
     if not candidates or _cross is None:
         return candidates[:top_k]
     
-    # --- THIS IS THE FIX ---
-    # Use the dynamic text_key to get the correct text for reranking
-    pairs = [(query, c.get("metadata", {}).get(text_key, "")) for c in candidates]
+    # Create pairs that combine both question and answer for better matching
+    pairs = []
+    for c in candidates:
+        md = c.get("metadata", {})
+        question = md.get("question", "")
+        answer = md.get("answer", "")
+        combined = f"Q: {question}\nA: {answer}"
+        pairs.append((query, combined))
     
     try:
         scores = _cross.predict(pairs)
     except Exception:
-        # Fallback to non-reranked if prediction fails
         return candidates[:top_k]
         
     for c, s in zip(candidates, scores):
@@ -48,20 +49,18 @@ def retrieve_similar_chunks(query: str, user_id: Optional[str], thread_id: str, 
     Pinecone-only retrieval for user-specific documents.
     """
     dim = get_embedding_dimension()
-    index = get_or_create_index(dim)
+    index = get_or_create_index(dim) # Gets the 'rag-api' index
 
     q_vec = embed_texts([query])[0].astype("float32").tolist()
     ns = namespace(user_id, thread_id)
     
-    # Fetch more for the reranker
     initial_k = int(os.environ.get("ANN_TOP_K", "100"))
+    
+    # This function already works, so we don't change its logic
     matches = query_top_k(index, ns, q_vec, top_k=initial_k)
 
-    # --- THIS IS THE FIX ---
-    # Rerank using the "text" key
     matches = _rerank(query, matches, top_k, text_key="text")
 
-    # Normalize shape
     out = []
     for m in matches:
         md = m.get("metadata", {}) or {}
@@ -73,42 +72,49 @@ def retrieve_similar_chunks(query: str, user_id: Optional[str], thread_id: str, 
     return out
 
 
+# [This is the full function. Replace your old one with this.]
+
 def retrieve_general_legal_chunks(query: str, top_k: int = 5):
     """
     Retrieves from the GENERAL legal knowledge base (not a user's thread).
-    Uses the same embedding and reranking logic as RAG.
+    
+    --- UPDATED: This version SKIPS reranking as the logs show it
+    can harm Q&A results by prioritizing keywords over semantics. ---
+    
+    It relies directly on the high-quality semantic search from the vector DB.
     """
     try:
         # 1. Get the general index
         index = get_general_legal_index()
         
         # 2. Get query vector
+        # This uses your fixed embeddings.py (normalize_embeddings=True)
         q_vec = embed_texts([query])[0].astype("float32").tolist()
         
-        # 3. Query Pinecone (no namespace = default)
-        initial_k = int(os.environ.get("ANN_TOP_K", "100"))
-        matches = index.query(
-            vector=q_vec, 
-            top_k=initial_k, 
-            include_metadata=True,
-            namespace=""  # <-- THIS IS THE FIX
-        )
-        matches_list = matches.get("matches", [])
-
-        # 4. --- THIS IS THE FIX ---
-        # Rerank using the "question" key
-        reranked_matches = _rerank(query, matches_list, top_k, text_key="question")
+        # 3. --- THIS IS THE FIX ---
+        # We query for 'top_k' directly and skip the 'initial_k' rerank logic.
+        # We also use the 'ns=""' fix from before.
+        matches_list = query_top_k(index, ns="", query_vec=q_vec, top_k=top_k)
+        
+        # 4. (Reranking step has been removed)
 
         # 5. Normalize shape
         out = []
-        for m in reranked_matches:
+        for m in matches_list: # Use the direct matches
             md = m.get("metadata", {}) or {}
             out.append({
                 "file_name": "Legal Knowledge Base",
                 "text": md.get("answer", ""), # Context is the 'answer'
-                "score": float(m.get("ce_score", m.get("score", 0.0))),
+                "score": float(m.get("score", 0.0)), # This is now the pure vector score
                 "retrieved_question": md.get("question", "")
             })
+        
+        # This helps in debugging - print what we're sending to the LLM
+        if out:
+             print(f"--- [GeneralLegal] Found {len(out)} matches. Top match Q: {out[0]['retrieved_question'][:80]}... Score: {out[0]['score']}")
+        else:
+             print("--- [GeneralLegal] No matches found after vector search.")
+
         return out
         
     except Exception as e:

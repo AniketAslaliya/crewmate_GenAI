@@ -86,25 +86,15 @@ def namespace_count(index, ns: str) -> int:
 
 
 def get_general_legal_index():
-    """
-    Ensure the GENERAL legal knowledge base index exists; return a handle.
-    """
-    # Uses the GENERAL client (Account A)
-    pc = get_pc_general() 
+    """Gets handle to general legal KB index."""
+    pc = get_pc_general()
+    name = "legal-knowledge-base-384"
     
-    name = "legal-knowledge-base-384" # Hardcoded name of the index on Account A
-    cloud = _env("PINECONE_CLOUD", "aws")
-    region = _env("PINECONE_REGION", "us-east-1")
-    dim = 384 
-
+    # Validate index exists
     existing = {i["name"]: i for i in pc.list_indexes().get("indexes", [])}
     if name not in existing:
-        # This should not happen, but it's safe to have
-        print(f"WARNING: General legal index '{name}' not found on this account. Attempting to create it.")
-        pc.create_index(
-            name=name,
-            dimension=dim,
-            metric="cosine",
-            spec=ServerlessSpec(cloud=cloud, region=region),
-        )
+        print(f"ERROR: General legal index '{name}' not found!")
+        print("Available indexes:", list(existing.keys()))
+        raise RuntimeError(f"Required index '{name}' not found")
+        
     return pc.Index(name)
