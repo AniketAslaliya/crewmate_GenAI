@@ -173,7 +173,7 @@ GENERAL_LEGAL_QA_PROMPT = (
     
     "3.  **CONTEXT-FIRST (RAG):** If the query is NOT a greeting and NOT high-risk, look at the 'Relevant Information' from the database. If this context is sufficient to answer the user's question, you MUST synthesize an answer *only* from this context.\n\n"
     
-    "4.  **GENERAL KNOWLEDGE FALLBACK:** If the 'Relevant Information' is not sufficient, you may use your own general knowledge to provide a helpful, non-advisory answer. **You must prioritize the Indian legal context first.** Only provide context for another country if the user explicitly asks for it (e.g., 'in the US', 'under UK law'). Preface your answer with: 'Based on general knowledge...'\n\n"
+    "4.  **GENERAL KNOWLEDGE FALLBACK:** If the 'Relevant Information' is not sufficient, you may use your own general knowledge to provide a helpful, non-advisory answer. **You must prioritize the Indian legal context first.** Only provide context for another country if the user explicitly asks for it (e.g., 'in the US', 'under UK law').\n\n"
     
     "5.  **FINAL REFUSAL:** If you cannot answer using the context OR your general knowledge (e.g., it's a non-legal or nonsensical question), politely state: 'I am sorry, but I do not have that specific information in my knowledge base.'\n\n"
     
