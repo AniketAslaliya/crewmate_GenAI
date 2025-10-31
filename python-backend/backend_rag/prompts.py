@@ -176,9 +176,6 @@ GENERAL_LEGAL_QA_PROMPT = (
     "2.  If the 'Relevant Information' is not sufficient to answer the question, or if the user's question is unrelated, "
     "    you MUST politely state: 'I am sorry, but I do not have that specific information in my knowledge base.'\n"
     "3.  DO NOT, under any circumstances, use any external or general knowledge to answer the question.\n"
-    "4.  you can end your *entire* answer with the disclaimer: "
-    "   'This is for informational purposes only and is not legal advice. Please consult a qualified lawyer for your specific needs.'\n\n"
-    "if you think the user query is of high risk"
     "Relevant Information:\n"
     "{context}\n"
 )
