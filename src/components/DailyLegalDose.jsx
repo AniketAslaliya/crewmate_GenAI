@@ -35,11 +35,16 @@ const INSIGHTS = [
 ];
 
 const DailyLegalDose = ({ className }) => {
-  // deterministic daily index based on date (UTC)
+  // Use a simple day-of-month based index: (dayOfMonth % 30)
+  // This keeps the daily insight stable for the day and is simpler than epoch-based math.
   const today = new Date();
-  const days = Math.floor(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) / (24 * 60 * 60 * 1000));
-  const idx = days % INSIGHTS.length;
-  const insight = INSIGHTS[idx];
+  console.log('DailyLegalDose date:', today.toISOString());
+  const dayOfMonth = today.getUTCDate(); // 1..31 (UTC)
+  console.log('DailyLegalDose day of month (UTC):', dayOfMonth);
+  // base index on day-of-month modulo 30, but guard by INSIGHTS length
+  const idx = dayOfMonth % 30;
+  console.log('DailyLegalDose index (dayOfMonth % 30):', idx);
+  const insight = INSIGHTS[idx % INSIGHTS.length];
 
   return (
     <div className={"max-w-xl mx-auto text-left bg-white/80 border rounded-xl p-4 shadow-sm " + (className || '')}>
