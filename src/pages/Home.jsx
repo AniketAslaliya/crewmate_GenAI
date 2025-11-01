@@ -1,5 +1,6 @@
 import React from "react";
 import { motion } from "framer-motion";
+import api from '../Axios/axios';
 import { useNavigate } from "react-router-dom";
 import Button from '../components/ui/Button';
 import DailyLegalDose from '../components/DailyLegalDose';
@@ -23,6 +24,78 @@ const Home = () => {
 
   const authUser = useAuthStore(s => s.user) || {};
   const isLawyer = authUser?.role === 'lawyer';
+  const [recent, setRecent] = React.useState([]);
+  const [recentLoading, setRecentLoading] = React.useState(false);
+
+  const timeAgo = (iso) => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+      if (diff < 60) return `${diff}s`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h`;
+      return `${Math.floor(diff/86400)}d`;
+    } catch (e) { return ''; }
+  };
+
+  React.useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setRecentLoading(true);
+      try {
+        let items = [];
+        if (isLawyer) {
+          const [pRes, aRes] = await Promise.all([
+            api.get('/api/lawyers/requests'),
+            api.get('/api/lawyers/connections/lawyer')
+          ]);
+          const pending = (pRes.data.requests || []).map(r => ({
+            key: `req-${r._id}`,
+            title: r.from?.name ? `Request from ${r.from.name}` : 'Incoming request',
+            desc: r.message || '',
+            date: r.createdAt || r.updatedAt,
+          }));
+          const accepted = (aRes.data.connections || []).map(c => ({
+            key: `conn-${c._id}`,
+            title: c.from?.name ? `Connected with ${c.from.name}` : 'Accepted connection',
+            desc: c.chat?.title || '',
+            date: c.updatedAt || c.createdAt,
+          }));
+          items = [...pending, ...accepted];
+        } else {
+          const [pRes, aRes] = await Promise.all([
+            api.get('/api/lawyers/my-requests'),
+            api.get('/api/lawyers/connections/me')
+          ]);
+          const myRequests = (pRes.data.requests || []).map(r => ({
+            key: `req-${r._id}`,
+            title: `You requested ${r.to?.name || 'a lawyer'}`,
+            desc: r.message || '',
+            date: r.createdAt || r.updatedAt,
+          }));
+          const myAccepted = (aRes.data.connections || []).map(c => ({
+            key: `conn-${c._id}`,
+            title: `Connection with ${c.to?.name || 'a lawyer'}`,
+            desc: c.chat?.title || '',
+            date: c.updatedAt || c.createdAt,
+          }));
+          items = [...myRequests, ...myAccepted];
+        }
+
+        // sort by date desc and take first 6
+        items = items.map(it => ({ ...it, date: it.date || new Date().toISOString() }));
+        items.sort((a,b) => new Date(b.date) - new Date(a.date));
+        if (mounted) setRecent(items.slice(0,6).map(it => ({ ...it, time: timeAgo(it.date) })));
+      } catch (err) {
+        console.error('failed to load recent activity', err);
+      } finally {
+        if (mounted) setRecentLoading(false);
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, [isLawyer]);
   // const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
 
   // role-aware quick action sets
@@ -85,7 +158,23 @@ const Home = () => {
 
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="mt-6 bg-white border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-2">Recent activity</h3>
-                <div className="text-sm text-gray-500">No recent activity — start by uploading a document or creating a Legal Desk.</div>
+                {recentLoading ? (
+                  <div className="text-sm text-gray-500">Loading recent activity…</div>
+                ) : recent.length === 0 ? (
+                  <div className="text-sm text-gray-500">No recent activity — start by uploading a document or creating a Legal Desk.</div>
+                ) : (
+                  <ul className="space-y-3 text-sm">
+                    {recent.map((it) => (
+                      <li key={it.key} className="flex items-start justify-between">
+                        <div>
+                          <div className="font-medium">{it.title}</div>
+                          <div className="text-xs text-gray-500">{it.desc}</div>
+                        </div>
+                        <div className="text-xs text-gray-400 ml-4">{it.time}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </motion.div>
             </div>
 

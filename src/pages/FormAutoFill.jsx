@@ -1149,9 +1149,12 @@ const FormAutoFill = () => {
           ) : (
             <div>
               <div className="text-sm text-gray-700 font-medium mb-1">{selectedField.label_text || selectedField.id}</div>
-              <div className="text-xs text-gray-500 mb-3">Field ID: {selectedField.id}</div>
+              {/* <div className="text-xs text-gray-500 mb-3">Field ID: {selectedField.id}</div> */}
               {selectedField.description && (
-                <div className="text-xs text-gray-400 mb-3 whitespace-pre-wrap">{selectedField.description}</div>
+                <div>
+                  {/* <div className="text-xs text-gray-500 mb-1">Field Description</div> */}
+                  <div className="text-s text-blue-700 font-bold mb-3 whitespace-pre-wrap">{selectedField.description}</div>
+                </div>
               )}
 
               <div className="mb-3">

@@ -32,7 +32,7 @@ const LawyerRequests = () => {
 
   const accept = async (id) => {
     try {
-      setProcessing(prev => ({ ...prev, [id]: true }));
+      setProcessing(prev => ({ ...prev, [id]: 'accept' }));
       const res = await api.post(`/api/lawyers/requests/${id}/accept`);
       // update local state: remove from pending, add to accepted
       setPending(prev => prev.filter(r => r._id !== id));
@@ -50,17 +50,25 @@ const LawyerRequests = () => {
         alert('Accepted');
       }
     } catch (err) { console.error(err); alert('Failed'); }
-    finally { setProcessing(prev => ({ ...prev, [id]: false })); }
+    finally { setProcessing(prev => {
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    }); }
   };
 
   const reject = async (id) => {
     try {
-      setProcessing(prev => ({ ...prev, [id]: true }));
+      setProcessing(prev => ({ ...prev, [id]: 'reject' }));
       await api.post(`/api/lawyers/requests/${id}/reject`);
       setPending(prev => prev.filter(r => r._id !== id));
       alert('Rejected');
     } catch (err) { console.error(err); alert('Failed'); }
-    finally { setProcessing(prev => ({ ...prev, [id]: false })); }
+    finally { setProcessing(prev => {
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    }); }
   };
 
   return (
@@ -82,7 +90,7 @@ const LawyerRequests = () => {
             .map(c=> (
               <div key={c._id} className="p-2 border rounded flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">{c.from.name}</div>
+                  <div className="font-semibold">{c.from?.name || 'Unknown'}</div>
                 </div>
                 <div>
                   {c.chat ? (
@@ -100,14 +108,28 @@ const LawyerRequests = () => {
         <div className="space-y-3">
           {pending.map(r => (
             <div key={r._id} className="p-4 border rounded flex justify-between">
-              <div>
-                <div className="font-semibold">{r.from.name}</div>
+                <div>
+                <div className="font-semibold">{r.from?.name || 'Unknown'}</div>
                 <div className="text-sm text-gray-500">{r.message}</div>
               </div>
                 <div className="flex gap-2">
-                <button disabled={processing[r._id]} onClick={()=>accept(r._id)} className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50">{processing[r._id] ? 'Accepting...' : 'Accept'}</button>
-                <button disabled={processing[r._id]} onClick={()=>reject(r._id)} className="px-3 py-1 bg-red-500 text-white rounded disabled:opacity-50">{processing[r._id] ? 'Rejecting...' : 'Reject'}</button>
-              </div>
+                  {/* shared button base ensures visual consistency */}
+                  <button
+                    disabled={!!processing[r._id]}
+                    onClick={() => accept(r._id)}
+                    className="px-3 py-1 bg-green-600 text-white rounded disabled:opacity-50 min-w-[90px] text-center"
+                  >
+                    {processing[r._id] === 'accept' ? 'Accepting...' : 'Accept'}
+                  </button>
+
+                  <button
+                    disabled={!!processing[r._id]}
+                    onClick={() => reject(r._id)}
+                    className="px-3 py-1 bg-red-500 text-white rounded disabled:opacity-50 min-w-[90px] text-center"
+                  >
+                    {processing[r._id] === 'reject' ? 'Rejecting...' : 'Reject'}
+                  </button>
+                </div>
             </div>
           ))}
         </div>
