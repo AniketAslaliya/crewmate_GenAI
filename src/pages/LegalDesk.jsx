@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Button from '../components/ui/Button';
+import { useToast } from '../components/ToastProvider';
 
 // Modern legal background with enhanced professional pattern
 const ModernBackground = () => (
@@ -137,6 +138,7 @@ const LegalDesk = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [ingestionStatus, setIngestionStatus] = useState([]);
+  const toast = useToast();
 
   useEffect(() => {
     fetchChats();
@@ -169,7 +171,7 @@ const LegalDesk = () => {
 
   const handleAddlegaldesk = async () => {
     if (!file || !title.trim()) {
-      alert("Please provide both a title and a file.");
+      toast.error("Please provide both a title and a file.");
       return;
     }
 
@@ -220,7 +222,7 @@ const LegalDesk = () => {
       await new Promise(resolve => setTimeout(resolve, 500));
 
     } catch (err) {
-      alert("Error creating legal desk. Please try again.");
+      toast.error("Error creating legal desk. Please try again.");
       setChats(prev => prev.filter(c => c.title !== title));
     } finally {
       setUploading(false);
@@ -236,7 +238,8 @@ const LegalDesk = () => {
         await api.delete(`/api/delete/${id}`);
         setChats(chats.filter((chat) => chat._id !== id));
       } catch (err) {
-  alert("Failed to delete Legal Desk. Please try again.");
+  
+  toast.error("Failed to delete Legal Desk. Please try again.");
       }
     }
   };

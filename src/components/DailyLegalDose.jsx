@@ -44,7 +44,7 @@ const DailyLegalDose = ({ className }) => {
   return (
     <div className={"max-w-xl mx-auto text-left bg-white/80 border rounded-xl p-4 shadow-sm " + (className || '')}>
       <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">L</div>
+        <img src="/idea.png" className="flex-shrink-2 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold" alt="" />
         <div className="flex-1">
           <div className="text-xs text-gray-500 mb-1">Daily legal insight</div>
           <div className="text-sm text-gray-900 mb-2">{insight.insight_text}</div>

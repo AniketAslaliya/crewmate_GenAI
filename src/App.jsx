@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import LegalDesk from "./pages/LegalDesk";
 import Login from "./pages/Login";
 import NotebookPage from "./pages/NotebookPage";
+import GeneralAsk from './pages/GeneralAsk';
 import FindLawyer from "./pages/FindLawyer";
 import LawyerOnboard from "./pages/LawyerOnboard";
 import LawyerRequests from "./pages/LawyerRequests";
@@ -151,6 +152,14 @@ function App() {
                         element={
                           <ProtectedRoute>
                             <FormAutoFill />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/general-ask"
+                        element={
+                          <ProtectedRoute>
+                            <GeneralAsk />
                           </ProtectedRoute>
                         }
                       />

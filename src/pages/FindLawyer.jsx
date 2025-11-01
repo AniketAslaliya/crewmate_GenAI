@@ -1,33 +1,64 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import FiltersContainer from '../components/FiltersContainer';
 import { useNavigate } from 'react-router-dom';
 import api from '../Axios/axios';
 import useAuthStore from '../context/AuthContext';
 import Button from '../components/ui/Button';
+import { useToast } from '../components/ToastProvider';
+import InitialAvatar from '../components/InitialAvatar';
 
 const FindLawyer = () => {
   const [lawyers, setLawyers] = useState([]);
-  const [query, setQuery] = useState('');
-  const [city, setCity] = useState('');
-  const [specialization, setSpecialization] = useState('');
-  const [minExp, setMinExp] = useState('');
-  const [feeMin, setFeeMin] = useState('');
-  const [feeMax, setFeeMax] = useState('');
-  const [modeFilter, setModeFilter] = useState('');
-  const [languageFilter, setLanguageFilter] = useState('');
-  const [courtFilter, setCourtFilter] = useState('');
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [minRating, setMinRating] = useState('');
-  const [freeFirst, setFreeFirst] = useState('');
-  const [firmType, setFirmType] = useState('');
+  const [filters, setFilters] = useState({
+    query: '',
+    city: '',
+    specialization: '',
+    minExp: '',
+    feeMin: '',
+    feeMax: '',
+    modeFilter: '',
+    languageFilter: '',
+    courtFilter: '',
+    verifiedOnly: false,
+    minRating: '',
+    freeFirst: '',
+    firmType: '',
+  });
   const [myLawyers, setMyLawyers] = useState([]);
   const [selectedTab, setSelectedTab] = useState('your');
   const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  // Debounced filters: update after user stops typing
+  const [debouncedFilters, setDebouncedFilters] = useState(filters);
   const user = useAuthStore(s => s.user);
   const isLawyer = user?.role === 'lawyer';
   const navigate = useNavigate();
+  const toast = useToast();
+
+  // Memoized update filter function
+  const updateFilter = useCallback((key, value) => {
+    setFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setFilters({
+      query: '',
+      city: '',
+      specialization: '',
+      minExp: '',
+      feeMin: '',
+      feeMax: '',
+      modeFilter: '',
+      languageFilter: '',
+      courtFilter: '',
+      verifiedOnly: false,
+      minRating: '',
+      freeFirst: '',
+      firmType: '',
+    });
+  }, []);
 
   useEffect(() => {
     if (isLawyer) navigate('/lawyer/requests');
@@ -39,20 +70,14 @@ const FindLawyer = () => {
       try {
         const res = await api.get('/api/lawyers/list');
         setLawyers(res.data.lawyers || []);
-        console.log(res);
+        
         const my = await api.get('/api/lawyers/connections/me');
         const normalizedMy = (my.data.connections || []).map(c => {
-          // normalize chat id
           const chatId = c.chat && typeof c.chat === 'object' ? c.chat._id : c.chat;
-
-          // ensure `to` is a full lawyer object when possible. fall back to the
-          // lawyers returned in the same request (res.data.lawyers) or a minimal
-          // placeholder so the UI doesn't blow up when the backend returns only ids.
           let toObj = c.to;
           if (!toObj || typeof toObj !== 'object') {
             toObj = (res.data.lawyers || []).find(l => l._id === (c.to || c.to?._id)) || { _id: c.to };
           }
-
           return { ...c, chat: chatId, to: toObj };
         });
         setMyLawyers(normalizedMy);
@@ -80,28 +105,72 @@ const FindLawyer = () => {
       console.error(err);
       const status = err?.response?.status;
       if (status === 400) {
-        alert('You already have an active request to this lawyer.');
+        toast.info('You already have an active request to this lawyer.');
       } else {
-        alert('Failed to send request. Please try again.');
+        toast.error('Failed to send request. Please try again.');
       }
       setRequesting(null);
     }
   };
 
-  const FilterSection = ({ title, children }) => (
-    <motion.div 
-      className="border-b border-gray-200 pb-4 mb-4"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-    >
-      <h3 className="font-semibold text-gray-900 mb-3 flex items-center justify-between">
-        {title}
-      </h3>
-      {children}
-    </motion.div>
-  );
+  // Memoized filtered lawyers (uses debouncedFilters so typing doesn't re-filter on every keystroke)
+  const filteredLawyers = useMemo(() => {
+  const connectedIds = new Set(myLawyers.map(c => c.to?._id || c.to));
 
-  const DetailRow = ({ icon, title, items }) => (
+    return lawyers.filter(lawyer => {
+      const isConnected = connectedIds.has(lawyer._id);
+
+      if (isConnected) {
+        // Show connected lawyers only in the 'your' tab
+        return selectedTab === 'your';
+      }
+
+      // For the 'find' tab apply filters (use debouncedFilters so we don't filter on every keystroke)
+      if (selectedTab === 'find') {
+        const {
+          query, city, specialization, minExp, feeMin, feeMax,
+          modeFilter, languageFilter, courtFilter, verifiedOnly,
+          minRating, freeFirst, firmType
+        } = debouncedFilters;
+
+        if (query && !`${lawyer.name} ${lawyer.specialties?.join(' ')} ${lawyer.bio}`.toLowerCase().includes(query.toLowerCase())) return false;
+        if (city && lawyer.city && !lawyer.city.toLowerCase().includes(city.toLowerCase())) return false;
+        if (specialization && !(lawyer.specialties || []).some(s => s.toLowerCase().includes(specialization.toLowerCase()))) return false;
+        if (minExp && (!lawyer.yearsExperience || lawyer.yearsExperience < Number(minExp))) return false;
+        if (feeMin && (!lawyer.fee || lawyer.fee < Number(feeMin))) return false;
+        if (feeMax && (!lawyer.fee || lawyer.fee > Number(feeMax))) return false;
+        if (modeFilter && !(lawyer.modes || []).includes(modeFilter)) return false;
+        if (languageFilter && !(lawyer.languages || []).some(lang => lang.toLowerCase().includes(languageFilter.toLowerCase()))) return false;
+        if (courtFilter && !(lawyer.courts || []).some(court => court.toLowerCase().includes(courtFilter.toLowerCase()))) return false;
+        if (verifiedOnly && !lawyer.verified) return false;
+        if (minRating && (!lawyer.rating || lawyer.rating < Number(minRating))) return false;
+        if (freeFirst === 'yes' && !lawyer.freeFirst) return false;
+        if (freeFirst === 'no' && lawyer.freeFirst) return false;
+        if (firmType && lawyer.firmType !== firmType) return false;
+      }
+
+      // Default: include in lists where not excluded above
+      return true;
+    });
+  }, [lawyers, myLawyers, selectedTab, debouncedFilters]);
+
+  // Debounce effect: update debouncedFilters 300ms after last change
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilters(filters), 300);
+    return () => clearTimeout(t);
+  }, [filters]);
+
+  // Counts for stats in the filters panel
+  const counts = useMemo(() => {
+    const available = filteredLawyers.length;
+    const ratings = filteredLawyers.map(l => Number(l.rating || 0));
+    const avgRating = ratings.length ? (ratings.reduce((a,b) => a + b, 0) / ratings.length).toFixed(1) : '-';
+    return { available, avgRating };
+  }, [filteredLawyers]);
+
+  // FilterSection moved to `FiltersContainer` to avoid re-renders
+
+  const DetailRow = React.memo(({ icon, title, items }) => (
     items && items.length > 0 && (
       <div className="flex items-start space-x-3 py-2">
         <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
@@ -127,9 +196,9 @@ const FindLawyer = () => {
         </div>
       </div>
     )
-  );
+  ));
 
-  const LawyerCard = ({ lawyer, isConnected = false, chatId }) => (
+  const LawyerCard = React.memo(({ lawyer, isConnected = false, chatId, onRequest, requestingId }) => (
     <motion.div
       layout
       initial={{ opacity: 0, scale: 0.9 }}
@@ -162,11 +231,7 @@ const FindLawyer = () => {
             whileHover={{ scale: 1.1 }}
             transition={{ type: "spring", stiffness: 300 }}
           >
-            <img
-              src={lawyer.picture || `https://avatar.vercel.sh/${lawyer._id}`}
-              alt={lawyer.name}
-              className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-lg"
-            />
+            <InitialAvatar name={lawyer.name} className="w-16 h-16 rounded-2xl border-2 border-white shadow-lg" />
             {lawyer.online && (
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full" />
             )}
@@ -189,27 +254,6 @@ const FindLawyer = () => {
                 <span className="px-2 py-0.5 bg-gray-50 text-gray-700 rounded-full text-xs">{lawyer.yearsExperience ? `${lawyer.yearsExperience} yrs` : 'Experience N/A'}</span>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Languages and Education (compact) */}
-        <div className="flex items-center justify-between mt-4">
-          <div className="flex flex-col">
-            <div className="text-sm text-gray-700 mb-1">
-              <span className="font-medium">Languages:</span>{' '}
-              {(lawyer.languages && lawyer.languages.length > 0) ? lawyer.languages.slice(0,3).join(', ') : 'Not specified'}
-            </div>
-            <div className="text-sm text-gray-600">
-              <span className="font-medium">Education:</span>{' '}
-              {(lawyer.education && lawyer.education.length > 0) ? lawyer.education[0] : 'Not specified'}
-            </div>
-          </div>
-
-          <div className="text-right">
-            <div className="text-2xl font-bold text-blue-600">
-              {lawyer?.fee || lawyer?.price || (lawyer?.fees && lawyer.fees.amount) ? `₹${lawyer?.fee || lawyer?.price || lawyer?.fees?.amount}` : 'Contact'}
-            </div>
-            <div className="text-xs text-gray-500">per session</div>
           </div>
         </div>
 
@@ -297,17 +341,17 @@ const FindLawyer = () => {
           </div>
         ) : (
           <motion.button
-            onClick={() => requestLawyer(lawyer._id)}
-            disabled={requesting === lawyer._id}
+            onClick={() => onRequest(lawyer._id)}
+            disabled={requestingId === lawyer._id}
             className={`w-full py-3 rounded-xl font-semibold text-white transition-all duration-300 ${
-              requesting === lawyer._id
+              requestingId === lawyer._id
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
             }`}
-            whileHover={requesting !== lawyer._id ? { scale: 1.02 } : {}}
-            whileTap={requesting !== lawyer._id ? { scale: 0.98 } : {}}
+            whileHover={requestingId !== lawyer._id ? { scale: 1.02 } : {}}
+            whileTap={requestingId !== lawyer._id ? { scale: 0.98 } : {}}
           >
-            {requesting === lawyer._id ? (
+            {requestingId === lawyer._id ? (
               <div className="flex items-center justify-center space-x-2">
                 <motion.div
                   animate={{ rotate: 360 }}
@@ -323,31 +367,9 @@ const FindLawyer = () => {
         )}
       </div>
     </motion.div>
-  );
+  ));
 
-  const filteredLawyers = lawyers.filter(lawyer => {
-    const connectedIds = new Set(myLawyers.map(c => c.to?._id || c.to));
-    if (connectedIds.has(lawyer._id)) return selectedTab === 'your';
-    
-    if (selectedTab === 'find') {
-      if (query && !`${lawyer.name} ${lawyer.specialties?.join(' ')} ${lawyer.bio}`.toLowerCase().includes(query.toLowerCase())) return false;
-      if (city && lawyer.city && !lawyer.city.toLowerCase().includes(city.toLowerCase())) return false;
-      if (specialization && !(lawyer.specialties || []).some(s => s.toLowerCase().includes(specialization.toLowerCase()))) return false;
-      if (minExp && (!lawyer.yearsExperience || lawyer.yearsExperience < Number(minExp))) return false;
-      if (feeMin && (!lawyer.fee || lawyer.fee < Number(feeMin))) return false;
-      if (feeMax && (!lawyer.fee || lawyer.fee > Number(feeMax))) return false;
-      if (modeFilter && !(lawyer.modes || []).includes(modeFilter)) return false;
-      if (languageFilter && !(lawyer.languages || []).some(lang => lang.toLowerCase().includes(languageFilter.toLowerCase()))) return false;
-      if (courtFilter && !(lawyer.courts || []).some(court => court.toLowerCase().includes(courtFilter.toLowerCase()))) return false;
-      if (verifiedOnly && !lawyer.verified) return false;
-      if (minRating && (!lawyer.rating || lawyer.rating < Number(minRating))) return false;
-      if (freeFirst === 'yes' && !lawyer.freeFirst) return false;
-      if (freeFirst === 'no' && lawyer.freeFirst) return false;
-      if (firmType && lawyer.firmType !== firmType) return false;
-    }
-    
-    return true;
-  });
+  // Filters UI has been moved to `FiltersContainer` component to avoid re-renders.
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4">
@@ -435,136 +457,16 @@ const FindLawyer = () => {
           </div>
         ) : (
           <div className="flex flex-col lg:flex-row gap-8">
-            {/* Filters Sidebar */}
+            {/* Filters Sidebar (extracted component) */}
             {selectedTab === 'find' && (
-              <motion.aside
-                initial={{ opacity: 0, x: -50 }}
-                animate={{ opacity: 1, x: 0 }}
-                className={`lg:w-80 ${showFilters ? 'block' : 'hidden lg:block'}`}
-              >
-                <div className="bg-white/80 backdrop-blur-lg rounded-3xl shadow-lg border border-white/20 p-6 sticky top-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold text-gray-900">Filters</h2>
-                    <button
-                      onClick={() => {
-                        setQuery(''); setCity(''); setSpecialization(''); setMinExp(''); 
-                        setFeeMin(''); setFeeMax(''); setModeFilter(''); setLanguageFilter(''); 
-                        setCourtFilter(''); setVerifiedOnly(false); setMinRating(''); 
-                        setFreeFirst(''); setFirmType('');
-                      }}
-                      className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      Reset All
-                    </button>
-                  </div>
-
-                  <div className="space-y-6 max-h-[calc(100vh-200px)] overflow-y-auto">
-                    <FilterSection title="Search">
-                      <input
-                        value={query}
-                        onChange={e => setQuery(e.target.value)}
-                        placeholder="Search by name, specialty..."
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      />
-                    </FilterSection>
-
-                    <FilterSection title="Location & Specialization">
-                      <div className="space-y-3">
-                        <input
-                          value={city}
-                          onChange={e => setCity(e.target.value)}
-                          placeholder="City e.g. Mumbai"
-                          className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          list="city-list"
-                        />
-                        <input
-                          value={specialization}
-                          onChange={e => setSpecialization(e.target.value)}
-                          placeholder="Specialization e.g. Criminal"
-                          className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                    </FilterSection>
-
-                    <FilterSection title="Experience & Rating">
-                      <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm text-gray-600 mb-1">Min Experience</label>
-                          <input
-                            value={minExp}
-                            onChange={e => setMinExp(e.target.value)}
-                            type="number"
-                            min="0"
-                            placeholder="Years"
-                            className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm text-gray-600 mb-1">Min Rating</label>
-                          <input
-                            value={minRating}
-                            onChange={e => setMinRating(e.target.value)}
-                            type="number"
-                            min="0"
-                            max="5"
-                            step="0.1"
-                            placeholder="0-5"
-                            className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
-                      </div>
-                    </FilterSection>
-
-                    <FilterSection title="Fee Range">
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <input
-                            value={feeMin}
-                            onChange={e => setFeeMin(e.target.value)}
-                            placeholder="Min ₹"
-                            className="w-1/2 px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                          <input
-                            value={feeMax}
-                            onChange={e => setFeeMax(e.target.value)}
-                            placeholder="Max ₹"
-                            className="w-1/2 px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
-                      </div>
-                    </FilterSection>
-
-                    <FilterSection title="Additional Filters">
-                      <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm text-gray-600 mb-1">Consultation Mode</label>
-                          <select
-                            value={modeFilter}
-                            onChange={e => setModeFilter(e.target.value)}
-                            className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          >
-                            <option value="">Any Mode</option>
-                            <option value="in-person">In-person</option>
-                            <option value="video">Video Call</option>
-                            <option value="chat">Chat</option>
-                            <option value="phone">Phone</option>
-                          </select>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={verifiedOnly}
-                            onChange={e => setVerifiedOnly(e.target.checked)}
-                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                          />
-                          <label className="text-sm text-gray-700">Verified Lawyers Only</label>
-                        </div>
-                      </div>
-                    </FilterSection>
-                  </div>
-                </div>
-              </motion.aside>
+              <FiltersContainer
+                filters={filters}
+                onFilterChange={updateFilter}
+                onReset={resetFilters}
+                show={showFilters}
+                onClose={() => setShowFilters(false)}
+                counts={counts}
+              />
             )}
 
             {/* Main Content */}
@@ -614,14 +516,51 @@ const FindLawyer = () => {
                         </Button>
                       </div>
                     ) : (
-                      myLawyers.map(connection => (
-                          <LawyerCard
+                      myLawyers.map(connection => {
+                        const lawyer = connection.to || {};
+                        const lastMsg = connection.lastMessage || connection.last_message || null;
+                        const lastText = lastMsg?.text || lastMsg?.content || '';
+                        const lastAt = lastMsg?.createdAt || lastMsg?.created_at || connection.updatedAt || connection.lastUpdated || null;
+                        const unread = connection.unread || connection.unreadCount || 0;
+
+                        return (
+                          <motion.div
                             key={connection._id}
-                            lawyer={connection.to}
-                            isConnected={true}
-                            chatId={connection.chat}
-                          />
-                        ))
+                            layout
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            whileHover={{ scale: 1.01 }}
+                            className={`bg-white rounded-2xl shadow-md border border-gray-100 p-4 flex items-center justify-between cursor-pointer transition-all`} 
+                            onClick={() => connection.chat ? navigate(`/chat/${connection.chat}`) : toast.info('Chat not available')}
+                          >
+                            <div className="flex items-center gap-4 min-w-0">
+                              <InitialAvatar name={lawyer.name} className="w-12 h-12 rounded-lg border border-white shadow-sm flex-shrink-0" />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <h4 className="font-semibold text-gray-900 truncate">{lawyer.name || 'Unknown'}</h4>
+                                  <span className="text-xs text-gray-400">•</span>
+                                  <span className="text-xs text-gray-500 truncate">{lawyer.organization || 'Independent'}</span>
+                                </div>
+                                <div className="text-sm text-gray-600 truncate mt-1 max-w-[40ch]">
+                                  {lastText ? lastText : <span className="text-gray-400">No messages yet</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col items-end ml-4">
+                              {lastAt && (
+                                <div className="text-xs text-gray-400 mb-2">{new Date(lastAt).toLocaleString()}</div>
+                              )}
+                              {unread > 0 ? (
+                                <div className="bg-red-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">{unread}</div>
+                              ) : (
+                                <div className="text-xs text-gray-300">&nbsp;</div>
+                              )}
+                            </div>
+                          </motion.div>
+                        );
+                      })
                     )
                   ) : (
                     filteredLawyers.length === 0 ? (
@@ -635,12 +574,7 @@ const FindLawyer = () => {
                         <p className="text-gray-600 mb-6">Try adjusting your filters to find more results</p>
                         <Button
                           variant="secondary"
-                          onClick={() => {
-                            setQuery(''); setCity(''); setSpecialization(''); setMinExp(''); 
-                            setFeeMin(''); setFeeMax(''); setModeFilter(''); setLanguageFilter(''); 
-                            setCourtFilter(''); setVerifiedOnly(false); setMinRating(''); 
-                            setFreeFirst(''); setFirmType('');
-                          }}
+                          onClick={resetFilters}
                           className="px-8 py-3 rounded-xl"
                         >
                           Clear All Filters
@@ -652,6 +586,8 @@ const FindLawyer = () => {
                           key={lawyer._id}
                           lawyer={lawyer}
                           isConnected={false}
+                          onRequest={requestLawyer}
+                          requestingId={requesting}
                         />
                       ))
                     )

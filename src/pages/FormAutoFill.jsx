@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import papi from '../Axios/paxios';
 // framer-motion not required here
 import api from '../Axios/axios';
+import { useToast } from '../components/ToastProvider';
 const normalizeBbox = (bbox) => {
   // Support multiple bbox formats returned by backend
   // { xmin, ymin, xmax, ymax } or { x, y, w, h } or { left, top, width, height }
@@ -69,6 +70,7 @@ const FormAutoFill = () => {
   const pdfUrlRef = useRef(null);
   const initialValuesRef = useRef({ fieldValues: {}, simpleValues: {} });
   const [hasEdits, setHasEdits] = useState(false);
+  const toast = useToast();
 
   // (simulation removed - component always calls backend APIs; client-side fallbacks remain)
 
@@ -249,7 +251,7 @@ const FormAutoFill = () => {
 
   // --- Simple AcroForm handlers (fillable PDF workflow) ---
   const extractAcroFields = async () => {
-    if (!file) return alert('Please select a PDF first.');
+    if (!file) { toast.error('Please select a PDF first.'); return; }
     setLoadingExtractSimple(true);
     try {
       const fd = new FormData();
@@ -262,7 +264,7 @@ const FormAutoFill = () => {
       setSimpleValues(seed);
     } catch (err) {
       console.error('extractAcroFields failed', err);
-      alert('Failed to extract fields. Make sure the PDF has AcroForm fields.');
+      toast.error('Failed to extract fields. Make sure the PDF has AcroForm fields.');
     } finally {
       setLoadingExtractSimple(false);
     }
@@ -273,7 +275,7 @@ const FormAutoFill = () => {
   };
 
   const fillAndDownload = async () => {
-    if (!file) return alert('No file to fill.');
+    if (!file) { toast.error('No file to fill.'); return; }
     setLoadingFillSimple(true);
     try {
       const fd = new FormData();
@@ -291,7 +293,7 @@ const FormAutoFill = () => {
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (err) {
       console.error('fillAndDownload failed', err);
-      alert('Failed to fill or download PDF.');
+      toast.error('Failed to fill or download PDF.');
     } finally {
       setLoadingFillSimple(false);
     }
@@ -536,7 +538,7 @@ const FormAutoFill = () => {
   };
 
   const analyze = async () => {
-    if (!file) return alert('Please upload a form image or PDF first.');
+    if (!file) { toast.error('Please upload a form image or PDF first.'); return; }
     setLoading(true);
     try {
       const fd = new FormData();
@@ -561,7 +563,8 @@ const FormAutoFill = () => {
       // helper: normalize page key from various backends
       const getFieldPage = (f) => {
         if (!f) return 1;
-        const candidates = [f.page, f.pageNumber, f.page_num, f.pageNumber, f.pageno, f.pageNo, f.pageIndex, f.p];
+        // common page keys returned by various backends
+        const candidates = [f.page, f.page_number, f.pageNumber, f.page_num, f.pageNum, f.pageno, f.pageNo, f.pageIndex, f.p];
         for (const c of candidates) {
           if (c === undefined || c === null) continue;
           const n = Number(c);
@@ -605,7 +608,7 @@ const FormAutoFill = () => {
       setSelectedField(null);
     } catch (err) {
       console.error('Analyze failed', err);
-      alert('Failed to analyze form.');
+      toast.error('Failed to analyze form.');
     } finally {
       setLoading(false);
     }
@@ -855,33 +858,87 @@ const FormAutoFill = () => {
 
   const downloadFilled = async () => {
     try {
-      const canvas = applyAllValuesToCanvas();
-      if (!canvas) return alert('Nothing to download');
-      const dataUrl = canvas.toDataURL('image/png');
-  // create PDF using jsPDF by embedding the PNG
-  const { jsPDF } = await import('jspdf');
-  // jsPDF uses pt units by default; we'll use px via unit:'px' and set page size to the canvas size
-  const orientation = canvas.width >= canvas.height ? 'l' : 'p';
-  const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] });
-  // addImage accepts dataURL
-  pdf.addImage(dataUrl, 'PNG', 0, 0, canvas.width, canvas.height);
-  const blob = pdf.output('blob');
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = (file && file.name) ? `filled-${file.name.replace(/\.[^.]+$/, '')}.pdf` : 'filled-form.pdf';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  // mark as saved: update initial snapshot and clear dirty flag
-  try {
-    initialValuesRef.current = { fieldValues: { ...fieldValues }, simpleValues: { ...simpleValues } };
-    setHasEdits(false);
-  } catch (e) {}
-    } catch (err) {
+      // For PDFs: render each page to an offscreen canvas, draw only that page's values,
+      // then assemble into a multi-page PDF. This avoids overlays from other pages
+      // appearing on the wrong page (no overlap across pages).
+      if (isPdf) {
+        if (!pdfRef.current) { toast.error('PDF not loaded'); return; }
+        const pdfDoc = pdfRef.current;
+        const num = pdfDoc.numPages || totalPages || 1;
+        const { jsPDF } = await import('jspdf');
+
+        let pdfOut = null;
+
+        for (let p = 1; p <= num; p++) {
+          const page = await pdfDoc.getPage(p);
+          const viewport = page.getViewport({ scale: 1 });
+          const off = document.createElement('canvas');
+          off.width = Math.round(viewport.width);
+          off.height = Math.round(viewport.height);
+          const ctx = off.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          // draw only values that belong to this page
+          fields.forEach(f => {
+            const fPage = f.page || 1;
+            if (fPage !== p) return;
+            const val = fieldValues[f.id];
+            if (val) drawTextOnCtx(ctx, f.bboxNorm, val);
+          });
+
+          const dataUrl = off.toDataURL('image/png');
+
+          if (!pdfOut) {
+            // initialize jsPDF with first page size
+            const orientation = off.width >= off.height ? 'l' : 'p';
+            pdfOut = new jsPDF({ orientation, unit: 'px', format: [off.width, off.height] });
+            pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
+          } else {
+            // add a new page with page-specific size
+            pdfOut.addPage([off.width, off.height], off.width >= off.height ? 'l' : 'p');
+            pdfOut.setPage(pdfOut.getNumberOfPages());
+            pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
+          }
+        }
+
+  if (!pdfOut) { toast.error('No pages rendered'); return; }
+        const blob = pdfOut.output('blob');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (file && file.name) ? `filled-${file.name.replace(/\.[^.]+$/, '')}.pdf` : 'filled-form.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } else {
+        // image path: previous behavior (single page)
+        const canvas = applyAllValuesToCanvas();
+  if (!canvas) { toast.error('Nothing to download'); return; }
+        const dataUrl = canvas.toDataURL('image/png');
+        const { jsPDF } = await import('jspdf');
+        const orientation = canvas.width >= canvas.height ? 'l' : 'p';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height] });
+        pdf.addImage(dataUrl, 'PNG', 0, 0, canvas.width, canvas.height);
+        const blob = pdf.output('blob');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (file && file.name) ? `filled-${file.name.replace(/\.[^.]+$/, '')}.pdf` : 'filled-form.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+
+      // mark as saved: update initial snapshot and clear dirty flag
+      try {
+        initialValuesRef.current = { fieldValues: { ...fieldValues }, simpleValues: { ...simpleValues } };
+        setHasEdits(false);
+      } catch (e) {}
+      } catch (err) {
       console.error('downloadFilled failed', err);
-      alert('Failed to create download. Check console for details.');
+      toast.error('Failed to create download. Check console for details.');
     }
   };
 
@@ -896,7 +953,7 @@ const FormAutoFill = () => {
       if (sugg && sugg.length === 1) handleValueChange(field.id, sugg[0]);
     } catch (err) {
       console.error('Suggest failed', err);
-      alert('Suggestion service failed. You can also type a prompt below to ask the AI (see examples).');
+      toast.error('Suggestion service failed. You can also type a prompt below to ask the AI (see examples).');
     } finally {
       setSuggestLoading(false);
     }
@@ -909,17 +966,17 @@ const FormAutoFill = () => {
       const res = await papi.post('/api/forms/suggest-all', payload);
       const map = res.data.values || {};
       setFieldValues(prev => ({ ...prev, ...map }));
-      alert('Auto-fill applied for returned fields. Review before exporting.');
+      toast.success('Auto-fill applied for returned fields. Review before exporting.');
     } catch (err) {
       console.error('Auto-fill failed', err);
-      alert('Auto-fill failed. Ensure the suggestion service is running on the server.');
+      toast.error('Auto-fill failed. Ensure the suggestion service is running on the server.');
     } finally {
       setSuggestLoading(false);
     }
   };
 
   const askAi = async (field) => {
-    if (!aiPrompt) return alert('Please enter a question or prompt for the AI.');
+  if (!aiPrompt) { toast.error('Please enter a question or prompt for the AI.'); return; }
     setAiLoading(true);
     try {
       const payload = { prompt: aiPrompt, fieldId: field ? field.id : null, context: fieldValues };
@@ -929,7 +986,7 @@ const FormAutoFill = () => {
       setSuggestions(answer ? [answer] : []);
     } catch (err) {
       console.error('AI assist failed', err);
-      alert('AI assist failed. See console for details.');
+      toast.error('AI assist failed. See console for details.');
     } finally {
       setAiLoading(false);
     }
@@ -976,10 +1033,10 @@ const FormAutoFill = () => {
     const payload = Object.entries(fieldValues).map(([id, value]) => ({ id, value }));
     try {
       await papi.post('/api/forms/export', { values: payload });
-      alert('Export successful');
+      toast.success('Export successful');
     } catch (err) {
       console.error('Export failed', err);
-      alert('Export failed');
+      toast.error('Export failed');
     }
   };
 

@@ -4,7 +4,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 import useAuthStore from "../context/AuthContext";
 import { formatDisplayName } from '../utils/name';
 // icons: outline vs filled for selected state
-import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch } from 'react-icons/md';
+import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb } from 'react-icons/md';
+import InitialAvatar from './InitialAvatar';
 
 const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   const navigate = useNavigate();
@@ -44,7 +45,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
     // sidebar inside layout: can be collapsed/expanded
   <aside className={`${isOpen ? 'w-72 px-6 py-8' : 'w-16 px-2 py-4'} relative z-20 flex flex-col flex-shrink-0 bg-surface border-r h-screen overflow-hidden transition-all duration-200`} style={{ backdropFilter: 'blur(6px)' }}>
       {/* App brand at top */}
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-8">
         <div className="flex items-center gap-3">
           
           {isOpen && (
@@ -56,22 +57,13 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         </div>
         <div>
           <button onClick={toggleSidebar} className="p-2 rounded-md hover:bg-gray-100" title={isOpen ? 'Collapse' : 'Expand'}>
-            <svg className={`w-4 h-4 transform transition-transform ${isOpen ? '' : 'rotate-180'}`} viewBox="0 0 20 20" fill="currentColor">
-              <path d="M6 4l6 6-6 6" />
-            </svg>
+            {isOpen ? <MdChevronLeft size={18} /> : <MdChevronRight size={18} />}
           </button>
         </div>
       </div>
 
-      {/* search when expanded */}
-      {isOpen && (
-        <div className="mb-4">
-          <div className="flex items-center gap-2 bg-card rounded-md px-3 py-2">
-            <MdSearch size={18} className="text-primary/70" />
-            <input placeholder="Search" className="bg-transparent outline-none text-sm w-full text-primary/90" />
-          </div>
-        </div>
-      )}
+      
+      
 
       <nav className={`space-y-2 mt-2` }>
         <IconBtn onClick={() => go('/home')} active={feature === null && pathname.startsWith('/home')} label="Home" icon={feature === null && pathname.startsWith('/home') ? <MdHome size={20} /> : <MdOutlineHome size={20} />} labelText="Home" />
@@ -84,11 +76,11 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
 
         {/* Chat entries: show role-appropriate chat shortcuts */}
         {!isLawyer && (
-          <IconBtn onClick={() => go('/chats?target=lawyer')} active={pathname.startsWith('/chats')} label="Chat with Lawyer" icon={<MdOutlinePerson size={20} />} labelText="Chat with Lawyer" />
+          <IconBtn onClick={() => go('/chats?target=lawyer')} active={pathname.startsWith('/chats')} label="Chat with Lawyer" icon={pathname.startsWith('/chats') ? <MdPerson size={20} /> : <MdOutlinePerson size={20} />} labelText="Chat with Lawyer" />
         )}
 
         {isLawyer && (
-          <IconBtn onClick={() => go('/chats?target=client')} active={pathname.startsWith('/chats')} label="Chat with Clients" icon={<MdOutlinePerson size={20} />} labelText="Chat with Clients" />
+          <IconBtn onClick={() => go('/chats?target=client')} active={pathname.startsWith('/chats')} label="Chat with Clients" icon={pathname.startsWith('/chats') ? <MdPerson size={20} /> : <MdOutlinePerson size={20} />} labelText="Chat with Clients" />
         )}
 
         {isLawyer && !isOnboarded && (
@@ -98,8 +90,16 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         {isLawyer && (
           <IconBtn onClick={() => go('/lawyer/requests')} active={pathname.startsWith('/lawyer/requests')} label="Requests" icon={pathname.startsWith('/lawyer/requests') ? <MdNotifications size={20} /> : <MdOutlineNotifications size={20} />} labelText="Requests" />
         )}
-        {/* Auto-fill forms feature */}
-        <IconBtn onClick={() => go('/forms/auto-fill')} active={pathname.startsWith('/forms/auto-fill')} label="AutoFill Forms" icon={pathname.startsWith('/forms/auto-fill') ? <MdDescription size={20} /> : <MdOutlineDescription size={20} />} labelText="AutoFill Forms" />
+        {/* Auto-fill forms feature (use provided /form.png) */}
+        <IconBtn
+          onClick={() => go('/forms/auto-fill')}
+          active={pathname.startsWith('/forms/auto-fill')}
+          label="AutoFill Forms"
+          icon={<img src="/form.png" alt="Forms" className="w-5 h-5" />}
+          labelText="AutoFill Forms"
+        />
+        {/* General Ask / Quick Guide feature */}
+  <IconBtn onClick={() => go('/general-ask')} active={pathname.startsWith('/general-ask')} label="Quick Guide" icon={pathname.startsWith('/general-ask') ? <MdLightbulb size={20} /> : <MdOutlineLightbulb size={20} />} labelText="Quick Guide" />
       </nav>
 
   <div className="flex-1" />
@@ -111,7 +111,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
 
         {/* user profile moved to bottom */}
         <div className="flex items-center gap-3 p-3 bg-card rounded-md">
-          <img src={authUser?.picture || `https://avatar.vercel.sh/${authUser?._id || 'guest'}.png`} alt="Profile" className="w-10 h-10 rounded-md" />
+          <InitialAvatar name={authUser?.name} className="w-10 h-10 rounded-md" />
           {isOpen && (
             <div className="flex-1">
                 <div className="text-sm font-medium text-primary">{formatDisplayName(authUser?.name) || 'Guest'}</div>

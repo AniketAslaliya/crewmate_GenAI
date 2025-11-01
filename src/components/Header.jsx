@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import useAuthStore from '../context/AuthContext';
 import { formatDisplayName } from '../utils/name';
+import InitialAvatar from './InitialAvatar';
 
 const Header = () => {
   const authUser = useAuthStore((s) => s.user);
@@ -36,7 +37,9 @@ const Header = () => {
                     <div className="text-sm font-medium text-primary">{formatDisplayName(authUser.name)}</div>
                       <div className="text-xs text-muted">{authUser.role === 'lawyer' ? 'Lawyer' : 'Helpseeker'}</div>
                   </div>
-                  <motion.img src={authUser.picture || `https://avatar.vercel.sh/${authUser._id || 'guest'}.png`} alt="profile" className="w-10 h-10 rounded-full border" whileHover={{ scale: 1.01 }} style={{ borderColor: 'rgba(0,0,0,0.06)' }} />
+                  <motion.div whileHover={{ scale: 1.01 }} style={{ borderColor: 'rgba(0,0,0,0.06)' }}>
+                    <InitialAvatar name={authUser.name} className="w-10 h-10 rounded-full border" />
+                  </motion.div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 select-none">

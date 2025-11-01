@@ -4,10 +4,14 @@ import { motion } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Timeline from "../components/Timeline"; // Import the Timeline component
+import PredictiveDisplay from '../components/PredictiveDisplay';
+import FAQDisplay from '../components/FAQDisplay';
+import CaseLawDisplay from '../components/CaseLawDisplay';
 import Button from '../components/ui/Button';
-import { FaComments, FaFileAlt, FaQuestionCircle, FaHistory, FaMagic, FaArrowLeft, FaPaperPlane, FaMicrophone, FaPlay, FaPause } from 'react-icons/fa';
+import { FaComments, FaFileAlt, FaQuestionCircle, FaHistory, FaMagic, FaArrowLeft, FaPaperPlane, FaMicrophone, FaPlay, FaPause, FaGavel } from 'react-icons/fa';
 
-
+import renderBold from "../utils/renderBold";
+import { useToast } from "../components/ToastProvider";
 // Check for browser support for Web Speech API
 const SpeechRecognition =
   window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -63,6 +67,7 @@ const FeatureLoader = ({ feature }) => {
     questions: 'Suggested Questions',
     timeline: 'Timeline',
     predictive: 'Predictive Output',
+    'case-law': 'Suggest Case Law',
   };
   const label = labelMap[feature] || 'Results';
 
@@ -139,9 +144,28 @@ const NotebookPage = (props) => {
     questions: { title: "Suggested Questions", icon: <FaQuestionCircle />, content: null },
     timeline: { title: "Timeline", icon: <FaHistory />, content: null },
     predictive: { title: "Predictive Output", icon: <FaMagic />, content: null },
+    'case-law': { title: "Suggest Case Law", icon: <FaGavel />, content: null },
   });
   // Predictive output language state (2-letter codes)
   const [predictiveLang] = useState('en');
+
+  // Language selector for chat input: display full names but send two-letter codes
+  const languages = [
+      { label: 'English', code: 'en' },
+      { label: 'Hindi', code: 'hi' },
+      { label: 'Spanish', code: 'es' },
+      { label: 'French', code: 'fr' },
+      { label: 'Malayalam', code: 'ml' },
+      { label: 'Tamil', code: 'ta' },
+      { label: 'Marathi', code: 'mr' },
+      { label: 'Gujarati', code: 'gu' },
+  ];
+    const [selectedLang, setSelectedLang] = useState('en');
+  // toast API
+  const toast = useToast();
+  // Selected language for outgoing messages (two-letter codes)
+
+  // Short display title for the notebook (PDF name) was removed (unused) to satisfy lint rules
 
   // NEW: State for Text-to-Speech
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -178,12 +202,12 @@ const NotebookPage = (props) => {
         console.log("Microphone permission granted.");
       } catch (err) {
         console.error("Microphone permission denied:", err);
-        alert("Microphone access is required for voice features to work.");
+        try { toast.error("Microphone access is required for voice features to work."); } catch (e) { alert("Microphone access is required for voice features to work."); }
       }
     };
 
     requestMicrophonePermission();
-  }, []);
+  }, [toast]);
 
   // Effect for auto-scrolling to the bottom of the chat
   useEffect(() => {
@@ -214,6 +238,24 @@ const NotebookPage = (props) => {
       setIsSpeaking(true);
       synthesis.speak(utterance);
     }
+  };
+
+  // Render message content with special handling for **bold** markers.
+  // Any text wrapped in **like this** will be rendered as bold.
+  const renderMessageContent = (content) => {
+    if (content === null || content === undefined) return null;
+    if (typeof content !== 'string') return String(content);
+
+    // Split by occurrences of **...** (non-greedy)
+    const parts = content.split(/(\*\*(?:[\s\S]*?)\*\*)/g);
+
+    return parts.map((part, idx) => {
+      const m = part.match(/^\*\*(?:\s*)([\s\S]*?)(?:\s*)\*\*$/);
+      if (m) {
+        return <strong key={idx} className="font-semibold">{m[1]}</strong>;
+      }
+      return <span key={idx}>{part}</span>;
+    });
   };
 
   // --- Voice Input Functions (API-based) ---
@@ -294,7 +336,7 @@ const NotebookPage = (props) => {
       console.log("Voice recording started.");
     } catch (err) {
       console.error("Voice recording failed:", err);
-      alert(err.message || "Voice recording is not supported on this device.");
+      try { toast.error(err.message || "Voice recording is not supported on this device."); } catch(e){ alert(err.message || "Voice recording is not supported on this device."); }
     }
   };
 
@@ -317,7 +359,7 @@ const NotebookPage = (props) => {
 
     if (audioBufferRef.current.length === 0) {
       console.warn("No audio was recorded.");
-      alert("No audio was recorded.");
+      try { toast.warn("No audio was recorded."); } catch(e){ alert("No audio was recorded."); }
       return;
     }
 
@@ -349,22 +391,22 @@ const NotebookPage = (props) => {
       formData.append("file", audioBlob, "audio.wav");
 
       console.log("Sending FormData to API...");
-      const res = await papi.post("/api/transcribe-audio", formData, {
+      const res = await papi.post("/api/ingest-audio", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
       console.log("API response:", res.data);
       const transcript = res.data.transcript;
-      if (transcript && !transcript.startsWith("(speech error")) {
+        if (transcript && !transcript.startsWith("(speech error")) {
         console.log("Transcription successful:", transcript);
         setNewMessage(transcript.trim()); // <-- Paste transcript into input
       } else {
         console.error("Transcription failed on the backend:", transcript);
-        alert(`Transcription failed: ${transcript}`);
+        try { toast.error(`Transcription failed: ${transcript}`); } catch(e){ alert(`Transcription failed: ${transcript}`); }
       }
     } catch (err) {
       console.error("Transcription API call failed:", err);
-      alert("Transcription failed. Please try again.");
+      try { toast.error("Transcription failed. Please try again."); } catch(e){ alert("Transcription failed. Please try again."); }
     } finally {
       setIsProcessingAudio(false); // Stop loader
     }
@@ -406,36 +448,94 @@ const NotebookPage = (props) => {
       if (featureKey === "summary") {
         const res = await papi.post(`/api/study-guide`, payload, { signal: controller.signal });
         const studyGuide = res.data.study_guide;
-        const formattedContent = studyGuide.split("\n").map((line, index) => {
-          if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold mt-6" style={{ color: 'var(--palette-3)' }}>{line.substring(2)}</h1>;
-          if (line.startsWith("##")) return <h2 key={index} className="text-lg font-semibold text-indigo-300 mt-4">{line.substring(3)}</h2>;
-          if (line.startsWith("*")) return <li key={index} className="text-sm text-gray-300 ml-6 list-disc">{line.substring(2)}</li>;
-          if (line.trim() === "---") return <hr key={index} className="my-4 border-gray-700" />;
-          if (line.trim()) return <p key={index} className="text-sm text-gray-400 leading-relaxed">{line}</p>;
-          return null;
-        });
-        content = <div className="space-y-2">{formattedContent}</div>;
+
+        // If the API returned a string (markdown), keep the old behaviour.
+        if (!studyGuide) {
+          content = <div className="text-sm text-gray-400">No study guide available.</div>;
+        } else if (typeof studyGuide === 'string') {
+          const formattedContent = studyGuide.split("\n").map((line, index) => {
+            if (line.startsWith("# ")) return <h1 key={index} className="text-2xl font-bold mt-6" style={{ color: 'var(--palette-3)' }}>{line.substring(2)}</h1>;
+            if (line.startsWith("##")) return <h2 key={index} className="text-lg font-semibold text-[var(--palette-3)] mt-4">{line.substring(3)}</h2>;
+            if (line.startsWith("*")) return <li key={index} className="text-sm text-gray-800 ml-6 list-disc">{renderBold(line.substring(2))}</li>;
+            if (line.trim() === "---") return <hr key={index} className="my-4 border-gray-300" />;
+            if (line.trim()) return <p key={index} className="text-sm text-gray-700 leading-relaxed">{renderBold(line)}</p>;
+            return null;
+          });
+          content = <div className="space-y-2">{formattedContent}</div>;
+        } else if (typeof studyGuide === 'object') {
+          // Render a structured study_guide object with clear sections
+          const caseTitle = studyGuide.case_title || notebook?.title || 'Study Guide';
+          const summaryObj = studyGuide.summary || {};
+          const insights = studyGuide.insights || {};
+
+          const renderArray = (arr) => Array.isArray(arr) ? arr.map((it, i) => <li key={i} className="ml-4 list-disc">{it}</li>) : null;
+
+          content = (
+            <div className="space-y-4 text-sm text-gray-800">
+              <h2 className="text-2xl font-bold" style={{ color: 'var(--palette-3)' }}>{caseTitle}</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <section className="space-y-3">
+                  <h3 className="text-lg font-semibold">Summary</h3>
+                  {summaryObj.facts && <div>
+                    <h4 className="font-medium">Facts</h4>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{renderBold(summaryObj.facts)}</p>
+                  </div>}
+
+                  {summaryObj.issues && <div>
+                    <h4 className="font-medium">Issues</h4>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{renderBold(summaryObj.issues)}</p>
+                  </div>}
+
+                  {summaryObj.arguments && <div>
+                    <h4 className="font-medium">Arguments</h4>
+                    <div className="text-sm text-gray-700 whitespace-pre-wrap">{renderBold(summaryObj.arguments)}</div>
+                  </div>}
+
+                  {summaryObj.judgment && <div>
+                    <h4 className="font-medium">Judgment</h4>
+                    <p className="text-sm text-gray-700">{renderBold(summaryObj.judgment)}</p>
+                  </div>}
+                </section>
+
+                <aside className="space-y-3">
+                  <h3 className="text-lg font-semibold">Insights</h3>
+                  {insights.verdict && <div>
+                    <h4 className="font-medium">Verdict</h4>
+                    <p className="text-sm text-gray-700">{insights.verdict}</p>
+                  </div>}
+
+                  {Array.isArray(insights.key_laws) && insights.key_laws.length > 0 && (
+                    <div>
+                      <h4 className="font-medium">Key Laws</h4>
+                      <ul className="text-sm text-gray-700 ml-4 list-disc">
+                        {insights.key_laws.map((law, idx) => <li key={idx}>{law}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {Array.isArray(insights.key_precedents) && insights.key_precedents.length > 0 && (
+                    <div>
+                      <h4 className="font-medium">Key Precedents</h4>
+                      <ul className="text-sm text-gray-700 ml-4 list-disc">{renderArray(insights.key_precedents)}</ul>
+                    </div>
+                  )}
+
+                  {insights.legal_provisions_summary && (
+                    <div>
+                      <h4 className="font-medium">Legal Provisions</h4>
+                      <div className="text-sm text-gray-700 whitespace-pre-wrap">{insights.legal_provisions_summary}</div>
+                    </div>
+                  )}
+                </aside>
+              </div>
+            </div>
+          );
+        }
       } else if (featureKey === "questions") {
         const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 }, { signal: controller.signal });
         const faqMarkdown = res.data.faq_markdown;
-        const formattedFAQ = faqMarkdown.split("\n\n").map((block, index) => {
-          if (!block.startsWith("### Q:")) return null;
-          const [questionLine, answerLine] = block.split("\n");
-          const question = questionLine.replace("### Q:", "").trim();
-          const answer = answerLine.replace("A:", "").replace(/\(excerpt\)/g, "").trim();
-          return (
-            <motion.div
-              key={index}
-              whileHover={{ scale: 1.02 }}
-              className="p-5 bg-gradient-to-r from-gray-800 to-gray-900 border border-gray-700 rounded-none shadow-lg mb-4 cursor-pointer"
-              onClick={(e) => e.currentTarget.querySelector(".faq-answer")?.classList.toggle("hidden")}
-            >
-              <h3 className="text-lg font-bold mb-2" style={{ color: 'var(--palette-3)' }}>Q: {question}</h3>
-              <p className="faq-answer text-sm text-gray-400 mt-2 hidden">A: {answer}</p>
-            </motion.div>
-          );
-        });
-        content = <div className="space-y-4">{formattedFAQ}</div>;
+        // Use FAQDisplay component for consistent rendering
+        content = <FAQDisplay faq={faqMarkdown} />;
       } else if (featureKey === "timeline") {
         const res = await papi.post(`/api/timeline`, { ...payload, max_snippets: 10 }, { signal: controller.signal });
         // Some backend variants return { success: true, timeline: [], message: '...' }
@@ -454,27 +554,95 @@ const NotebookPage = (props) => {
           // Fallback: show message if present, otherwise a friendly empty state
           content = <div className="text-sm text-gray-400 italic">{res.data?.message || 'No timeline events found.'}</div>;
         }
+      } else if (featureKey === 'case-law') {
+        // call suggest-case-law API via papi and render structured case cards
+        try {
+          const res = await papi.post(`/api/suggest-case-law`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
+          const suggestion = res.data;
+
+          // Helper to normalize a potential case-like object
+          const normalizeCase = (it) => {
+            if (!it) return null;
+            if (typeof it === 'string') {
+              return { summary: it };
+            }
+            if (typeof it === 'object') {
+              return {
+                case_name: it.case_name || it.title || it.name || it.headline || null,
+                citation: it.citation || it.cite || it.ref || null,
+                summary: it.summary || it.snippet || it.excerpt || it.description || it.content || null,
+                score: it.score || it.relevance || it.rank || null,
+                link: it.link || it.url || it.href || it.reference || null,
+                raw: it,
+              };
+            }
+            return { summary: String(it) };
+          };
+
+          let casesData = [];
+
+          // If API returned JSON-like string, try parse it
+          let parsed = suggestion;
+          if (typeof suggestion === 'string') {
+            try {
+              parsed = JSON.parse(suggestion);
+            } catch (e) {
+              // leave parsed as original string
+            }
+          }
+
+          if (Array.isArray(parsed)) {
+            casesData = parsed.map(normalizeCase).filter(Boolean);
+          } else if (parsed && typeof parsed === 'object') {
+            // Common keys: cases, results, items, matches
+            const arr = parsed.cases || parsed.results || parsed.items || parsed.matches || parsed.suggested_cases || parsed.suggestedCases;
+            if (Array.isArray(arr) && arr.length > 0) {
+              casesData = arr.map(normalizeCase).filter(Boolean);
+            } else {
+              // If object has top-level entries that look like cases, map them
+              const entries = Object.entries(parsed).filter(([k, v]) => typeof v === 'object' || typeof v === 'string');
+              if (entries.length > 0) {
+                casesData = entries.map(([k, v]) => {
+                  if (typeof v === 'string') return { case_name: k, summary: v };
+                  return normalizeCase({ case_name: k, ...v });
+                }).filter(Boolean);
+              }
+            }
+          }
+
+          // If we still have nothing, and suggestion was a string, try split heuristics
+          if (casesData.length === 0 && typeof suggestion === 'string') {
+            // remove common noise lines
+            const cleaned = suggestion.split('\n').filter(l => l && !/success|status|error|message/i.test(l)).join('\n');
+            const chunks = cleaned.split('\n\n').map(s => s.trim()).filter(Boolean);
+            if (chunks.length > 1) {
+              casesData = chunks.map((c) => ({ summary: c }));
+            } else if (cleaned.trim()) {
+              casesData = [{ summary: cleaned.trim() }];
+            }
+          }
+
+          if (!casesData || casesData.length === 0) {
+            content = <div className="text-sm text-gray-400">No relevant cases found.</div>;
+          } else {
+            content = <CaseLawDisplay cases={casesData} />;
+          }
+        } catch (err) {
+          if (err.name === 'CanceledError' || err.name === 'AbortError') {
+            console.log('Feature fetch aborted:', featureKey);
+            setLoadingFeature(false);
+            return;
+          }
+          console.error('Suggest case law API failed', err);
+          content = <div className="text-sm text-red-400">Failed to fetch case law suggestions.</div>;
+        }
       } else if (featureKey === "predictive") {
         // call predictive-output API
         try {
           const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
           const pred = res.data.prediction;
-          const scenarios = pred?.scenarios || [];
-          const disclaimer = pred?.disclaimer || '';
-
-          content = (
-            <div className="space-y-4">
-              {scenarios.map((s, i) => (
-                <div key={i} className="p-4 bg-surface border rounded-none" style={{ borderColor: 'var(--palette-3)' }}>
-                  <h4 className="font-semibold" style={{ color: 'var(--palette-3)' }}>{`Scenario ${i+1}: ${s.outcome}`}</h4>
-                  <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{s.reasoning}</p>
-                </div>
-              ))}
-              {disclaimer && (
-                <div className="mt-4 text-xs text-gray-500 italic">{disclaimer}</div>
-              )}
-            </div>
-          );
+          // Delegate rendering to PredictiveDisplay for consistent, user-friendly fields
+          content = <PredictiveDisplay prediction={pred} />;
         } catch (err) {
           if (err.name === 'CanceledError' || err.name === 'AbortError') {
             // request was aborted; bail silently
@@ -544,8 +712,8 @@ const NotebookPage = (props) => {
       api.post("/api/messages", { chatId: id, content: messageToSend, role: "user" });
 
       // Call the ask API
-      const payload = { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4 };
-      const res2 = await papi.post("/api/ask", payload);
+  const payload = { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4, output_language: (selectedLang || 'en').slice(0,2) };
+  const res2 = await papi.post("/api/ask", payload);
 
       // Parse response (be tolerant: API may return a plain string or JSON)
       let apiAnswer = res2.data?.answer;
@@ -658,9 +826,7 @@ const NotebookPage = (props) => {
           </div>
 
           {/* Center: Notebook title - prominent heading */}
-          <div className="flex-1 text-center px-2">
-            <h1 className="text-lg md:text-2xl lg:text-3xl font-semibold leading-tight text-[var(--text)]">{notebook.title}</h1>
-          </div>
+          
 
           {/* Right: Horizontal feature navbar inside header */}
           <nav className="flex items-center gap-2 overflow-auto" role="tablist" aria-label="Notebook features">
@@ -707,7 +873,7 @@ const NotebookPage = (props) => {
                           lineHeight: '1.45',
                         }}
                       >
-                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                        <div className="whitespace-pre-wrap">{renderMessageContent(msg.content)}</div>
                         <div className="mt-3 flex items-center justify-end gap-2 text-[11px] opacity-80">
                           {/* status / play control (timestamp removed) */}
                           {msg.role !== 'user' && msg.content && (
@@ -741,7 +907,12 @@ const NotebookPage = (props) => {
                       {isProcessingAudio ? '...' : isRecording ? 'Stop' : (<><FaMicrophone className="inline-block mr-2" />Voice</>) }
                     </motion.button>
                     <input type="text" placeholder={isAiThinking ? 'Generating response...' : 'Ask anything or add a note...'} value={newMessage} onChange={(e) => setNewMessage(e.target.value)} disabled={isAiThinking} className="flex-1 px-4 py-2 border rounded-md bg-[var(--panel)] text-[var(--text)] placeholder-[var(--muted)]" style={{ borderColor: 'var(--palette-3)' }} />
-                    <motion.button type="submit" className="px-4 py-2 rounded-md bg-[var(--palette-1)] text-white hover:brightness-95"><FaPaperPlane className="inline-block mr-2" />Send</motion.button>
+                    <select aria-label="Select language" value={selectedLang} onChange={(e) => setSelectedLang(e.target.value)} className="ml-2 px-3 py-2 rounded-md bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] text-sm">
+                      {languages.map((lng) => (
+                        <option key={lng.code} value={lng.code}>{lng.label}</option>
+                      ))}
+                    </select>
+                    <motion.button type="submit" className="ml-2 px-4 py-2 rounded-md bg-[var(--palette-1)] text-white hover:brightness-95"><FaPaperPlane className="inline-block mr-2" />Send</motion.button>
                   </form>
                 </div>
               </div>

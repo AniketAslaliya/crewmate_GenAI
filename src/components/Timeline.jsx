@@ -1,4 +1,5 @@
 import React from "react";
+import renderBold from '../utils/renderBold';
 import "./timeline.css";
 
 const Timeline = ({ timelineMarkdown }) => {
@@ -29,7 +30,7 @@ const Timeline = ({ timelineMarkdown }) => {
             <div className="timeline-dot"></div>
             <div className="timeline-content">
               <div className="timeline-date">{item.date}</div>
-              <div className="timeline-event">{item.event}</div>
+              <div className="timeline-event whitespace-pre-wrap">{renderBold(item.event)}</div>
             </div>
           </div>
         ))}

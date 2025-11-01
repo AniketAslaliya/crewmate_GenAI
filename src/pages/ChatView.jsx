@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../Axios/axios';
 import { initSocket } from '../utils/socket';
 import useAuthStore from '../context/AuthContext';
+import InitialAvatar from '../components/InitialAvatar';
 
 // WhatsApp-like chat view: left sidebar with connections, right pane with messages
 const ChatView = () => {
@@ -233,7 +234,7 @@ const ChatView = () => {
       {/* Sidebar */}
   <div className="w-80 border-r flex flex-col min-h-0 h-full bg-[var(--panel)]" style={{borderColor:'var(--palette-3)'}}>
     <div className="p-3 border-b flex items-center gap-3 bg-[var(--panel)]" style={{borderColor:'var(--border)'}}>
-          <img src={user?.picture} className="w-9 h-9 rounded-full" alt="me" />
+      <InitialAvatar name={user?.name} className="w-9 h-9 rounded-full" />
           <div>
             <div className="font-semibold">{user?.name}</div>
             <div className="text-xs text-[var(--color-muted)]">{isLawyer ? 'Lawyer' : 'Helpseeker'}</div>
@@ -249,7 +250,7 @@ const ChatView = () => {
             const preview = lm && lm.content ? lm.content : 'No messages yet';
             return (
               <div key={c.id} onClick={()=>openChat(c.chat)} className={`p-2 border-b hover:bg-[var(--palette-4)] cursor-pointer flex items-center gap-3 ${c.chat===activeChat? 'bg-[var(--palette-4)]' : ''}`}>
-                <img src={c.peer?.picture} className="w-10 h-10 rounded-full border" alt="peer" />
+                <InitialAvatar name={c.peer?.name} className="w-10 h-10 rounded-full border" />
                 <div className="flex-1">
                   <div className="flex justify-between items-center">
                     <div className="font-semibold text-[var(--text)]">{c.peer?.name}</div>
@@ -274,8 +275,8 @@ const ChatView = () => {
             (() => {
               const conn = connections.find(x=>x.chat===activeChat);
               return (
-                <>
-                  <img src={conn?.peer?.picture} className="w-9 h-9 rounded-full" alt="peer" />
+                  <>
+                  <InitialAvatar name={conn?.peer?.name} className="w-9 h-9 rounded-full" />
                   <div>
                     <div className="font-semibold">{conn?.peer?.name}</div>
                     <div className="text-xs text-[var(--muted)]">{conn?.peer?.specialties || ''}</div>
@@ -309,7 +310,19 @@ const ChatView = () => {
         {/* input */}
   <div className="flex-none p-2 border-t flex items-center gap-2 flex-shrink-0" style={{borderColor:'var(--border)', background: 'var(--panel)'}}>
           {/* <button className="p-2 text-[var(--muted)] hover:bg-[var(--palette-4)] rounded">😊</button> */}
-          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Type a message" className="flex-1 p-2 border rounded h-9 bg-white text-[var(--text)] placeholder-[var(--muted)]" />
+          <input
+            value={text}
+            onChange={e=>setText(e.target.value)}
+            placeholder="Type a message"
+            className="flex-1 p-2 border rounded h-9 bg-white text-[var(--text)] placeholder-[var(--muted)]"
+            onKeyDown={(e) => {
+              // Press Enter to send; allow Shift+Enter for newline if ever changed to textarea
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+          />
           <button onClick={sendMessage} className="px-3 py-1 btn-primary text-white rounded">Send</button>
         </div>
       </div>
