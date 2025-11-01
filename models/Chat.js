@@ -12,11 +12,12 @@ const ChatSchema = new mongoose.Schema(
       required: true,
       default: "Untitled notebook",
     },
-    // channel indicates whether this chat is a legal-desk dossier or a private user-lawyer chat
-    // 'legal_desk' = uploaded document / notebook, 'private' = one-to-one chat between users
+    // channel indicates which subsystem the chat belongs to.
+    // 'legal_desk' = uploaded document / notebook, 'private' = one-to-one chat between users,
+    // 'general_ask' = quick-guide / AI notebook conversations
     channel: {
       type: String,
-      enum: ['legal_desk', 'private'],
+      enum: ['legal_desk', 'private', 'general_ask'],
       default: 'legal_desk',
     },
   },

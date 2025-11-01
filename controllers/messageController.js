@@ -1,5 +1,6 @@
 import { Message } from "../models/Message.js";
 import crypto from "crypto";
+import mongoose from 'mongoose';
 
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16; // AES requires 16-byte IV
@@ -23,21 +24,29 @@ const encrypt = (text) => {
 // 🔓 Decrypt function
 const decrypt = (encryptedText) => {
   try {
-    const [ivHex, encrypted] = encryptedText.split(":");
-    if (!ivHex || !encrypted) {
-      throw new Error("Invalid encrypted text format");
+    if (!encryptedText || typeof encryptedText !== 'string') return encryptedText;
+
+    // find first colon to split IV and ciphertext; be defensive in case plaintext contains ':'
+    const colonIndex = encryptedText.indexOf(':');
+    if (colonIndex === -1) return encryptedText;
+
+    const ivHex = encryptedText.slice(0, colonIndex);
+    const encrypted = encryptedText.slice(colonIndex + 1);
+
+    // validate IV hex (must be 16 bytes -> 32 hex chars)
+    if (typeof ivHex !== 'string' || ivHex.length !== IV_LENGTH * 2 || !/^[0-9a-fA-F]+$/.test(ivHex)) {
+      return encryptedText;
     }
 
-    const iv = Buffer.from(ivHex, "hex");
+    const iv = Buffer.from(ivHex, 'hex');
     const decipher = crypto.createDecipheriv(ALGORITHM, SECRET_KEY, iv);
-
-    let decrypted = decipher.update(encrypted, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.error("Decryption failed:", err.message);
-    throw new Error("Failed to decrypt message");
+    // don't spam logs for expected decryption failures; use debug level
+    console.debug('decrypt failed', err && err.message ? err.message : err);
+    return encryptedText;
   }
 };
 
@@ -50,6 +59,11 @@ export const sendMessage = async (req, res) => {
       return res
         .status(400)
         .json({ error: "chatId, content, and role are required" });
+    }
+
+    // validate chatId is an ObjectId
+    if (!mongoose.Types.ObjectId.isValid(String(chatId))) {
+      return res.status(400).json({ error: 'invalid chatId' });
     }
 
     // Encrypt the message content
@@ -98,6 +112,11 @@ export const sendMessage = async (req, res) => {
 export const getMessagesByChat = async (req, res) => {
   try {
     const { chatId } = req.params;
+    // validate chatId to avoid CastError when a client passes a non-ObjectId id
+    if (!mongoose.Types.ObjectId.isValid(String(chatId))) {
+      // return empty list rather than throwing
+      return res.json({ messages: [] });
+    }
 
     const messages = await Message.find({ chat: chatId })
       .sort({ createdAt: 1 }) // oldest first
