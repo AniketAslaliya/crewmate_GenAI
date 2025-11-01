@@ -57,64 +57,48 @@ const IngestionLoader = ({ steps }) => {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <motion.div 
-        className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-2xl mx-4 border border-blue-100"
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        transition={{ delay: 0.1, type: "spring", stiffness: 100 }}
+      <motion.div
+        className="bg-white rounded-2xl shadow-lg p-4 w-full max-w-lg mx-4 border border-blue-100"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.04, type: "spring", stiffness: 160 }}
       >
-        <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="text-center mb-4">
+          <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center mx-auto mb-3 shadow-md">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
           </div>
-          <h2 className="text-3xl font-bold text-gray-900 mb-2 font-serif">Securing Your Legal Desk</h2>
-          <p className="text-gray-600 text-lg">
-            Your documents are being encrypted with military-grade security protocols
-          </p>
+          <h2 className="text-lg font-semibold text-gray-900 mb-1">Securing Your Legal Desk</h2>
+          <p className="text-sm text-gray-600">Your documents are being encrypted with security protocols</p>
         </div>
 
-        <div className="space-y-4 mb-8">
+        <div className="space-y-3 mb-4">
           {steps.map((step, index) => (
-            <motion.div
-              key={step.id}
-              className="flex items-center space-x-4 p-4 rounded-2xl bg-gray-50/50 border border-gray-100"
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.1 }}
-            >
+            <div key={step.id} className="flex items-center space-x-3 p-3 rounded-xl bg-gray-50/60 border border-gray-100">
               <StatusIcon status={step.status} />
               <div className="flex-1">
-                <span className={`text-lg font-medium transition-all duration-300 ${
-                  step.status === 'in-progress' ? 'text-blue-600' : 
-                  step.status === 'completed' ? 'text-gray-900' : 'text-gray-500'
-                }`}>
+                <div className={`text-sm font-medium ${step.status === 'in-progress' ? 'text-blue-600' : step.status === 'completed' ? 'text-gray-900' : 'text-gray-500'}`}>
                   {step.text}
-                </span>
+                </div>
                 {step.status === 'in-progress' && (
-                  <motion.div 
-                    className="h-1 bg-blue-200 rounded-full mt-2 overflow-hidden"
-                    initial={{ width: 0 }}
-                    animate={{ width: "100%" }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  >
-                    <div className="h-full bg-blue-600 rounded-full animate-pulse" />
-                  </motion.div>
+                  <div className="h-1 bg-blue-200 rounded-full mt-2 overflow-hidden">
+                    <div className="h-full bg-blue-600 rounded-full animate-pulse" style={{ width: '100%' }} />
+                  </div>
                 )}
               </div>
-            </motion.div>
+            </div>
           ))}
         </div>
-        
-        <div className="space-y-3">
-          <div className="flex justify-between text-sm text-gray-600">
+
+        <div className="space-y-2">
+          <div className="flex justify-between text-xs text-gray-600">
             <span>Processing...</span>
             <span className="font-semibold">{Math.round(progress)}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
             <motion.div
-              className="h-3 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/25"
+              className="h-2 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600"
               initial={{ width: '0%' }}
               animate={{ width: `${progress}%` }}
               transition={{ duration: 0.5, ease: "easeInOut" }}

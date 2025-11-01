@@ -34,8 +34,8 @@ const Home = () => {
       { title: 'My Clients', desc: 'Manage your clients and cases', emoji: '👥', route: '/mylawyers' },
       { title: 'Chat with Clients', desc: 'Chat with clients and discuss cases', emoji: '💬', route: '/chats?target=client' },
       { title: 'AutoFill Forms', desc: 'Upload & auto-fill client PDFs', emoji: '📝', route: '/forms/auto-fill' },
-      { title: 'Legal Desks', desc: 'Organize matters and documents', emoji: '📁', route: '/legal-desk' },
-      { title: isOnboarded ? 'Profile' : 'Complete Onboarding', desc: isOnboarded ? 'View your profile' : 'Finish onboarding to accept clients', emoji: '⚙️', route: isOnboarded ? '/profile' : '/onboard-lawyer' }
+      { title: 'Legal Desks', desc: 'Got a specific document? Upload it and ask questions directly about its content. I\'ll help you find key details, summarize sections, and understand complex text.', emoji: '📁', route: '/legal-desk' },
+      // { title: isOnboarded ? 'Profile' : 'Complete Onboarding', desc: isOnboarded ? 'View your profile' : 'Finish onboarding to accept clients', emoji: '⚙️', route: isOnboarded ? '/profile' : '/onboard-lawyer' }
     ];
   } else {
     // Helpseekers / regular users

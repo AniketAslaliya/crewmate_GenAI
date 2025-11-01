@@ -410,6 +410,16 @@ const Login = () => {
 
                 <motion.a
                   href={mode === 'signup' && role ? `${backendUrl}/auth/google?role=${encodeURIComponent(role)}` : `${backendUrl}/auth/google`}
+                  onClick={() => {
+                    try {
+                      // Persist selected role so we can apply it after OAuth redirect if backend doesn't
+                      if (mode === 'signup' && role) {
+                        localStorage.setItem('pre_oauth_role', role);
+                      }
+                    } catch (e) {
+                      // ignore storage errors
+                    }
+                  }}
                   className="w-full flex items-center justify-center px-4 py-3 border border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 transition-all duration-200"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}

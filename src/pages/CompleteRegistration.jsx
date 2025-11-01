@@ -25,7 +25,7 @@ const CompleteRegistration = () => {
   const [step, setStep] = useState(1);
   const [selectedRole, setSelectedRole] = useState(null);
   const [name, setName] = useState(authUser?.name || '');
-  const [email, setEmail] = useState(authUser?.email || authUser?.username || '');
+  const [email] = useState(authUser?.email || authUser?.username || '');
   const [loading, setLoading] = useState(false);
 
   const benefits = {
@@ -122,7 +122,8 @@ const CompleteRegistration = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">Email</label>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full rounded-md border px-3 py-2" />
+              {/* Email is provided by OAuth/auth and should not be editable here to avoid mismatch */}
+              <input value={email} readOnly disabled className="mt-1 block w-full rounded-md border px-3 py-2 bg-gray-100 text-gray-700 cursor-not-allowed" />
             </div>
 
             <div className="flex items-center justify-between">
@@ -130,9 +131,9 @@ const CompleteRegistration = () => {
                 <label className="text-sm text-gray-600">Selected role</label>
                 <div className="font-semibold">{selectedRole}</div>
               </div>
-              <div className="flex gap-3">
+                <div className="flex gap-3">
                 <button type="button" className="px-4 py-2 border rounded" onClick={() => setStep(2)}>Back</button>
-                <button type="submit" disabled={loading} className="px-4 py-2 btn-gradient text-white rounded">{loading ? 'Saving...' : 'Finish'}</button>
+                <button type="submit" disabled={loading || !name} className="px-4 py-2 btn-gradient text-white bg-blue-700 rounded">{loading ? 'Saving...' : 'Finish'}</button>
               </div>
             </div>
           </form>
