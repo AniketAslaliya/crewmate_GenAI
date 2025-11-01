@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../context/AuthContext';
 import api from '../Axios/axios';
+import { useToast } from '../components/ToastProvider';
 
 const RoleCard = ({ role, title, description, selected, onClick }) => (
   <div
@@ -19,6 +20,7 @@ const CompleteRegistration = () => {
   const token = useAuthStore((s) => s.token);
   const setUser = useAuthStore((s) => s.setUser);
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [step, setStep] = useState(1);
   const [selectedRole, setSelectedRole] = useState(null);
@@ -50,7 +52,7 @@ const CompleteRegistration = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedRole) return alert('Please choose a role');
+  if (!selectedRole) { toast.error('Please choose a role'); return; }
     setLoading(true);
     try {
       // Use existing set-role endpoint; include optional profile fields
@@ -66,7 +68,7 @@ const CompleteRegistration = () => {
       navigate('/home');
     } catch (err) {
       console.error(err);
-      alert('Failed to complete registration. Please try again.');
+      toast.error('Failed to complete registration. Please try again.');
     } finally {
       setLoading(false);
     }

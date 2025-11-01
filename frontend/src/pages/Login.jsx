@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState } from 'react';
 import api from '../Axios/axios';
 import useAuthStore from '../context/AuthContext';
+import { useToast } from '../components/ToastProvider';
 
 const backendUrl = process.env.REACT_APP_BACKEND_URL;
 
@@ -14,6 +15,7 @@ const Login = () => {
   const [role, setRole] = useState(null);
   const [signupStep, setSignupStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const toast = useToast();
 
   const submit = async () => {
     setIsLoading(true);
@@ -33,7 +35,7 @@ const Login = () => {
       }
     } catch (e) {
       console.error(e);
-      alert('Authentication failed. Please check your credentials.');
+      toast.error('Authentication failed. Please check your credentials.');
     } finally {
       setIsLoading(false);
     }
@@ -178,8 +180,8 @@ const Login = () => {
                   </svg>
                 </div>
                 <div>
-                  <div className="text-white font-semibold">Bank-Grade Security</div>
-                  <div className="text-blue-100 text-sm">Your data is always protected</div>
+                  <div className="text-white font-semibold">End-to-end Encryption</div>
+                  <div className="text-blue-100 text-sm">Documents and messages are encrypted for your privacy</div>
                 </div>
               </div>
 
