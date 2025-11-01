@@ -40,6 +40,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydub import AudioSegment
 
+from backend_rag.retrieval import retrieve_similar_chunks, retrieve_general_legal_chunks
 from backend_rag.extract import extract_text_with_diagnostics
 from backend_rag.chunking import chunk_text
 from backend_rag.analysis import (
@@ -50,6 +51,12 @@ from backend_rag.analysis import (
     suggest_case_law,
     generate_predictive_output, 
 )
+from backend_rag.prompts import (
+    build_strict_system_prompt as _build_strict_prompt, 
+    WEB_ANSWER_SYSTEM_PROMPT,
+    GENERAL_LEGAL_QA_PROMPT  
+)
+
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
 
@@ -114,17 +121,18 @@ class DetectedField(BaseModel):
     id: str
     label_text: Optional[str] = ""
     bbox: List[int] 
+    page_number: int  # <--- *** THIS IS THE FIRST CHANGE ***
     semantic_type: str
     confidence: str
     is_sensitive: bool
-    description: Optional[str] = "Enter the required information." # Add this line
+    description: Optional[str] = "Enter the required information."
     suggestions: List[str] = []
     value: str = ""
 
 class FormAnalyzeResponse(BaseModel):
     success: bool
     message: Optional[str] = None
-    form_id: str # ID for tracking this form instance
+    form_id: str 
     fields: List[DetectedField] = []
 
 class FieldValue(BaseModel):
@@ -186,6 +194,10 @@ class TimelineDownloadReq(BaseModel):
 class StudyGuideDownloadReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+
+class GeneralAskReq(BaseModel):
+    query: str
+    output_language: Optional[str] = 'en'
 
 
 
@@ -708,9 +720,7 @@ async def analyze_form(
     """
     print(f"--- [/api/forms/analyze] Received upload: {file.filename} ---")
     
-    # Ensure UPLOAD_DIR exists (you might already have this)
-    # UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads")) # Defined earlier
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # ... (rest of file saving logic) ...
     
     temp_form_id = f"form_{user_id or 'anon'}_{thread_id or 'temp'}_{os.urandom(4).hex()}"
     temp_file_path = UPLOAD_DIR / f"{temp_form_id}_{file.filename}"
@@ -720,14 +730,11 @@ async def analyze_form(
         print(f"--- [/api/forms/analyze] Saved temp file: {temp_file_path} ---")
 
         # 1. Extract Text & Layout (OCR)
-        # This is the original text extraction, which might be different from pdfplumber's
         extraction = extract_text_with_diagnostics(str(temp_file_path))
-        full_text = extraction.get("text", "") # Get the FULL text
+        full_text = extraction.get("text", "") 
         if not full_text:
              print("--- [Form Analyze] extract_text_with_diagnostics found no text. ---")
-             # We might still proceed if pdfplumber can find layout data
 
-        # --- START: REPLACED BLOCK ---
         # --- NEW: Real Layout Extraction (using pdfplumber) ---
         all_pages = []
         try:
@@ -737,12 +744,9 @@ async def analyze_form(
                     
                 for i, page in enumerate(pdf.pages):
                     page_words = []
-                    # extract_words() is the key function. It gets all words and their coords.
                     words = page.extract_words(x_tolerance=2, y_tolerance=2, keep_blank_chars=False)
                     
                     for word in words:
-                        # pdfplumber format: {'text': '...', 'x0': ..., 'top': ..., 'x1': ..., 'bottom': ...}
-                        # Convert to your Pydantic model [xmin, ymin, xmax, ymax]
                         bbox = [
                             int(word['x0']), 
                             int(word['top']), 
@@ -761,17 +765,12 @@ async def analyze_form(
             detailed_ocr_result = DetailedOcrResult(pages=all_pages)
             
             if not any(p.words for p in detailed_ocr_result.pages):
-                 # This happens if the PDF is an IMAGE (a scan).
-                 # pdfplumber only works on text-based PDFs.
-                 print("--- [Form Analyze] pdfplumber found no text. This may be a scanned (image) PDF.")
-                 # FOR SCANNED PDFs: You would need a real OCR service here, like Google Vision AI or Tesseract.
-                 # For now, we will raise an error.
-                 raise HTTPException(status_code=422, detail="Could not extract text layout. This may be a scanned (image) PDF, which requires a full OCR service.")
+                 raise HTTPException(status_code=422, detail="Could not extract text layout. This may be a scanned (image) PDF.")
 
         except Exception as e:
             print(f"--- [Form Analyze] pdfplumber failed: {e} ---")
             raise HTTPException(status_code=422, detail=f"Failed to parse document layout: {e}")
-        # --- END: REPLACED BLOCK ---
+        # --- End New Block ---
 
         # 2. Detect & Classify Fields (Pass the object with full text representation)
         detected_fields_raw = detect_form_fields(detailed_ocr_result)
@@ -782,11 +781,7 @@ async def analyze_form(
         context_summary = "General context." # Default
         if thread_id:
             try:
-                # --- CORRECTED VARIABLE NAME HERE ---
-                # Use the actual OCR result object, not the simulation variable name
-                context_query = " ".join(w.text for p in detailed_ocr_result.pages for w in p.words[:20]) # Use text from the result
-                # --- End Correction ---
-
+                context_query = " ".join(w.text for p in detailed_ocr_result.pages for w in p.words[:20]) 
                 hits = retrieve_similar_chunks(context_query, user_id=user_id, thread_id=thread_id, top_k=3)
                 if hits:
                     context_summary = " ".join([h.get("text", "") for h in hits])
@@ -799,18 +794,18 @@ async def analyze_form(
         for field_data in detected_fields_raw:
              suggestions = []
              if not field_data.get('is_sensitive', False):
-                 # Note: This still uses the old single-field suggestion function.
-                 # You may want to adapt this to use the batch function from form_processing.py
                  suggestions = generate_field_suggestions(field_data, context_summary)
              
+             # --- *** THIS IS THE SECOND CHANGE *** ---
              field_obj = DetectedField(
                  id=field_data['id'],
                  label_text=field_data.get('label_text'),
                  bbox=field_data['bbox'], 
+                 page_number=field_data.get('page_number', 1), # <-- Read the page_number
                  semantic_type=field_data['semantic_type'],
                  confidence=field_data['confidence'],
                  is_sensitive=field_data['is_sensitive'],
-                 description=field_data.get('description', 'Enter the required information.'), # Pass description
+                 description=field_data.get('description', 'Enter the required information.'),
                  suggestions=suggestions,
                  value=""
              )
@@ -893,3 +888,62 @@ async def export_filled_form(req: FormExportRequest = Body(...)):
         raise HTTPException(status_code=500, detail=f"Failed to export form: {e}")
 
 # --- END: ADDED FOR FORM FILLING (API Endpoints) ---
+
+
+# [Add in api_server.py, in the Endpoints section, e.g., after /api/ask]
+
+@app.post("/api/general-ask")
+def api_general_ask(req: GeneralAskReq):
+    """
+    Answers a general legal question using the main (non-thread)
+    legal knowledge base.
+    """
+    try:
+        # --- Step 1: Translate query to English if needed ---
+        query_to_process = req.query
+        if req.query.strip():
+            query_lang_detection = detect_language(req.query)
+            if query_lang_detection and query_lang_detection.get('language') != 'en':
+                translated_query = translate_text(req.query, target_language='en')
+                if translated_query:
+                    query_to_process = translated_query
+                    print(f"--- [API GeneralAsk] Translated query to: {query_to_process}")
+
+        # --- Step 2: Retrieve from GENERAL knowledge base ---
+        # Use our new retrieval function. We'll get 5 good candidates.
+        hits = retrieve_general_legal_chunks(query_to_process, top_k=5)
+        
+        context_combined = ""
+        if not hits:
+            print("--- [API GeneralAsk] No relevant chunks found in general DB.")
+            context_combined = "(No relevant information found)"
+        else:
+            # Improved context building with both questions and answers
+            context_blobs = []
+            for i, r in enumerate(hits, 1):
+                question = r.get("retrieved_question", "").strip()
+                answer = r.get("text", "").strip()
+                context_blobs.append(
+                    f"--- Similar Question {i} ---\n"
+                    f"Q: {question}\n"
+                    f"A: {answer}\n"
+                )
+            context_combined = "\n\n".join(context_blobs)
+
+        # Use LLM with context
+        system_prompt = GENERAL_LEGAL_QA_PROMPT.format(context=context_combined)
+        final_answer = call_model_system_then_user(
+            system_prompt, query_to_process, temperature=0.1
+        )
+
+        # Translation if needed...
+        final_answer_translated = final_answer
+        if req.output_language and req.output_language != 'en' and final_answer:
+            translated = translate_text(final_answer, target_language=req.output_language)
+            if translated:
+                final_answer_translated = translated
+        return {"success": True, "answer": final_answer_translated}
+
+    except Exception as e:
+        print(f"--- [API GeneralAsk] Error: {e} ---")
+        raise HTTPException(status_code=500, detail=str(e))
