@@ -29,7 +29,8 @@ import { applyPalette, defaultPalette } from './utils/palette';
 
 function App() {
   const token = useAuthStore((state) => state.token);
-  const setUser = useAuthStore((state) => state.setUser);
+    const user = useAuthStore((state) => state.user);
+    const setUser = useAuthStore((state) => state.setUser);
   const [theme] = useState("light");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -72,7 +73,9 @@ function App() {
               path="/*"
               element={
                 <div className="flex w-full h-[100vh] min-h-0 overflow-y-clip ">
-                  <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)}  />
+                  {user?.role ? (
+                    <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)} />
+                  ) : null}
                   {/* small open button when sidebar is closed */}
                   {!sidebarOpen && (
                     <button onClick={() => setSidebarOpen(true)} className=" fixed top-4 left-4 z-50 p-2 rounded-md bg-white shadow-md text-primary/90 hover:bg-gray-50">
