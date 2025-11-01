@@ -1,6 +1,7 @@
 import "./App.css";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import useIsMobile from './hooks/useIsMobile';
 import Home from "./pages/Home";
 import LegalDesk from "./pages/LegalDesk";
 import Login from "./pages/Login";
@@ -14,8 +15,6 @@ import MyClients from "./pages/MyClients";
 import CompleteRegistration from './pages/CompleteRegistration';
 import ProtectedRoute from "./components/ProtectedRoute";
 import Sidebar from "./components/Sidebar";
-import Header from "./components/Header";
-import Footer from "./components/Footer";
 import api from "./Axios/axios";
 import { MdMenu } from 'react-icons/md';
 import useAuthStore from "./context/AuthContext";
@@ -33,6 +32,13 @@ function App() {
     const setUser = useAuthStore((state) => state.setUser);
   const [theme] = useState("light");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const isMobile = useIsMobile();
+
+  // auto-close sidebar on small screens
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+    else setSidebarOpen(true);
+  }, [isMobile]);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -74,17 +80,43 @@ function App() {
               element={
                 <div className="flex w-full h-[100vh] min-h-0 overflow-y-clip ">
                   {user?.role ? (
-                    <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)} />
+                    // Desktop: regular sidebar in flow. Mobile: overlay drawer when opened
+                    !isMobile ? (
+                      <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)} />
+                    ) : (
+                      sidebarOpen && (
+                        <div className="fixed inset-0 z-50 flex">
+                          {/* backdrop */}
+                          <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
+                          <div className="relative z-50 w-72 h-full shadow-lg bg-surface">
+                            <Sidebar isOpen={true} toggleSidebar={() => setSidebarOpen(false)} />
+                          </div>
+                        </div>
+                      )
+                    )
                   ) : null}
-                  {/* small open button when sidebar is closed */}
+                  {/* small open button when sidebar is closed (both desktop and mobile) */}
                   {!sidebarOpen && (
                     <button onClick={() => setSidebarOpen(true)} className=" fixed top-4 left-4 z-50 p-2 rounded-md bg-white shadow-md text-primary/90 hover:bg-gray-50">
                       <MdMenu size={20} />
                     </button>
                   )}
+
                   <div className="flex-1 min-h-0 flex flex-col">
-                            {/* <Header /> */}
-                            <div className="flex-1 min-h-0 overflow-auto ">
+                    {/* header can live inside the main column so it scrolls with content */}
+                    {/* show a compact top bar on mobile with a menu button and brand */}
+                    {isMobile && (
+                      <div className="w-full border-b bg-[rgba(255,255,255,0.7)] backdrop-blur-md sticky top-0 z-40 px-3 py-2 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => setSidebarOpen(true)} className="p-1 rounded-md">
+                            <MdMenu size={22} />
+                          </button>
+                          <div className="text-sm font-semibold" style={{ color: 'var(--color-primary)' }}>Legal SahAI</div>
+                        </div>
+                        <div />
+                      </div>
+                    )}
+                    <div className="flex-1 min-h-0 overflow-auto ">
                       <Routes>
                       <Route
                         path="/home"

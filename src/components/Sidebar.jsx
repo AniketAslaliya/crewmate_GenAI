@@ -6,6 +6,7 @@ import { formatDisplayName } from '../utils/name';
 // icons: outline vs filled for selected state
 import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb } from 'react-icons/md';
 import InitialAvatar from './InitialAvatar';
+import useIsMobile from '../hooks/useIsMobile';
 
 const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   const navigate = useNavigate();
@@ -32,9 +33,27 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
     navigate(path);
   };
 
+  const isMobile = useIsMobile();
+
   const IconBtn = ({ onClick, active, label, icon, labelText }) => {
+    const handleClick = () => {
+      try {
+        onClick && onClick();
+      } catch (e) {
+        // ignore
+      }
+      // close sidebar on mobile after navigation
+      if (isMobile) {
+        try {
+          toggleSidebar();
+        } catch (e) {
+          // ignore
+        }
+      }
+    };
+
     return (
-      <button onClick={onClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-gray-50'}`} aria-label={label} title={label}>
+      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-gray-50'}`} aria-label={label} title={label}>
         <span className="text-lg flex items-center">{icon}</span>
         {isOpen && <span className="text-sm font-medium">{labelText}</span>}
       </button>
