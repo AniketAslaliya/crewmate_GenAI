@@ -23,7 +23,7 @@ const Home = () => {
 
   const authUser = useAuthStore(s => s.user) || {};
   const isLawyer = authUser?.role === 'lawyer';
-  const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
+  // const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
 
   // role-aware quick action sets
   let quickActions = [];
@@ -41,9 +41,9 @@ const Home = () => {
     // Helpseekers / regular users
     quickActions = [
       { title: 'Find Lawyer', desc: 'Search and connect with lawyers nearby', emoji: '🔍', route: '/find-lawyer' },
-      { title: 'Chat a Lawyer', desc: 'Get quick legal help via chat', emoji: '💬', route: '/chats?target=lawyer' },
+      { title: 'Chat with a Lawyer', desc: 'Get quick legal help via chat', emoji: '💬', route: '/chats?target=lawyer' },
       { title: 'AutoFill Forms', desc: 'Upload & auto-fill PDFs quickly', emoji: '📝', route: '/forms/auto-fill' },
-      { title: 'Legal Desks', desc: 'Organize your documents', emoji: '📁', route: '/legal-desk' },
+      { title: 'Legal Desks', desc: ' Upload document and ask questions directly about its content.', emoji: '📁', route: '/legal-desk' },
       // { title: 'Notebook', desc: 'Save notes and AI summaries', emoji: '📒', route: '/notebook' },
       // { title: 'Support', desc: 'Get help from our team', emoji: '🆘', route: '/support' }
     ];
