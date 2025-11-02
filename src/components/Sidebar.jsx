@@ -55,7 +55,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
     };
 
     return (
-      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-neutral-100'}`} aria-label={label} title={label}>
+      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-neutral-10'}`} aria-label={label} title={label}>
         <span className="text-lg flex items-center">{icon}</span>
         {isOpen && <span className="text-sm font-medium">{labelText}</span>}
       </button>
@@ -92,7 +92,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   <IconBtn onClick={() => go('/legal-desk')} active={feature === 'chatpdf' || window.location.pathname.startsWith('/legal-desk')} label="Legal Desks" icon={feature === 'chatpdf' ? <MdDescription size={20} /> : <MdOutlineDescription size={20} />} labelText="Legal Desks" />
 
         {!isLawyer && (
-          <IconBtn onClick={() => go('/find-lawyer')} active={pathname.startsWith('/find-lawyer')} label="Find Lawyers" icon={pathname.startsWith('/find-lawyer') ? <RiUserSearchFill size={20} /> : <RiUserSearchLine size={20} />} labelText="Find Lawyers" />
+           <IconBtn onClick={() => go('/find-lawyer')} active={pathname.startsWith('/find-lawyer')} label="Find Lawyers" icon={pathname.startsWith('/find-lawyer') ? <RiUserSearchFill size={20} /> : <RiUserSearchLine size={20} />} labelText="Find Lawyers" />
         )}
 
         {/* Chat entries: show role-appropriate chat shortcuts */}
@@ -116,7 +116,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
           onClick={() => go('/forms/auto-fill')}
           active={pathname.startsWith('/forms/auto-fill')}
           label="AutoFill Forms"
-          icon={<MdOutlineDocumentScanner size={20} />}
+           icon={<MdOutlineDocumentScanner size={20} />}
           labelText="AutoFill Forms"
         />
         {/* General Ask / Quick Guide feature */}
@@ -142,7 +142,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         </div>
 
         <div className="mt-3">
-          <button onClick={() => { logout(); navigate('/login'); }} className={`w-full flex items-center ${isOpen ? 'justify-center gap-2 px-4' : 'justify-center'} py-2 rounded-md text-primary/80 hover:bg-neutral-100`}>
+          <button onClick={() => { logout(); navigate('/login'); }} className={`w-full flex items-center ${isOpen ? 'justify-center gap-2 px-4' : 'justify-center'} py-2 rounded-md text-primary/80 hover:bg-gneutral510`}>
 <img className="w-4 h-4" src="/logout-svgrepo-com.svg" alt="Logout" />
             {isOpen && <span>Logout</span>}
           </button>
