@@ -15,9 +15,32 @@ const Login = () => {
   const [role, setRole] = useState(null);
   const [signupStep, setSignupStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
   const toast = useToast();
 
   const submit = async () => {
+    // Clear previous errors
+    setFieldErrors({});
+
+    // Client-side validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const passwordRegex = /(?=.*[A-Za-z])(?=.*\d)/;
+    const errors = {};
+
+    if (mode === 'signup' && (!name || !name.trim())) errors.name = 'Name is required';
+    if (!email || !email.trim()) errors.email = 'Email is required';
+    else if (!emailRegex.test(email)) errors.email = 'Invalid email format';
+    if (!password) errors.password = 'Password is required';
+    else if (mode === 'signup') {
+      if (password.length < 8) errors.password = 'Password must be at least 8 characters';
+      else if (!passwordRegex.test(password)) errors.password = 'Password must contain letters and numbers';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+
     setIsLoading(true);
     try {
       let res;
@@ -35,7 +58,15 @@ const Login = () => {
       }
     } catch (e) {
       console.error(e);
-      toast.error('Authentication failed. Please check your credentials.');
+      const resp = e?.response?.data;
+      if (resp?.errors && typeof resp.errors === 'object') {
+        // Map backend validation errors to fields
+        setFieldErrors(resp.errors);
+      } else if (resp?.error) {
+        toast.error(resp.error);
+      } else {
+        toast.error('Authentication failed. Please check your credentials.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -312,6 +343,9 @@ const Login = () => {
                         onChange={e => setName(e.target.value)}
                         className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       />
+                        {fieldErrors.name && (
+                          <p className="text-sm text-red-600 mt-1">{fieldErrors.name}</p>
+                        )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">Email Address</label>
@@ -321,6 +355,9 @@ const Login = () => {
                         onChange={e => setEmail(e.target.value)}
                         className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       />
+                      {fieldErrors.email && (
+                        <p className="text-sm text-red-600 mt-1">{fieldErrors.email}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
@@ -331,6 +368,9 @@ const Login = () => {
                         type="password"
                         className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       />
+                      {fieldErrors.password && (
+                        <p className="text-sm text-red-600 mt-1">{fieldErrors.password}</p>
+                      )}
                     </div>
                   </div>
 
@@ -357,6 +397,9 @@ const Login = () => {
                       onChange={e => setEmail(e.target.value)}
                       className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
+                      {fieldErrors.email && (
+                        <p className="text-sm text-red-600 mt-1">{fieldErrors.email}</p>
+                      )}
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
@@ -367,6 +410,9 @@ const Login = () => {
                       type="password"
                       className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
+                      {fieldErrors.password && (
+                        <p className="text-sm text-red-600 mt-1">{fieldErrors.password}</p>
+                      )}
                   </div>
                  
                 </div>

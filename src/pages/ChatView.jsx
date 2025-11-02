@@ -17,6 +17,7 @@ const ChatView = () => {
   const [text, setText] = useState('');
   const socketRef = useRef(null);
   const scrollRef = useRef(null);
+  const activeChatRef = useRef(activeChat);
 
   const isLawyer = user?.role === 'lawyer';
   const location = useLocation();
@@ -92,54 +93,63 @@ const ChatView = () => {
     fetchConnections();
   }, [isLawyer, navigate, target]);
 
-  // init socket once
+  // init socket once on mount
   useEffect(()=>{
     const s = initSocket();
     socketRef.current = s;
 
-    s.on('connect', ()=>{
+    const onConnect = () => {
       // console.log('socket connected');
-    });
+    };
+    s.on('connect', onConnect);
 
-  s.on('new_message', (msg)=>{
-      // If the server echoed a clientTempId, reconcile optimistic message
-      if(msg.chat === activeChat){
+    const onConnectError = (err) => console.warn('socket connect_error', err);
+    const onReconnectAttempt = (count) => console.debug('socket reconnect attempt', count);
+    s.on('connect_error', onConnectError);
+    s.on('reconnect_attempt', onReconnectAttempt);
+
+    return ()=>{
+      // remove handlers we added (do not disconnect global socket)
+      s.off('connect', onConnect);
+      s.off('connect_error', onConnectError);
+      s.off('reconnect_attempt', onReconnectAttempt);
+    };
+  }, []);
+
+  // keep a ref in sync with activeChat so listeners can read latest value without re-registering handlers
+  useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
+
+  // single new_message listener (registered once) that uses activeChatRef to decide what to do
+  useEffect(() => {
+    const s = socketRef.current || initSocket();
+    socketRef.current = s;
+
+    const handler = (msg) => {
+      const currentActive = activeChatRef.current;
+      if (msg.chat === currentActive) {
         setMessages(prev => {
-          // If server echoed clientTempId, replace the optimistic message with server message
-          if(msg.clientTempId){
+          if (msg.clientTempId) {
             const mapped = prev.map(m => m._id === msg.clientTempId ? msg : m);
-            // remove any duplicate _id entries while preserving order
             const uniq = [];
             const seen = new Set();
-            for(const m of mapped){
-              if(!seen.has(m._id)){
-                uniq.push(m);
-                seen.add(m._id);
-              }
+            for (const m of mapped) {
+              if (!seen.has(m._id)) { uniq.push(m); seen.add(m._id); }
             }
             return uniq;
           }
-
-          // If no clientTempId, skip appending if we already have this message (dedupe by _id)
-          if(prev.some(m => m._id === msg._id)) return prev;
+          if (prev.some(m => m._id === msg._id)) return prev;
           return [...prev, msg];
         });
 
-        // mark read - we can inform backend about read status (not implemented) or adjust unread locally
         setConnections(prev => prev.map(p => p.chat === msg.chat ? {...p, lastMessage: msg, unread: 0} : p));
       } else {
-        // update lastMessage and increment unread for that chat
         setConnections(prev => prev.map(p => p.chat === msg.chat ? {...p, lastMessage: msg, unread: (p.unread||0)+1} : p));
       }
-    });
-
-    return ()=>{
-      s.off('new_message');
-      s.off('connect_error');
-      s.off('reconnect_attempt');
-      // do not force disconnect here; keep socket instance for reuse
     };
-  }, [activeChat]);
+
+    s.on('new_message', handler);
+    return () => { s.off('new_message', handler); };
+  }, []);
 
   // ensure we re-join the active chat room after a reconnect
   useEffect(()=>{
@@ -155,24 +165,34 @@ const ChatView = () => {
   // load messages when activeChat changes
   useEffect(()=>{
     if(!activeChat) return;
+    const controller = new AbortController();
     const fetchMessages = async ()=>{
+      const chatId = activeChat;
       try{
-        const res = await api.get(`/api/messages/${activeChat}`);
+        const res = await api.get(`/api/messages/${chatId}`, { signal: controller.signal });
+        // ignore if activeChat changed during the request
+        if (activeChatRef.current !== chatId) return;
         setMessages(res.data.messages || []);
         // join socket room
-        socketRef.current?.emit('join', activeChat);
+        socketRef.current?.emit('join', chatId);
         // reset unread count locally
-        setConnections(prev => prev.map(p => p.chat === activeChat ? {...p, unread: 0} : p));
-        // update URL
-        navigate(`/chat/${activeChat}`, { replace: true });
-      }catch(e){ console.error(e); }
+        setConnections(prev => prev.map(p => p.chat === chatId ? {...p, unread: 0} : p));
+        // update URL only if it's different
+        if (location.pathname !== `/chat/${chatId}`) navigate(`/chat/${chatId}`, { replace: true });
+      }catch(e){
+        if (e?.name === 'CanceledError' || e?.message === 'canceled') return; // aborted
+        console.error(e);
+      }
     };
     fetchMessages();
 
     return ()=>{
-      socketRef.current?.emit('leave', activeChat);
+      // capture chatId to leave the correct room
+      const chatToLeave = activeChat;
+      try{ socketRef.current?.emit('leave', chatToLeave); }catch(e){}
+      controller.abort();
     };
-  }, [activeChat, navigate]);
+  }, [activeChat, navigate, location.pathname]);
 
   // if route param id changes, set active chat
   useEffect(()=>{ if(id) setActiveChat(id); }, [id]);
@@ -257,7 +277,7 @@ const ChatView = () => {
                     <div className="text-xs text-[var(--muted)]">{timeStr}</div>
                   </div>
                   <div className="flex justify-between items-center">
-                    <div className="text-sm text-[var(--muted)] truncate">{preview}</div>
+                    {/* <div className="text-sm text-[var(--muted)] truncate">{preview}</div> */}
                     {c.unread > 0 && <div className="ml-2 bg-[var(--palette-1)] text-white text-xs px-2 rounded-full">{c.unread}</div>}
                   </div>
                 </div>

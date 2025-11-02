@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../Axios/axios';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../context/AuthContext';
+import { useToast } from '../components/ToastProvider';
 
 const LawyerRequests = () => {
   const [pending, setPending] = useState([]);
@@ -9,6 +10,7 @@ const LawyerRequests = () => {
   const [processing, setProcessing] = useState({});
   const navigate = useNavigate();
   const authUser = useAuthStore(s=>s.user);
+  const toast = useToast();
 
   useEffect(()=>{
     if(!authUser || authUser.role !== 'lawyer'){
@@ -30,6 +32,32 @@ const LawyerRequests = () => {
     fetch();
   }, []);
 
+  // helper: robustly extract the peer's display name from different connection shapes
+  const getConnectionName = (c) => {
+    // c may be a ConnectionRequest doc or a populated connection
+    // prefer 'from' for lawyer view (helpseeker -> lawyer)
+    if (!c) return 'Unknown';
+    const from = c.from || c.peer || c.to; // try common fields
+    if (from) {
+      if (typeof from === 'string') return from;
+      if (from.name) return from.name;
+      if (from.email) return from.email;
+      if (from._id) return String(from._id).slice(-6); // fallback short id
+    }
+    // as a last resort, try title from chat
+    if (c.chat && typeof c.chat === 'object' && c.chat.title) return c.chat.title;
+    return 'Unknown';
+  };
+
+  const refreshAccepted = async () => {
+    try {
+      const res = await api.get('/api/lawyers/connections/lawyer');
+      setAccepted(res.data.connections || []);
+    } catch (e) {
+      console.error('failed to refresh accepted', e);
+    }
+  };
+
   const accept = async (id) => {
     try {
       setProcessing(prev => ({ ...prev, [id]: 'accept' }));
@@ -41,15 +69,12 @@ const LawyerRequests = () => {
         ...newConnRaw,
         chat: newConnRaw.chat && typeof newConnRaw.chat === 'object' ? newConnRaw.chat._id : newConnRaw.chat,
       };
-      // ensure accepted has the populated 'from' and 'chat' if returned
-      setAccepted(prev => [ ...(prev || []), newConn ]);
-      const chatId = res.data.chat?._id;
-      if (chatId) {
-        navigate(`/chat/${chatId}`);
-      } else {
-        alert('Accepted');
-      }
-    } catch (err) { console.error(err); alert('Failed'); }
+  // ensure accepted has the populated 'from' and 'chat' if returned
+  setAccepted(prev => [ ...(prev || []), newConn ]);
+  // refresh canonical accepted connections (server will populate 'from' fields)
+  refreshAccepted();
+  toast.success('Accepted');
+  } catch (err) { console.error(err); toast.error('Failed to accept request'); }
     finally { setProcessing(prev => {
       const copy = { ...prev };
       delete copy[id];
@@ -62,8 +87,8 @@ const LawyerRequests = () => {
       setProcessing(prev => ({ ...prev, [id]: 'reject' }));
       await api.post(`/api/lawyers/requests/${id}/reject`);
       setPending(prev => prev.filter(r => r._id !== id));
-      alert('Rejected');
-    } catch (err) { console.error(err); alert('Failed'); }
+      toast.info('Rejected');
+  } catch (err) { console.error(err); toast.error('Failed to reject request'); }
     finally { setProcessing(prev => {
       const copy = { ...prev };
       delete copy[id];
@@ -90,7 +115,7 @@ const LawyerRequests = () => {
             .map(c=> (
               <div key={c._id} className="p-2 border rounded flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">{c.from?.name || 'Unknown'}</div>
+                  <div className="font-semibold">{getConnectionName(c)}</div>
                 </div>
                 <div>
                   {c.chat ? (

@@ -7,7 +7,9 @@ import { formatDisplayName } from '../utils/name';
 import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb } from 'react-icons/md';
 import InitialAvatar from './InitialAvatar';
 import useIsMobile from '../hooks/useIsMobile';
-
+import { MdOutlineDocumentScanner } from "react-icons/md";
+import { RiUserSearchLine } from "react-icons/ri";
+import { RiUserSearchFill } from "react-icons/ri";
 const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -90,7 +92,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   <IconBtn onClick={() => go('/legal-desk')} active={feature === 'chatpdf' || window.location.pathname.startsWith('/legal-desk')} label="Legal Desks" icon={feature === 'chatpdf' ? <MdDescription size={20} /> : <MdOutlineDescription size={20} />} labelText="Legal Desks" />
 
         {!isLawyer && (
-          <IconBtn onClick={() => go('/find-lawyer')} active={pathname.startsWith('/find-lawyer')} label="Find Lawyers" icon={pathname.startsWith('/find-lawyer') ? <MdPerson size={20} /> : <MdOutlinePerson size={20} />} labelText="Find Lawyers" />
+          <IconBtn onClick={() => go('/find-lawyer')} active={pathname.startsWith('/find-lawyer')} label="Find Lawyers" icon={pathname.startsWith('/find-lawyer') ? <RiUserSearchFill size={20} /> : <RiUserSearchLine size={20} />} labelText="Find Lawyers" />
         )}
 
         {/* Chat entries: show role-appropriate chat shortcuts */}
@@ -114,7 +116,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
           onClick={() => go('/forms/auto-fill')}
           active={pathname.startsWith('/forms/auto-fill')}
           label="AutoFill Forms"
-          icon={<img src="/form.png" alt="Forms" className="w-5 h-5" />}
+          icon={<MdOutlineDocumentScanner size={20} />}
           labelText="AutoFill Forms"
         />
         {/* General Ask / Quick Guide feature */}
