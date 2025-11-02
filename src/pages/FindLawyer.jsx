@@ -202,16 +202,23 @@ const FindLawyer = () => {
 
   // FilterSection moved to `FiltersContainer` to avoid re-renders
 
-  const DetailRow = React.memo(({ icon, title, items }) => (
-    items && items.length > 0 && (
+  const DetailRow = React.memo(function DetailRow({ icon, title, items }) {
+    const [expanded, setExpanded] = useState(false);
+
+    if (!items || items.length === 0) return null;
+
+    const visible = expanded ? items : items.slice(0, 3);
+    const hiddenCount = items.length > 3 ? items.length - 3 : 0;
+
+    return (
       <div className="flex items-start space-x-3 py-2">
         <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
           {icon}
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-gray-500 mb-1">{title}</div>
-          <div className="flex flex-wrap gap-1">
-            {items.slice(0, 3).map((item, index) => (
+          <div className="flex flex-wrap gap-2 items-center">
+            {visible.map((item, index) => (
               <span
                 key={index}
                 className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
@@ -219,18 +226,27 @@ const FindLawyer = () => {
                 {item}
               </span>
             ))}
-            {items.length > 3 && (
-              <span className="inline-block px-2 py-1 bg-gray-100 text-gray-500 text-xs rounded-md">
-                +{items.length - 3} more
-              </span>
+
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpanded(prev => !prev)}
+                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+              >
+                {expanded ? 'Show less' : `+${hiddenCount} more`}
+              </button>
             )}
           </div>
         </div>
       </div>
-    )
-  ));
+    );
+  });
 
-  const LawyerCard = React.memo(({ lawyer, isConnected = false, chatId, onRequest, requestingId }) => (
+  const LawyerCard = React.memo(function LawyerCard({ lawyer, isConnected = false, chatId, onRequest, requestingId }) {
+    const [specialtiesExpanded, setSpecialtiesExpanded] = useState(false);
+
+    return (
     <motion.div
       layout
       initial={{ opacity: 0, scale: 0.9 }}
@@ -292,22 +308,28 @@ const FindLawyer = () => {
         {/* Specialties */}
         <div className="mt-4">
           <div className="text-xs font-medium text-gray-500 mb-2">SPECIALTIES</div>
-          <div className="flex flex-wrap gap-2">
-            {(lawyer.specialties || []).slice(0, 4).map((specialty, index) => (
+          <div className="flex flex-wrap gap-2 items-center">
+            {(specialtiesExpanded ? (lawyer.specialties || []) : (lawyer.specialties || []).slice(0, 4)).map((specialty, index) => (
               <motion.span
-                key={specialty}
+                key={`${specialty}-${index}`}
                 initial={{ opacity: 0, scale: 0 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: index * 0.1 }}
+                transition={{ delay: index * 0.05 }}
                 className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-xs font-medium rounded-full shadow-sm"
               >
                 {specialty}
               </motion.span>
             ))}
-            {(lawyer.specialties || []).length > 4 && (
-              <span className="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-full">
-                +{(lawyer.specialties || []).length - 4} more
-              </span>
+
+            {((lawyer.specialties || []).length - 4) > 0 && (
+              <button
+                type="button"
+                onClick={() => setSpecialtiesExpanded(prev => !prev)}
+                className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                aria-expanded={specialtiesExpanded}
+              >
+                {specialtiesExpanded ? 'Show less' : `+${(lawyer.specialties || []).length - 4} more`}
+              </button>
             )}
           </div>
         </div>
@@ -406,7 +428,8 @@ const FindLawyer = () => {
         )}
       </div>
     </motion.div>
-  ));
+  );
+  });
 
   // Filters UI has been moved to `FiltersContainer` component to avoid re-renders.
 
