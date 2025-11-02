@@ -29,6 +29,7 @@ const FindLawyer = () => {
   const [selectedTab, setSelectedTab] = useState('your');
   const [loading, setLoading] = useState(false);
   const [requesting, setRequesting] = useState(null);
+  const [sentRequests, setSentRequests] = useState(new Set());
   const [showFilters, setShowFilters] = useState(false);
   // Debounced filters: update after user stops typing
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
@@ -68,11 +69,13 @@ const FindLawyer = () => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const res = await api.get('/api/lawyers/list');
-        setLawyers(res.data.lawyers || []);
-        
-        const my = await api.get('/api/lawyers/connections/me');
-        const normalizedMy = (my.data.connections || []).map(c => {
+          const [res, my, myReqs] = await Promise.all([
+            api.get('/api/lawyers/list'),
+            api.get('/api/lawyers/connections/me'),
+            api.get('/api/lawyers/my-requests')
+          ]);
+          setLawyers(res.data.lawyers || []);
+          const normalizedMy = (my.data.connections || []).map(c => {
           const chatId = c.chat && typeof c.chat === 'object' ? c.chat._id : c.chat;
           let toObj = c.to;
           if (!toObj || typeof toObj !== 'object') {
@@ -81,6 +84,14 @@ const FindLawyer = () => {
           return { ...c, chat: chatId, to: toObj };
         });
         setMyLawyers(normalizedMy);
+          // normalize outgoing requests so we can mark buttons as Sent
+          try {
+            const outgoing = (myReqs && myReqs.data && Array.isArray(myReqs.data.requests)) ? myReqs.data.requests : [];
+            const ids = new Set(outgoing.map(r => (r.to && typeof r.to === 'object') ? (r.to._id || r.to.id) : (r.to || r.to)));
+            setSentRequests(ids);
+          } catch (e) {
+            console.warn('failed to normalize my-requests', e);
+          }
       } catch (err) { 
         console.error(err); 
       }
@@ -96,16 +107,37 @@ const FindLawyer = () => {
         to: lawyerId, 
         message: 'I would like to request a consultation with you.' 
       });
-      
-      setTimeout(() => {
-        setRequesting(null);
-      }, 2000);
-      
+
+      // mark as sent locally (use immutable Set copy)
+      setSentRequests(prev => {
+        const copy = new Set(prev);
+        copy.add(lawyerId);
+        return copy;
+      });
+
+      // clear requesting flag
+      setRequesting(null);
+
+      // try to refresh outgoing requests to sync canonical data (non-blocking)
+      (async () => {
+        try {
+          const r = await api.get('/api/lawyers/my-requests');
+          const outgoing = (r && r.data && Array.isArray(r.data.requests)) ? r.data.requests : [];
+          const ids = new Set(outgoing.map(rr => (rr.to && typeof rr.to === 'object') ? (rr.to._id || rr.to.id) : (rr.to || rr.to)));
+          setSentRequests(ids);
+        } catch (e) { /* ignore */ }
+      })();
     } catch (err) {
       console.error(err);
       const status = err?.response?.status;
       if (status === 400) {
         toast.info('You already have an active request to this lawyer.');
+        // ensure UI marks it as sent
+        setSentRequests(prev => {
+          const copy = new Set(prev);
+          copy.add(lawyerId);
+          return copy;
+        });
       } else {
         toast.error('Failed to send request. Please try again.');
       }
@@ -342,16 +374,23 @@ const FindLawyer = () => {
         ) : (
           <motion.button
             onClick={() => onRequest(lawyer._id)}
-            disabled={requestingId === lawyer._id}
+            disabled={requestingId === lawyer._id || sentRequests.has(lawyer._id)}
             className={`w-full py-3 rounded-xl font-semibold text-white transition-all duration-300 ${
-              requestingId === lawyer._id
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
+              sentRequests.has(lawyer._id)
+                ? 'bg-gray-500 cursor-default'
+                : requestingId === lawyer._id
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
             }`}
-            whileHover={requestingId !== lawyer._id ? { scale: 1.02 } : {}}
-            whileTap={requestingId !== lawyer._id ? { scale: 0.98 } : {}}
+            whileHover={!sentRequests.has(lawyer._id) && requestingId !== lawyer._id ? { scale: 1.02 } : {}}
+            whileTap={!sentRequests.has(lawyer._id) && requestingId !== lawyer._id ? { scale: 0.98 } : {}}
           >
-            {requestingId === lawyer._id ? (
+            {sentRequests.has(lawyer._id) ? (
+              <div className="flex items-center justify-center space-x-2">
+                <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                <span>Request Sent</span>
+              </div>
+            ) : requestingId === lawyer._id ? (
               <div className="flex items-center justify-center space-x-2">
                 <motion.div
                   animate={{ rotate: 360 }}
