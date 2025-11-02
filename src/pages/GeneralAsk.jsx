@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { FaMicrophone } from 'react-icons/fa';
 import api from '../Axios/axios';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/ToastProvider';
@@ -188,6 +189,123 @@ const GeneralAsk = () => {
     const bolded = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // preserve line breaks
     return bolded.replace(/\n/g, '<br/>');
+  };
+
+  // --- Voice Input (shared approach with NotebookPage) ---
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const streamRef = useRef(null);
+  const audioBufferRef = useRef([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+
+  const encodeWAV = (samples, sampleRate) => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (view, offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    const floatTo16BitPCM = (output, offset, input) => {
+      for (let i = 0; i < input.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+    };
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    floatTo16BitPCM(view, 44, samples);
+
+    return new Blob([view], { type: 'audio/wav' });
+  };
+
+  const startVoiceRecording = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Your browser does not support voice recording.');
+      audioBufferRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = context;
+      const source = context.createMediaStreamSource(stream);
+      audioInputRef.current = source;
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+        const bufferCopy = new Float32Array(inputData);
+        audioBufferRef.current.push(bufferCopy);
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Voice recording failed:', err);
+      toast.error(err.message || 'Voice recording failed.');
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+    const sampleRate = audioContextRef.current?.sampleRate || 16000;
+    try {
+      audioInputRef.current?.disconnect();
+      processorRef.current?.disconnect();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      audioContextRef.current?.close();
+    } catch (e) { /* ignore */ }
+
+    if (!audioBufferRef.current.length) {
+      toast.warn('No audio was recorded.');
+      return;
+    }
+
+    const totalLength = audioBufferRef.current.reduce((acc, v) => acc + v.length, 0);
+    const completeBuffer = new Float32Array(totalLength);
+    let offset = 0;
+    for (const b of audioBufferRef.current) { completeBuffer.set(b, offset); offset += b.length; }
+    const blob = encodeWAV(completeBuffer, sampleRate);
+    sendAudioToApi(blob);
+  };
+
+  const sendAudioToApi = async (audioBlob) => {
+    if (!audioBlob || audioBlob.size <= 44) return;
+    setIsProcessingAudio(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', audioBlob, 'audio.wav');
+      const res = await papi.post('/api/ingest-audio', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const transcript = res.data?.transcript;
+      if (transcript && !transcript.startsWith('(speech error')) {
+        setQuery(transcript.trim());
+        // auto-send the transcribed query
+        setTimeout(() => { try { sendQuery(); } catch (e) { console.warn(e); } }, 50);
+      } else {
+        toast.error(`Transcription failed: ${transcript}`);
+      }
+    } catch (err) {
+      console.error('Transcription API call failed:', err);
+      toast.error('Transcription failed. Please try again.');
+    } finally {
+      setIsProcessingAudio(false);
+    }
   };
   
 
@@ -444,6 +562,9 @@ const GeneralAsk = () => {
         )}
 
         <div className="flex-none p-2 border-t flex items-center gap-2 flex-shrink-0" style={{borderColor:'var(--border)', background: 'var(--panel)'}}>
+          <button type="button" onClick={isRecording ? stopVoiceRecording : startVoiceRecording} disabled={isProcessingAudio} className={`px-3 py-1 rounded ${isRecording ? 'bg-red-500 text-white' : 'bg-white border'}`}>
+            {isRecording ? 'Stop' : (<><FaMicrophone className="inline-block mr-2" />Voice</>)}
+          </button>
           <input
             ref={inputRef}
             value={query}
