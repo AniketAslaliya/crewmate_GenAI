@@ -21,7 +21,7 @@ const decrypt = (encryptedText) => {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.debug('decrypt failed', err && err.message ? err.message : err);
+    // decrypt failed - suppressed in production
     return encryptedText;
   }
 };
@@ -36,7 +36,7 @@ const encrypt = (text) => {
     encrypted += cipher.final('hex');
     return `${iv.toString('hex')}:${encrypted}`;
   } catch (err) {
-    console.warn('encrypt failed', err.message);
+    // encrypt failed - suppressed in production
     return String(text);
   }
 };
@@ -51,7 +51,7 @@ export const createGeneralChat = async (req, res) => {
     await chat.save();
     return res.status(201).json({ chat });
   } catch (err) {
-    console.error('createGeneralChat failed', err);
+    // createGeneralChat failed - suppressed in production
     return res.status(500).json({ error: 'Failed to create chat' });
   }
 };
@@ -97,7 +97,7 @@ export const askGeneral = async (req, res) => {
         });
       }
     } catch (emitErr) {
-      console.warn('emit assistant message failed', emitErr);
+      // emit assistant message failed - suppressed in production
     }
 
     // fetch canonical messages for this chat (decrypted) so the client can reconcile immediately
@@ -114,11 +114,10 @@ export const askGeneral = async (req, res) => {
       return res.json({ answer: answerText, chatId: chat._id, messages: decrypted });
     } catch (e) {
       // if fetching messages fails for any reason, still return answer + chatId
-      console.warn('failed to fetch messages immediately after save', e);
       return res.json({ answer: answerText, chatId: chat._id });
     }
   } catch (err) {
-    console.error('askGeneral failed', err);
+    // askGeneral failed - suppressed in production
     return res.status(500).json({ error: 'Failed to process query' });
   }
 };
@@ -146,7 +145,7 @@ export const saveGeneralChat = async (req, res) => {
     }
     return res.json({ ok: true });
   } catch (err) {
-    console.error('saveGeneralChat failed', err);
+    // saveGeneralChat failed - suppressed in production
     return res.status(500).json({ error: 'Failed to save messages' });
   }
 };
@@ -163,7 +162,7 @@ export const listGeneralChats = async (req, res) => {
     }));
     return res.json({ chats: enriched });
   } catch (err) {
-    console.error('listGeneralChats failed', err);
+    // listGeneralChats failed - suppressed in production
     return res.status(500).json({ error: 'Failed to list chats' });
   }
 };
@@ -180,7 +179,7 @@ export const renameGeneralChat = async (req, res) => {
     await chat.save();
     return res.json({ ok: true, chat });
   } catch (err) {
-    console.error('renameGeneralChat failed', err);
+    // renameGeneralChat failed - suppressed in production
     return res.status(500).json({ error: 'Failed to rename chat' });
   }
 };
