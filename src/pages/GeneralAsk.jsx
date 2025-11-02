@@ -236,7 +236,15 @@ const GeneralAsk = () => {
   };
 
   const startVoiceRecording = async () => {
+    const MIC_DENIED_KEY = 'app:mic-denied:v1';
     try {
+      const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
+      if (denied) {
+        console.log('Microphone previously denied; not requesting again.');
+        try { toast.error('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); } catch (e) { alert('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); }
+        return;
+      }
+
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Your browser does not support voice recording.');
       audioBufferRef.current = [];
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -257,6 +265,12 @@ const GeneralAsk = () => {
       setIsRecording(true);
     } catch (err) {
       console.error('Voice recording failed:', err);
+      try {
+        // if user explicitly denied, remember it so we don't ask again
+        if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError' || /denied/i.test(String(err.message || '')))) {
+          try { localStorage.setItem(MIC_DENIED_KEY, '1'); } catch (e) {}
+        }
+      } catch (e) {}
       toast.error(err.message || 'Voice recording failed.');
     }
   };

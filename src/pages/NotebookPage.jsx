@@ -212,14 +212,24 @@ const NotebookPage = (props) => {
 
   // Request microphone permission when entering the notebook
   useEffect(() => {
+    const MIC_DENIED_KEY = 'app:mic-denied:v1';
     const requestMicrophonePermission = async () => {
       try {
+        const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
+        if (denied) {
+          console.log('Microphone previously denied; not requesting again.');
+          return;
+        }
         console.log("Requesting microphone permission...");
         await navigator.mediaDevices.getUserMedia({ audio: true });
         console.log("Microphone permission granted.");
       } catch (err) {
         console.error("Microphone permission denied:", err);
-        try { toast.error("Microphone access is required for voice features to work."); } catch (e) { alert("Microphone access is required for voice features to work."); }
+        try {
+          // mark denial so we don't re-request
+          try { localStorage.setItem(MIC_DENIED_KEY, '1'); } catch (e) { }
+          toast.error("Microphone access is required for voice features to work.");
+        } catch (e) { alert("Microphone access is required for voice features to work."); }
       }
     };
 
@@ -321,8 +331,16 @@ const NotebookPage = (props) => {
   };
 
   const startVoiceRecording = async () => {
+    const MIC_DENIED_KEY = 'app:mic-denied:v1';
     console.log("Starting voice recording...");
     try {
+      const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
+      if (denied) {
+        console.log('Microphone previously denied; not requesting again.');
+        try { toast.error('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); } catch (e) { alert('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); }
+        return;
+      }
+
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("Your browser does not support voice recording.");
       }
@@ -353,6 +371,11 @@ const NotebookPage = (props) => {
       console.log("Voice recording started.");
     } catch (err) {
       console.error("Voice recording failed:", err);
+      try {
+        if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError' || /denied/i.test(String(err.message || '')))) {
+          try { localStorage.setItem(MIC_DENIED_KEY, '1'); } catch (e) {}
+        }
+      } catch (e) {}
       try { toast.error(err.message || "Voice recording is not supported on this device."); } catch(e){ alert(err.message || "Voice recording is not supported on this device."); }
     }
   };
