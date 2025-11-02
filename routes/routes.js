@@ -74,10 +74,22 @@ router.get("/me", authMiddleware, async (req, res) => {
 router.post("/signup", async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
-    if (!email || !password || !name) return res.status(400).json({ error: "Missing fields" });
+    // Validate inputs and build structured errors
+    const errors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const passwordRegex = /(?=.*[A-Za-z])(?=.*\d)/; // letters and numbers
+
+    if (!name || !name.trim()) errors.name = 'Name is required';
+    if (!email || !email.trim()) errors.email = 'Email is required';
+    else if (!emailRegex.test(email)) errors.email = 'Invalid email format';
+    if (!password) errors.password = 'Password is required';
+    else if (password.length < 8) errors.password = 'Password must be at least 8 characters';
+    else if (!passwordRegex.test(password)) errors.password = 'Password must contain letters and numbers';
+
+    if (Object.keys(errors).length > 0) return res.status(400).json({ errors });
 
     const existing = await User.findOne({ email });
-    if (existing) return res.status(409).json({ error: "Email already exists" });
+    if (existing) return res.status(409).json({ errors: { email: 'Email already exists' } });
 
     const hash = await bcrypt.hash(password, 10);
     const user = await User.create({ email, name, password: hash, role: role || null });
@@ -94,13 +106,20 @@ router.post("/signup", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Missing fields" });
+    // Validate inputs and provide structured errors
+    const errors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !email.trim()) errors.email = 'Email is required';
+    else if (!emailRegex.test(email)) errors.email = 'Invalid email format';
+    if (!password) errors.password = 'Password is required';
+
+    if (Object.keys(errors).length > 0) return res.status(400).json({ errors });
 
     const user = await User.findOne({ email });
-    if (!user || !user.password) return res.status(401).json({ error: "Invalid credentials" });
+    if (!user || !user.password) return res.status(401).json({ errors: { email: 'Invalid credentials', password: 'Invalid credentials' } });
 
     const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+    if (!ok) return res.status(401).json({ errors: { email: 'Invalid credentials', password: 'Invalid credentials' } });
 
     const token = signJwt({ id: user._id, email: user.email, name: user.name, picture: user.picture });
     res.json({ token });
