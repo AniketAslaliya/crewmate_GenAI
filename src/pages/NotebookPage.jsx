@@ -18,8 +18,7 @@ const SpeechRecognition =
 // Reference to the browser's speech synthesis API
 const synthesis = window.speechSynthesis;
 
-console.log("SpeechRecognition support:", !!SpeechRecognition);
-console.log("SpeechSynthesis support:", !!synthesis);
+// Runtime environment checks suppressed for production
 
 const DarkBackground = () => (
   <div className="absolute inset-0 -z-10 bg-[var(--panel)]">
@@ -214,7 +213,7 @@ const NotebookPage = (props) => {
         setNotebook(notebookRes.data.chat);
         setMessages(messagesRes.data.messages);
       } catch (err) {
-        console.error("Failed to fetch initial data:", err);
+        // Failed to fetch initial data - suppressed in production
       }
     };
 
@@ -228,14 +227,12 @@ const NotebookPage = (props) => {
       try {
         const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
         if (denied) {
-          console.log('Microphone previously denied; not requesting again.');
+          // Microphone previously denied - suppressed message
           return;
         }
-        console.log("Requesting microphone permission...");
         await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log("Microphone permission granted.");
       } catch (err) {
-        console.error("Microphone permission denied:", err);
+        // Microphone permission denied - suppressed in production
         try {
           // mark denial so we don't re-request
           try { localStorage.setItem(MIC_DENIED_KEY, '1'); } catch (e) { }
@@ -270,7 +267,7 @@ const NotebookPage = (props) => {
       utterance.onerror = () => {
         setIsSpeaking(false);
         setSpeakingMessageId(null);
-        console.error("An error occurred during speech synthesis.");
+        // speech synthesis error suppressed in production
       };
       setSpeakingMessageId(msg._id);
       setIsSpeaking(true);
@@ -343,11 +340,9 @@ const NotebookPage = (props) => {
 
   const startVoiceRecording = async () => {
     const MIC_DENIED_KEY = 'app:mic-denied:v1';
-    console.log("Starting voice recording...");
     try {
       const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
       if (denied) {
-        console.log('Microphone previously denied; not requesting again.');
         try { toast.error('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); } catch (e) { alert('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); }
         return;
       }
@@ -358,7 +353,6 @@ const NotebookPage = (props) => {
 
       audioBufferRef.current = []; // Clear previous recording
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log("Microphone access granted.");
       streamRef.current = stream; // Save the stream to stop tracks later
 
       const context = new (window.AudioContext || window.webkitAudioContext)();
@@ -379,9 +373,8 @@ const NotebookPage = (props) => {
       source.connect(processor);
       processor.connect(context.destination);
       setIsRecording(true);
-      console.log("Voice recording started.");
     } catch (err) {
-      console.error("Voice recording failed:", err);
+      // Voice recording failed - suppressed in production
       try {
         if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError' || /denied/i.test(String(err.message || '')))) {
           try { localStorage.setItem(MIC_DENIED_KEY, '1'); } catch (e) {}
@@ -392,15 +385,12 @@ const NotebookPage = (props) => {
   };
 
   const stopVoiceRecording = () => {
-    console.log("Stopping voice recording...");
     if (!isRecording) {
-      console.warn("Voice recording is not active.");
       return;
     }
     setIsRecording(false);
 
     const sampleRate = audioContextRef.current?.sampleRate;
-    console.log("Sample rate:", sampleRate);
 
     // Disconnect nodes and stop microphone track
     audioInputRef.current?.disconnect();
@@ -409,7 +399,6 @@ const NotebookPage = (props) => {
     audioContextRef.current?.close();
 
     if (audioBufferRef.current.length === 0) {
-      console.warn("No audio was recorded.");
       try { toast.warn("No audio was recorded."); } catch(e){ alert("No audio was recorded."); }
       return;
     }
@@ -426,37 +415,28 @@ const NotebookPage = (props) => {
     }
 
     const audioBlob = encodeWAV(completeBuffer, sampleRate);
-    console.log("Audio blob created:", audioBlob);
     sendAudioToApi(audioBlob);
   };
 
   const sendAudioToApi = async (audioBlob) => {
-    console.log("Sending audio to API...");
     if (!audioBlob || audioBlob.size <= 44) {
-      console.warn("Audio blob is empty or invalid.");
       return;
     }
     setIsProcessingAudio(true); // Start loader
     try {
       const formData = new FormData();
       formData.append("file", audioBlob, "audio.wav");
-
-      console.log("Sending FormData to API...");
       const res = await papi.post("/api/ingest-audio", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-
-      console.log("API response:", res.data);
       const transcript = res.data.transcript;
         if (transcript && !transcript.startsWith("(speech error")) {
-        console.log("Transcription successful:", transcript);
         setNewMessage(transcript.trim()); // <-- Paste transcript into input
       } else {
-        console.error("Transcription failed on the backend:", transcript);
         try { toast.error(`Transcription failed: ${transcript}`); } catch(e){ alert(`Transcription failed: ${transcript}`); }
       }
     } catch (err) {
-      console.error("Transcription API call failed:", err);
+      // Transcription API call failed - suppressed in production
       try { toast.error("Transcription failed. Please try again."); } catch(e){ alert("Transcription failed. Please try again."); }
     } finally {
       setIsProcessingAudio(false); // Stop loader
@@ -680,13 +660,11 @@ const NotebookPage = (props) => {
           } else {
             content = <CaseLawDisplay cases={casesData} />;
           }
-        } catch (err) {
+          } catch (err) {
           if (err.name === 'CanceledError' || err.name === 'AbortError') {
-            console.log('Feature fetch aborted:', featureKey);
             setLoadingFeature(false);
             return;
           }
-          console.error('Suggest case law API failed', err);
           content = <div className="text-sm text-red-400">Failed to fetch case law suggestions.</div>;
         }
       } else if (featureKey === "predictive") {
@@ -698,12 +676,9 @@ const NotebookPage = (props) => {
           content = <PredictiveDisplay prediction={pred} />;
         } catch (err) {
           if (err.name === 'CanceledError' || err.name === 'AbortError') {
-            // request was aborted; bail silently
-            console.log('Feature fetch aborted:', featureKey);
             setLoadingFeature(false);
             return;
           }
-          console.error('Predictive API failed', err);
           content = <div className="text-sm text-red-400">Failed to fetch predictive output.</div>;
         }
       }
@@ -712,10 +687,8 @@ const NotebookPage = (props) => {
   setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
     } catch (err) {
       if (err.name === 'CanceledError' || err.name === 'AbortError') {
-        console.log('Feature fetch aborted:', featureKey);
         return;
       }
-      console.error(err);
     } finally {
       // Only clear loading state if this controller is still the active one.
       // If a newer request started while this one was finishing, featureAbortRef.current

@@ -14,9 +14,9 @@ export function initSocket() {
     reconnectionDelay: 1000,
   });
 
-  // attach simple debug logging
-  socket.on('connect_error', (err) => console.warn('socket connect_error', err));
-  socket.on('reconnect_attempt', (count) => console.debug('socket reconnect attempt', count));
+  // suppress socket debug logs in production
+  socket.on('connect_error', (err) => {});
+  socket.on('reconnect_attempt', (count) => {});
 
   return socket;
 }
