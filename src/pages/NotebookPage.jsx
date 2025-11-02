@@ -71,10 +71,20 @@ const FeatureLoader = ({ feature }) => {
   };
   const label = labelMap[feature] || 'Results';
 
+  // Short descriptions explaining what each feature provides while loading
+  const descriptionMap = {
+    summary: 'A concise, structured summary of the document: key facts, issues, judgment and insights.',
+    questions: 'Suggested, high-quality questions you can ask the document or the assistant to explore key points and follow-ups.',
+    timeline: 'An extracted chronology of events, dates and important excerpts from the document.',
+    predictive: 'Predictions and likely outcomes based on the document context and similar precedents.',
+    'case-law': 'Relevant case law, citations and short summaries that relate to this document.',
+  };
+  const description = descriptionMap[feature];
+
   return (
     <div className="h-full w-full flex items-center justify-center">
       <div className="flex flex-col items-center gap-6">
-        <div className="relative flex items-center justify-center">
+          <div className="relative flex items-center justify-center">
           <motion.div
             className="absolute w-56 h-40 rounded-2xl"
             style={{
@@ -102,6 +112,13 @@ const FeatureLoader = ({ feature }) => {
             ))}
           </div>
         </div>
+
+        {/* Description shown below animation, outside of animated cards */}
+        {description && (
+          <div className="mt-4 flex items-center justify-center">
+            <div className="max-w-lg text-center text-sm text-[var(--muted)] px-3">{description}</div>
+          </div>
+        )}
 
         <div className="flex flex-col items-center gap-2">
           <div className="text-sm text-gray-400 font-semibold">Generating {label}…</div>

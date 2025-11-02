@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import api from '../Axios/axios';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/ToastProvider';
 // papi is the AI backend axios instance (used for model answers)
 import papi from '../Axios/paxios';
@@ -13,6 +14,7 @@ const GeneralAsk = () => {
   // using server-authenticated axios instance `api`
   const [chats, setChats] = useState([]); // { id, title, messages: [{role:'user'|'assistant', text, createdAt}], updated }
   const [activeChatId, setActiveChatId] = useState(null);
+  const [autoSendRequest, setAutoSendRequest] = useState(null);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAiThinking, setIsAiThinking] = useState(false);
@@ -74,6 +76,75 @@ const GeneralAsk = () => {
       }
     })();
   }, [openChat, setActive]);
+
+  // Handle incoming navigation state: startQuestion + chatId from Home quick guide
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const st = location?.state || null;
+    if (!st) return;
+    const { startQuestion, chatId } = st;
+    if (!startQuestion) return;
+    (async () => {
+      try {
+        // If chatId provided, set it as active (and create a stub entry)
+        if (chatId) {
+          const stub = { id: chatId, title: 'Quick Guide', messages: [], updated: Date.now(), isNew: true };
+          setChats(prev => [stub, ...prev]);
+          setActive(chatId);
+          setQuery(startQuestion);
+          // schedule auto-send when active chat becomes available
+          setAutoSendRequest({ chatId, question: startQuestion });
+        } else {
+          // no chatId: create via existing create flow then send
+          try {
+            const r = await api.post('/api/general-ask/create', { title: startQuestion.slice(0,60) });
+            const c = r?.data?.chat;
+            if (c && c._id) {
+              const newChat = { id: c._id, title: c.title || 'Quick Guide', messages: [], updated: Date.now(), isNew: true };
+              setChats(prev => [newChat, ...prev]);
+              setActive(c._id);
+              setQuery(startQuestion);
+              setAutoSendRequest({ chatId: c._id, question: startQuestion });
+            }
+          } catch (e) {
+            // fallback: just set query and let user press Ask
+            setQuery(startQuestion);
+          }
+        }
+      } catch (e) {
+        console.warn('auto-start quick guide failed', e);
+      } finally {
+        // clear navigation state so repeated mounts don't resend
+        try { navigate(location.pathname, { replace: true }); } catch(e) {}
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
+
+  // Auto-send handler: when an autoSendRequest is set and the activeChatId becomes available, send the question
+  // Keep a stable ref to the latest sendQuery implementation so the auto-send
+  // effect can call it without needing it in the dependency array.
+  const sendQueryRef = useRef(null);
+
+  useEffect(() => {
+    if (!autoSendRequest) return;
+    const { chatId, question } = autoSendRequest;
+    // If a specific chatId was requested, wait until activeChatId matches it
+    if (chatId) {
+      if (String(activeChatId) === String(chatId)) {
+        // send only if query has been set
+        try { if (question) { setQuery(question); sendQueryRef.current && sendQueryRef.current(); } } catch (e) { console.warn(e); }
+        setAutoSendRequest(null);
+      }
+    } else {
+      // no specific chatId required: if any activeChatId is present, send
+      if (activeChatId) {
+        try { if (question) { setQuery(question); sendQueryRef.current && sendQueryRef.current(); } } catch (e) { console.warn(e); }
+        setAutoSendRequest(null);
+      }
+    }
+  }, [autoSendRequest, activeChatId]);
 
   const createNew = () => {
     // create on backend to obtain persistent chat id
@@ -270,6 +341,11 @@ const GeneralAsk = () => {
       setIsAiThinking(false);
     }
   };
+
+  // keep ref to latest sendQuery implementation (placed after sendQuery is defined)
+  // assign directly so the ref always points to the latest function without
+  // creating a useEffect dependency on the changing function reference.
+  sendQueryRef.current = sendQuery;
 
   const deleteChat = async (id) => {
     try {

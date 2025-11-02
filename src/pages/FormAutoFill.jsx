@@ -70,6 +70,9 @@ const FormAutoFill = () => {
   const pdfUrlRef = useRef(null);
   const initialValuesRef = useRef({ fieldValues: {}, simpleValues: {} });
   const [hasEdits, setHasEdits] = useState(false);
+  // selection box state for manual box creation / adjustment (pixel coords relative to container)
+  const [selectionBox, setSelectionBox] = useState(null);
+  const dragRef = useRef({ mode: null, dir: null, startX: 0, startY: 0, origLeft: 0, origTop: 0, origW: 0, origH: 0 });
   const toast = useToast();
 
   // (simulation removed - component always calls backend APIs; client-side fallbacks remain)
@@ -109,6 +112,117 @@ const FormAutoFill = () => {
     const arr = new Uint8Array(len);
     for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
     return arr;
+  };
+
+  // Create a new selection box centered in the container
+  // (Manual creation removed) selection boxes are opened by clicking detected overlays
+
+  // Pointer handlers for drag/move/resize
+  // Create a new selection box centered in the container
+  const createNewBox = () => {
+    const cont = containerRef.current;
+    if (!cont) return;
+    const rect = cont.getBoundingClientRect();
+    const w = Math.max(40, Math.round(rect.width * 0.3));
+    const h = Math.max(20, Math.round(rect.height * 0.08));
+    const left = Math.round((rect.width - w) / 2);
+    const top = Math.round((rect.height - h) / 2);
+    setSelectionBox({ left, top, width: w, height: h, page: currentPage });
+    setSelectedField(null);
+  };
+  const startMove = (e) => {
+    if (!selectionBox) return;
+    e.preventDefault();
+    dragRef.current = { mode: 'move', dir: null, startX: e.clientX, startY: e.clientY, origLeft: selectionBox.left, origTop: selectionBox.top, origW: selectionBox.width, origH: selectionBox.height };
+    document.addEventListener('mousemove', onPointerMove);
+    document.addEventListener('mouseup', stopPointer);
+  };
+
+  const startResize = (dir, e) => {
+    if (!selectionBox) return;
+    e.stopPropagation(); e.preventDefault();
+    dragRef.current = { mode: 'resize', dir, startX: e.clientX, startY: e.clientY, origLeft: selectionBox.left, origTop: selectionBox.top, origW: selectionBox.width, origH: selectionBox.height };
+    document.addEventListener('mousemove', onPointerMove);
+    document.addEventListener('mouseup', stopPointer);
+  };
+
+  const onPointerMove = (ev) => {
+    const d = dragRef.current;
+    if (!d || !selectionBox) return;
+    const dx = ev.clientX - d.startX;
+    const dy = ev.clientY - d.startY;
+    const cont = containerRef.current;
+    if (!cont) return;
+    const rect = cont.getBoundingClientRect();
+    let left = d.origLeft, top = d.origTop, w = d.origW, h = d.origH;
+    if (d.mode === 'move') {
+      left = Math.max(0, Math.min(Math.round(d.origLeft + dx), Math.max(0, rect.width - w)));
+      top = Math.max(0, Math.min(Math.round(d.origTop + dy), Math.max(0, rect.height - h)));
+    } else if (d.mode === 'resize') {
+      const dir = d.dir;
+      // handle horizontal edges
+      if (dir.includes('e')) {
+        w = Math.max(8, Math.round(d.origW + dx));
+        if (left + w > rect.width) w = Math.max(8, rect.width - left);
+      }
+      if (dir.includes('s')) {
+        h = Math.max(6, Math.round(d.origH + dy));
+        if (top + h > rect.height) h = Math.max(6, rect.height - top);
+      }
+      if (dir.includes('w')) {
+        left = Math.max(0, Math.round(d.origLeft + dx));
+        w = Math.max(8, Math.round(d.origW - dx));
+        if (left + w > rect.width) w = Math.max(8, rect.width - left);
+      }
+      if (dir.includes('n')) {
+        top = Math.max(0, Math.round(d.origTop + dy));
+        h = Math.max(6, Math.round(d.origH - dy));
+        if (top + h > rect.height) h = Math.max(6, rect.height - top);
+      }
+      // clamp
+      left = Math.max(0, Math.min(left, Math.max(0, rect.width - w)));
+      top = Math.max(0, Math.min(top, Math.max(0, rect.height - h)));
+    }
+    setSelectionBox(prev => prev ? ({ ...prev, left, top, width: w, height: h }) : prev);
+  };
+
+  const stopPointer = () => {
+    dragRef.current = { mode: null, dir: null, startX: 0, startY: 0, origLeft: 0, origTop: 0, origW: 0, origH: 0 };
+    document.removeEventListener('mousemove', onPointerMove);
+    document.removeEventListener('mouseup', stopPointer);
+  };
+
+  const saveSelectionAsField = () => {
+    if (!selectionBox) return;
+    const cont = containerRef.current;
+    if (!cont) return;
+    const rect = cont.getBoundingClientRect();
+    const el = isPdf ? pdfCanvasRef.current : imgRef.current;
+    const elRect = el ? el.getBoundingClientRect() : rect;
+    const scaleX = elRect.width / Math.max(1, naturalSize.w);
+    const scaleY = elRect.height / Math.max(1, naturalSize.h);
+    const offsetLeft = elRect.left - rect.left;
+    const offsetTop = elRect.top - rect.top;
+    const natX = Math.round((selectionBox.left - offsetLeft) / scaleX);
+    const natY = Math.round((selectionBox.top - offsetTop) / scaleY);
+    const natW = Math.round(selectionBox.width / scaleX);
+    const natH = Math.round(selectionBox.height / scaleY);
+    if (selectedField && selectedField.id) {
+      // update existing field's bbox
+      const updated = fields.map(f => f.id === selectedField.id ? { ...f, bboxNorm: { x: natX, y: natY, w: natW, h: natH }, page: currentPage } : f);
+      setFields(updated);
+      // reflect new bbox in selectedField reference
+      const updatedField = updated.find(f => f.id === selectedField.id);
+      setSelectedField(updatedField);
+      setSelectionBox(null);
+      toast.success('Field box updated.');
+    } else {
+      const newField = { id: `custom-${Date.now()}`, label_text: 'Custom field', bboxNorm: { x: natX, y: natY, w: natW, h: natH }, page: currentPage };
+      setFields(prev => [...prev, newField]);
+      setSelectedField(newField);
+      setSelectionBox(null);
+      toast.success('Custom field created. Inspect and adjust values in the Field Inspector.');
+    }
   };
 
   // Save and restore UI state (file bytes, fields, values, page) to localStorage
@@ -765,6 +879,13 @@ const FormAutoFill = () => {
 
   const handleOverlayClick = (field) => {
     setSelectedField(field);
+    // open editable selection box for this field so user can move/resize
+    try {
+      const pos = scaleBbox(field.bboxNorm);
+      if (pos) setSelectionBox({ left: pos.left, top: pos.top, width: pos.width, height: pos.height, page: field.page || currentPage });
+    } catch (e) {
+      // ignore
+    }
   };
 
   // draw single text into a canvas context within bbox
@@ -1049,7 +1170,8 @@ const FormAutoFill = () => {
       <div className="mb-4 flex items-center gap-3">
         <input type="file" accept="image/*,.pdf" onChange={onFileChange} />
   <button onClick={analyze} disabled={!file || loading} className="px-4 py-2 bg-blue-600 text-white rounded-md">{loading ? 'Analyzing...' : 'Analyze Form'}</button>
-  <button onClick={downloadFilled} disabled={!hasEdits} className={`px-4 py-2 rounded-md ${hasEdits ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>Download Filled</button>
+      <button onClick={downloadFilled} disabled={!hasEdits} className={`px-4 py-2 rounded-md ${hasEdits ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>Download Filled</button>
+      <button onClick={createNewBox} disabled={!imageUrl && !isPdf} className="px-3 py-2 bg-indigo-600 text-white rounded">New Box</button>
         {/* <button onClick={extractAcroFields} disabled={!file || loadingExtractSimple} className="px-4 py-2 bg-indigo-600 text-white rounded-md">{loadingExtractSimple ? 'Detecting fields...' : 'Detect AcroForm fields'}</button> */}
         {/* Sample loader removed */}
         {/* <button onClick={async () => {
@@ -1099,8 +1221,6 @@ const FormAutoFill = () => {
             const bbox = f.bboxNorm;
             const pos = scaleBbox(bbox);
             if (!bbox || !pos) return null;
-            const value = fieldValues[f.id];
-            const fontSize = Math.max(10, Math.floor(pos.height * 0.6));
             const displayLabel = f.label || f.label_text || f.id;
             return (
               <div key={f.id} onClick={() => handleOverlayClick(f)} style={{ left: pos.left, top: pos.top, width: pos.width, height: pos.height }} className="absolute border-2 text-xs border-blue-400/60 bg-blue-400/8 hover:bg-blue-400/12 cursor-pointer rounded-sm" title={displayLabel}>
@@ -1116,10 +1236,52 @@ const FormAutoFill = () => {
              
             );
           })}
+          {/* editable selection box overlay (when user clicks a detected field) */}
+          {selectionBox && (
+            // render inside the preview container so absolute coords align with the image/pdf canvas
+            <div
+              style={{ left: selectionBox.left, top: selectionBox.top, width: selectionBox.width, height: selectionBox.height, zIndex: 50 }}
+              className="absolute border-2 border-dashed border-yellow-500 bg-yellow-200/6 rounded"
+              onMouseDown={startMove}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* resize handles */}
+              {['nw','n','ne','e','se','s','sw','w'].map((dir) => (
+                <div
+                  key={dir}
+                  onMouseDown={(e) => startResize(dir, e)}
+                  className={`absolute bg-yellow-400 rounded-sm`}
+                  style={{
+                    width: 10,
+                    height: 10,
+                    cursor: `${dir}-resize`,
+                    ...(dir === 'nw' ? { left: -5, top: -5 } : {}),
+                    ...(dir === 'n' ? { left: '50%', top: -5, transform: 'translateX(-50%)' } : {}),
+                    ...(dir === 'ne' ? { right: -5, top: -5 } : {}),
+                    ...(dir === 'e' ? { right: -5, top: '50%', transform: 'translateY(-50%)' } : {}),
+                    ...(dir === 'se' ? { right: -5, bottom: -5 } : {}),
+                    ...(dir === 's' ? { left: '50%', bottom: -5, transform: 'translateX(-50%)' } : {}),
+                    ...(dir === 'sw' ? { left: -5, bottom: -5 } : {}),
+                    ...(dir === 'w' ? { left: -5, top: '50%', transform: 'translateY(-50%)' } : {}),
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="w-1/3 bg-white border rounded-md p-4">
           <h3 className="font-semibold mb-2">Field Inspector</h3>
+          {selectionBox && (
+            <div className="mb-4 p-3 border rounded bg-yellow-50">
+              <div className="text-sm font-medium mb-2">Manual selection</div>
+              <div className="text-xs text-gray-600 mb-2">Left: {selectionBox.left}px, Top: {selectionBox.top}px, W: {selectionBox.width}px, H: {selectionBox.height}px</div>
+              <div className="flex gap-2">
+                <button onClick={saveSelectionAsField} className="px-3 py-2 bg-yellow-600 text-white rounded">Save Box</button>
+                <button onClick={() => setSelectionBox(null)} className="px-3 py-2 bg-gray-100 rounded">Cancel</button>
+              </div>
+            </div>
+          )}
           {/* Simple AcroForm UI: displayed when simpleFields are detected */}
           {simpleFields && simpleFields.length > 0 && (
             <div className="mb-4 p-3 border rounded bg-gray-50">
@@ -1140,6 +1302,8 @@ const FormAutoFill = () => {
           )}
           {!selectedField ? (
             <div className="text-sm text-gray-500">
+
+          {/* (selection overlay rendered inside preview container) */}
               {isPdf ? (
                 `PDF preview shown. Showing page ${currentPage} of ${totalPages}. Click a highlighted box to inspect a field.`
               ) : (

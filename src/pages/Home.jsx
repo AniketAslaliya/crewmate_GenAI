@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
-import api from '../Axios/axios';
 import { useNavigate } from "react-router-dom";
+import api from '../Axios/axios';
 import Button from '../components/ui/Button';
 import DailyLegalDose from '../components/DailyLegalDose';
+import RecentActivity from '../components/RecentActivity';
 import useAuthStore from '../context/AuthContext';
 import { formatDisplayName } from '../utils/name';
 
@@ -21,81 +22,50 @@ const QuickCard = ({ title, desc, emoji, onClick }) => (
 
 const Home = () => {
   const navigate = useNavigate();
+  const [showMore, setShowMore] = useState(false);
+  const moreQuestions = [
+    'How do I file for divorce?',
+    'What should I do if I am arrested?',
+    'How can I write a will?',
+    'How do I get child custody?',
+    'What are my rights if I am wrongfully terminated?',
+    'How do I contest a traffic ticket?',
+    'What is the statute of limitations for a contract claim?',
+    'How can I report workplace harassment?',
+    'How do I register a trademark?',
+    'What are the steps to start a small business?',
+    'Can I change my name legally?',
+    'How do I handle a landlord dispute?'
+  ];
+
+  // When user clicks Ask in the expanded "View more" area, pass the question
+  // to the GeneralAsk page (Quick Guide) and let that page perform the query.
+  // We attempt to create a persistent chat first (best-effort) so GeneralAsk
+  // receives a chatId if available.
+  const handleAskInline = async (question) => {
+    try {
+      let chatId = null;
+      try {
+        const res = await api.post('/api/general-ask/create', { title: question.slice(0,60) });
+        chatId = res?.data?.chat?._id || null;
+      } catch (e) {
+        // ignore create errors; GeneralAsk will create if needed
+      }
+      if (chatId) navigate('/general-ask', { state: { startQuestion: question, chatId } });
+      else navigate('/general-ask', { state: { startQuestion: question } });
+    } catch (e) {
+      // fallback navigation
+      navigate('/general-ask', { state: { startQuestion: question } });
+    }
+  };
 
   const authUser = useAuthStore(s => s.user) || {};
   const isLawyer = authUser?.role === 'lawyer';
-  const [recent, setRecent] = React.useState([]);
-  const [recentLoading, setRecentLoading] = React.useState(false);
+  
 
-  const timeAgo = (iso) => {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      const diff = Math.floor((Date.now() - d.getTime()) / 1000);
-      if (diff < 60) return `${diff}s`;
-      if (diff < 3600) return `${Math.floor(diff/60)}m`;
-      if (diff < 86400) return `${Math.floor(diff/3600)}h`;
-      return `${Math.floor(diff/86400)}d`;
-    } catch (e) { return ''; }
-  };
+ 
 
-  React.useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      setRecentLoading(true);
-      try {
-        let items = [];
-        if (isLawyer) {
-          const [pRes, aRes] = await Promise.all([
-            api.get('/api/lawyers/requests'),
-            api.get('/api/lawyers/connections/lawyer')
-          ]);
-          const pending = (pRes.data.requests || []).map(r => ({
-            key: `req-${r._id}`,
-            title: r.from?.name ? `Request from ${r.from.name}` : 'Incoming request',
-            desc: r.message || '',
-            date: r.createdAt || r.updatedAt,
-          }));
-          const accepted = (aRes.data.connections || []).map(c => ({
-            key: `conn-${c._id}`,
-            title: c.from?.name ? `Connected with ${c.from.name}` : 'Accepted connection',
-            desc: c.chat?.title || '',
-            date: c.updatedAt || c.createdAt,
-          }));
-          items = [...pending, ...accepted];
-        } else {
-          const [pRes, aRes] = await Promise.all([
-            api.get('/api/lawyers/my-requests'),
-            api.get('/api/lawyers/connections/me')
-          ]);
-          const myRequests = (pRes.data.requests || []).map(r => ({
-            key: `req-${r._id}`,
-            title: `You requested ${r.to?.name || 'a lawyer'}`,
-            desc: r.message || '',
-            date: r.createdAt || r.updatedAt,
-          }));
-          const myAccepted = (aRes.data.connections || []).map(c => ({
-            key: `conn-${c._id}`,
-            title: `Connection with ${c.to?.name || 'a lawyer'}`,
-            desc: c.chat?.title || '',
-            date: c.updatedAt || c.createdAt,
-          }));
-          items = [...myRequests, ...myAccepted];
-        }
-
-        // sort by date desc and take first 6
-        items = items.map(it => ({ ...it, date: it.date || new Date().toISOString() }));
-        items.sort((a,b) => new Date(b.date) - new Date(a.date));
-        if (mounted) setRecent(items.slice(0,6).map(it => ({ ...it, time: timeAgo(it.date) })));
-      } catch (err) {
-        console.error('failed to load recent activity', err);
-      } finally {
-        if (mounted) setRecentLoading(false);
-      }
-    };
-    load();
-    return () => { mounted = false; };
-  }, [isLawyer]);
+  
   // const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
 
   // role-aware quick action sets
@@ -123,8 +93,9 @@ const Home = () => {
   }
 
   return (
-    <div className="relative w-full text-[var(--text)] font-sans bg-[var(--bg)] min-h-screen flex flex-col">
-      <main className={`flex-1 min-h-0 overflow-auto px-6 py-8`}> 
+    // hide any accidental horizontal overflow and keep vertical scrolling
+    <div className="relative w-full text-[var(--text)] font-sans bg-[var(--bg)] min-h-screen flex flex-col overflow-x-hidden">
+      <main className={`flex-1 min-h-0 overflow-auto px-4 py-8`}> 
         <div className="max-w-5xl mx-auto">
           <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="bg-card rounded-2xl border p-8 mb-6">
               <div className="flex items-center justify-between gap-6">
@@ -142,6 +113,54 @@ const Home = () => {
               </div>
           </motion.div>
 
+          {/* Quick Guide shortcuts */}
+          {!isLawyer && (
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">Quick Guide</h2>
+              <button onClick={() => setShowMore(s => !s)} className="text-sm text-primary/80">{showMore ? 'View less' : 'View more'}</button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                'How do I file for divorce?',
+                'What should I do if I am arrested?',
+                'How can I write a will?',
+                'How do I get child custody?',
+                'What are my rights if I am wrongfully terminated?',
+              ].slice(0,4).map((q) => (
+                <button key={q} onClick={async () => {
+                  try {
+                    // create a persistent Quick Guide chat and redirect with state so GeneralAsk auto-sends
+                    const res = await api.post('/api/general-ask/create', { title: q.slice(0,60) });
+                    const chat = res?.data?.chat;
+                    const chatId = chat?._id;
+                    navigate('/general-ask', { state: { startQuestion: q, chatId } });
+                  } catch (e) {
+                    // fallback: navigate with question only (GeneralAsk will create a new chat)
+                    navigate('/general-ask', { state: { startQuestion: q } });
+                  }
+                }} className="text-left p-3 bg-white border rounded-lg hover:shadow-sm">{q}</button>
+              ))}
+            </div>
+            {/* expanded "view more" area: show additional questions and allow asking inline without redirect */}
+            {showMore && (
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {moreQuestions.map((q) => (
+                  <div key={q} className="bg-white border rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-left">{q}</div>
+                      <div>
+                        <button onClick={() => handleAskInline(q)} className="text-xs text-primary/90 px-2 py-1 border rounded">Ask</button>
+                      </div>
+                    </div>
+                    {/* answers are handled in GeneralAsk; no inline reply here */}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -156,26 +175,10 @@ const Home = () => {
                 ))}
               </div>
 
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="mt-6 bg-white border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-2">Recent activity</h3>
-                {recentLoading ? (
-                  <div className="text-sm text-gray-500">Loading recent activity…</div>
-                ) : recent.length === 0 ? (
-                  <div className="text-sm text-gray-500">No recent activity — start by uploading a document or creating a Legal Desk.</div>
-                ) : (
-                  <ul className="space-y-3 text-sm">
-                    {recent.map((it) => (
-                      <li key={it.key} className="flex items-start justify-between">
-                        <div>
-                          <div className="font-medium">{it.title}</div>
-                          <div className="text-xs text-gray-500">{it.desc}</div>
-                        </div>
-                        <div className="text-xs text-gray-400 ml-4">{it.time}</div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="mt-6">
+                <RecentActivity maxItems={2} />
               </motion.div>
+
             </div>
 
             <aside className="space-y-4">

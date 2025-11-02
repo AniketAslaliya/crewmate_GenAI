@@ -53,7 +53,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
     };
 
     return (
-      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-gray-50'}`} aria-label={label} title={label}>
+      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-neutral-100'}`} aria-label={label} title={label}>
         <span className="text-lg flex items-center">{icon}</span>
         {isOpen && <span className="text-sm font-medium">{labelText}</span>}
       </button>
@@ -140,7 +140,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         </div>
 
         <div className="mt-3">
-          <button onClick={() => { logout(); navigate('/login'); }} className={`w-full flex items-center ${isOpen ? 'justify-center gap-2 px-4' : 'justify-center'} py-2 rounded-md text-primary/80 hover:bg-gray-50`}>
+          <button onClick={() => { logout(); navigate('/login'); }} className={`w-full flex items-center ${isOpen ? 'justify-center gap-2 px-4' : 'justify-center'} py-2 rounded-md text-primary/80 hover:bg-neutral-100`}>
 <img className="w-4 h-4" src="/logout-svgrepo-com.svg" alt="Logout" />
             {isOpen && <span>Logout</span>}
           </button>
