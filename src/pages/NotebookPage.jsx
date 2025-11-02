@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Timeline from "../components/Timeline"; // Import the Timeline component
@@ -131,6 +131,15 @@ const FeatureLoader = ({ feature }) => {
   );
 };
 
+// Static loader wrappers per feature to ensure each feature uses a distinct
+// loader component instance. This avoids reusing a single dynamic loader
+// that may fail to remount consistently when the feature key changes.
+const SummaryLoader = () => <FeatureLoader feature="summary" />;
+const QuestionsLoader = () => <FeatureLoader feature="questions" />;
+const TimelineLoader = () => <FeatureLoader feature="timeline" />;
+const PredictiveLoader = () => <FeatureLoader feature="predictive" />;
+const CaseLawLoader = () => <FeatureLoader feature="case-law" />;
+
 const NotebookPage = (props) => {
   // Accept id as a prop when rendered inline, otherwise read from route params.
   // This makes the component usable both as an inline panel (parent passes `id`) and
@@ -146,6 +155,8 @@ const NotebookPage = (props) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loadingFeature, setLoadingFeature] = useState(false);
+  // key used to force remounting the feature loader when a new request starts
+  const [featureLoadKey, setFeatureLoadKey] = useState(0);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -456,6 +467,8 @@ const NotebookPage = (props) => {
 
   const fetchFeatureData = async (featureKey, langOverride) => {
     if (!notebook) return;
+    // increment the load key so the FeatureLoader gets a fresh key and remounts
+    setFeatureLoadKey(k => k + 1);
     setLoadingFeature(true);
 
     // Abort previous in-flight feature request (if any)
@@ -704,9 +717,18 @@ const NotebookPage = (props) => {
       }
       console.error(err);
     } finally {
-      // clear controller if it hasn't been replaced
-      if (featureAbortRef.current === controller) featureAbortRef.current = null;
-      setLoadingFeature(false);
+      // Only clear loading state if this controller is still the active one.
+      // If a newer request started while this one was finishing, featureAbortRef.current
+      // will point to the newer controller and we must NOT flip loading to false here
+      // (that would hide the loader for the new request).
+      try {
+        if (featureAbortRef.current === controller) {
+          featureAbortRef.current = null;
+          setLoadingFeature(false);
+        }
+      } catch (e) {
+        // ignore
+      }
     }
   };
 
@@ -926,7 +948,9 @@ const NotebookPage = (props) => {
                     </motion.div>
                   ))}
 
-                  {isAiThinking && <TypingIndicator />}
+                  <AnimatePresence>
+                    {isAiThinking && <TypingIndicator key="typing" />}
+                  </AnimatePresence>
 
                   {followUpQuestions.length > 0 && (  
                     <div className="mt-4 space-y-2">
@@ -958,13 +982,23 @@ const NotebookPage = (props) => {
               </div>
             ) : (
               // Render regular feature output
-              loadingFeature ? (
-                <FeatureLoader feature={activeFeature} />
-              ) : (
-                <motion.div key={activeFeature} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 text-sm text-gray-300">
-                  {featureData[activeFeature]?.content}
-                </motion.div>
-              )
+              <AnimatePresence exitBeforeEnter>
+                {loadingFeature ? (
+                  <motion.div key={`feature-loader-${activeFeature}-${featureLoadKey}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="w-full h-full">
+                    {activeFeature === 'summary' && <SummaryLoader />}
+                    {activeFeature === 'questions' && <QuestionsLoader />}
+                    {activeFeature === 'timeline' && <TimelineLoader />}
+                    {activeFeature === 'predictive' && <PredictiveLoader />}
+                    {activeFeature === 'case-law' && <CaseLawLoader />}
+                    {/* fallback to generic loader for other/unknown features */}
+                    {['summary','questions','timeline','predictive','case-law'].indexOf(activeFeature) === -1 && <FeatureLoader feature={activeFeature} />}
+                  </motion.div>
+                ) : (
+                  <motion.div key={`feature-content-${activeFeature}-${featureLoadKey}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="space-y-4 text-sm text-gray-300">
+                    {featureData[activeFeature]?.content}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             )
           ) : (
             <div className="text-center text-gray-400 mt-16">

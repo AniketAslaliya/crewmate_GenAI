@@ -23,6 +23,7 @@ const GeneralAsk = () => {
   const listRef = useRef(null);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
+  const [optimisticMsgs, setOptimisticMsgs] = useState({}); // { chatId: text }
   const ACTIVE_CHAT_KEY = 'generalAsk:activeChatId';
   const toast = useToast();
 
@@ -171,6 +172,16 @@ const GeneralAsk = () => {
   };
 
   const activeChat = chats.find(c => c.id === activeChatId) || null;
+
+  // If server-side messages are not yet available for a newly-created chat,
+  // show an optimistic user message so the query is visible while the AI responds.
+  const displayMessages = (() => {
+    if (!activeChat) return [];
+    if (activeChat.messages && activeChat.messages.length > 0) return activeChat.messages;
+    const opt = optimisticMsgs && optimisticMsgs[activeChat.id];
+    if (opt) return [{ role: 'user', text: opt, createdAt: new Date().toISOString(), _id: `optimistic-ui-${activeChat.id}` }];
+    return [];
+  })();
 
   // Simple safe formatter: escape HTML, convert **bold** to <strong> and preserve line breaks.
   const escapeHtml = (unsafe) => {
@@ -369,9 +380,21 @@ const GeneralAsk = () => {
       const prevMessageCount = (chatObj && Array.isArray(chatObj.messages)) ? chatObj.messages.length : 0;
       const shouldRenameOnFirstMessage = !!(chatObj && chatObj.isNew && prevMessageCount === 0);
 
-      // optimistic user message
+  // optimistic user message — ensure it's visible even if the chat stub hasn't been added yet
       const userMsg = { role: 'user', text: txt, createdAt: new Date().toISOString(), _id: `optimistic-${Date.now()}` };
-      setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, userMsg], updated: Date.now(), preview: txt } : c));
+      setChats(prev => {
+        // if chat exists, append message; otherwise create a temporary chat entry so the message is visible
+        const found = prev.find(c => String(c.id) === String(chatId));
+        if (found) {
+          return prev.map(c => c.id === chatId ? { ...c, messages: [...(c.messages || []), userMsg], updated: Date.now(), preview: txt } : c);
+        }
+        const temp = { id: chatId, title: 'Quick Guide', messages: [userMsg], updated: Date.now(), isNew: false, preview: txt };
+        return [temp, ...prev];
+      });
+  // remember optimistic text so UI can show it while server response loads
+  setOptimisticMsgs(prev => ({ ...prev, [chatId]: txt }));
+      // ensure this chat is selected in UI
+      setActive(chatId);
   setIsAiThinking(true);
 
         // call the AI backend (papi) to get an answer, then persist to storage backend (api)
@@ -427,7 +450,8 @@ const GeneralAsk = () => {
             setFollowUps((papiRes && papiRes.data && (papiRes.data.followups || papiRes.data.follow_up_questions)) ? (papiRes.data.followups || papiRes.data.follow_up_questions) : []);
           } else {
             const mapped = msgs.map(m => ({ role: (m.role === 'ai' || m.role === 'response') ? 'assistant' : 'user', text: m.content, createdAt: m.createdAt || m.createdAt }));
-            setChats(prev => {
+              setOptimisticMsgs(prev => { const p = { ...prev }; delete p[chatId]; return p; });
+              setChats(prev => {
               const updated = prev.map(c => c.id === chatId ? { ...c, messages: mapped, updated: Date.now(), preview: mapped.length ? mapped[mapped.length-1].text : (c.preview || '') } : c);
               // promote to top
               const picked = updated.find(c => c.id === chatId);
@@ -455,6 +479,7 @@ const GeneralAsk = () => {
         } catch (e) {
           // if fetching messages failed, fall back to optimistic assistant message
           const assistantMsg = { role: 'assistant', text: String(answerText || ''), createdAt: new Date().toISOString() };
+          setOptimisticMsgs(prev => { const p = { ...prev }; delete p[chatId]; return p; });
           setChats(prev => {
             const updated = prev.map(c => c.id === chatId ? { ...c, messages: [...(c.messages || []), assistantMsg], updated: Date.now(), preview: assistantMsg.text } : c);
             const picked = updated.find(c => c.id === chatId);
@@ -518,10 +543,13 @@ const GeneralAsk = () => {
             // normalize whitespace and limit length so the Delete button stays visible
             const normalized = (last || '').replace(/\s+/g, ' ').trim();
             const previewShort = normalized.length > 30 ? normalized.slice(0, 27) + '...' : normalized;
+            // also normalize and trim the chat title so very long titles don't push the delete button
+            const normalizedTitle = (c.title || 'Untitled').replace(/\s+/g, ' ').trim();
+            const titleShort = normalizedTitle.length > 24 ? normalizedTitle.slice(0, 21) + '...' : normalizedTitle;
             return (
               <div key={c.id} className={`p-2 border-b hover:bg-[var(--palette-4)] cursor-pointer flex items-center gap-3 ${c.id===activeChatId? 'bg-[var(--palette-4)]' : ''}`} onClick={()=>openChat(c.id)}>
                 <div className="flex-1">
-                  <div className="font-semibold text-[var(--text)] truncate" title={c.title}>{c.title || 'Untitled'}</div>
+                  <div className="font-semibold text-[var(--text)] truncate" title={normalizedTitle}>{titleShort}</div>
                   <div className="text-sm text-[var(--muted)] truncate" title={normalized}>{previewShort}</div>
                 </div>
                 <div className="flex flex-col items-end" style={{width: 90}}>
@@ -542,8 +570,8 @@ const GeneralAsk = () => {
 
         <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-[var(--palette-4)]">
           {activeChat ? (
-            (activeChat.messages || []).map((m, idx) => (
-              <div key={idx} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            displayMessages.map((m, idx) => (
+              <div key={m._id || idx} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`${m.role === 'user' ? 'bg-[var(--palette-1)] text-white rounded-tl-lg rounded-br-lg rounded-bl-lg' : 'bg-[var(--panel)] text-[var(--text)] rounded-tr-lg rounded-br-lg rounded-bl-lg'} max-w-[70%] px-3 py-2`}>
                   <div className="break-words whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatMessageToHtml(m.text) }} />
                 </div>
