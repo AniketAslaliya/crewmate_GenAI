@@ -3,6 +3,8 @@ import papi from '../Axios/paxios';
 // framer-motion not required here
 import api from '../Axios/axios';
 import { useToast } from '../components/ToastProvider';
+
+// Helper functions (can stay as const, they are at the top level)
 const normalizeBbox = (bbox) => {
   // Support multiple bbox formats returned by backend
   // { xmin, ymin, xmax, ymax } or { x, y, w, h } or { left, top, width, height }
@@ -94,6 +96,10 @@ const FormAutoFill = () => {
       } catch (e) {}
     };
   }, []);
+  
+  // --- FIX: All internal functions changed to `function` declarations ---
+  // This ensures they are all hoisted and available to be called by
+  // useEffects or other handlers, regardless of their definition order.
 
   // helpers: base64 <-> array buffer conversions
   const blobToBase64 = (blob) => new Promise((resolve, reject) => {
@@ -119,7 +125,7 @@ const FormAutoFill = () => {
 
   // Pointer handlers for drag/move/resize
   // Create a new selection box centered in the container
-  const createNewBox = () => {
+  function createNewBox() {
     const cont = containerRef.current;
     if (!cont) return;
     const rect = cont.getBoundingClientRect();
@@ -130,7 +136,7 @@ const FormAutoFill = () => {
     setSelectionBox({ left, top, width: w, height: h, page: currentPage });
     setSelectedField(null);
   };
-  const startMove = (e) => {
+  function startMove(e) {
     if (!selectionBox) return;
     e.preventDefault();
     dragRef.current = { mode: 'move', dir: null, startX: e.clientX, startY: e.clientY, origLeft: selectionBox.left, origTop: selectionBox.top, origW: selectionBox.width, origH: selectionBox.height };
@@ -138,7 +144,7 @@ const FormAutoFill = () => {
     document.addEventListener('mouseup', stopPointer);
   };
 
-  const startResize = (dir, e) => {
+  function startResize(dir, e) {
     if (!selectionBox) return;
     e.stopPropagation(); e.preventDefault();
     dragRef.current = { mode: 'resize', dir, startX: e.clientX, startY: e.clientY, origLeft: selectionBox.left, origTop: selectionBox.top, origW: selectionBox.width, origH: selectionBox.height };
@@ -146,7 +152,7 @@ const FormAutoFill = () => {
     document.addEventListener('mouseup', stopPointer);
   };
 
-  const onPointerMove = (ev) => {
+  function onPointerMove(ev) {
     const d = dragRef.current;
     if (!d || !selectionBox) return;
     const dx = ev.clientX - d.startX;
@@ -186,13 +192,13 @@ const FormAutoFill = () => {
     setSelectionBox(prev => prev ? ({ ...prev, left, top, width: w, height: h }) : prev);
   };
 
-  const stopPointer = () => {
+  function stopPointer() {
     dragRef.current = { mode: null, dir: null, startX: 0, startY: 0, origLeft: 0, origTop: 0, origW: 0, origH: 0 };
     document.removeEventListener('mousemove', onPointerMove);
     document.removeEventListener('mouseup', stopPointer);
   };
 
-  const saveSelectionAsField = () => {
+  function saveSelectionAsField() {
     if (!selectionBox) return;
     const cont = containerRef.current;
     if (!cont) return;
@@ -228,7 +234,7 @@ const FormAutoFill = () => {
   // Save and restore UI state (file bytes, fields, values, page) to localStorage
   const STORAGE_KEY = 'formAutofill:state:v1';
 
-  const saveStateToStorage = async (opts = {}) => {
+  async function saveStateToStorage(opts = {}) {
     try {
       const payload = {
         fileName: file ? file.name : null,
@@ -270,7 +276,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const restoreStateFromStorage = async () => {
+  async function restoreStateFromStorage() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
@@ -286,7 +292,7 @@ const FormAutoFill = () => {
         const f = new File([blob], obj.fileName, { type: obj.fileType || 'application/pdf' });
         setFile(f);
         const url = URL.createObjectURL(f);
-        setImageUrl(url);
+        setImageUrl(url); // --- REFACTOR --- For images, this URL will be the *original* image
         setIsPdf(!!obj.isPdf);
         if (obj.isPdf) {
           try {
@@ -298,8 +304,8 @@ const FormAutoFill = () => {
             console.warn('restore pdf render failed', e);
           }
         } else {
-          // for images, when the imageUrl updates, repaint will be triggered
-          setTimeout(() => repaintValuesOnCanvas(1), 200);
+          // --- REFACTOR --- No longer need to call repaintValuesOnCanvas
+          // The onImageLoad handler will set naturalSize, and the DOM overlays will render
         }
         // mark restored values as initial (not user-edited)
         initialValuesRef.current = { fieldValues: obj.fieldValues || {}, simpleValues: {} };
@@ -337,7 +343,7 @@ const FormAutoFill = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldValues, simpleValues]);
 
-  const onFileChange = (e) => {
+  function onFileChange(e) {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     setFile(f);
@@ -364,7 +370,7 @@ const FormAutoFill = () => {
   };
 
   // --- Simple AcroForm handlers (fillable PDF workflow) ---
-  const extractAcroFields = async () => {
+  async function extractAcroFields() {
     if (!file) { toast.error('Please select a PDF first.'); return; }
     setLoadingExtractSimple(true);
     try {
@@ -384,11 +390,11 @@ const FormAutoFill = () => {
     }
   };
 
-  const handleSimpleValueChange = (name, value) => {
+  function handleSimpleValueChange(name, value) {
     setSimpleValues(prev => ({ ...prev, [name]: value }));
   };
 
-  const fillAndDownload = async () => {
+  async function fillAndDownload() {
     if (!file) { toast.error('No file to fill.'); return; }
     setLoadingFillSimple(true);
     try {
@@ -413,7 +419,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const renderPdfToCanvas = async (file, startPage = 1) => {
+  async function renderPdfToCanvas(file, startPage = 1) {
     setPdfRenderError(null);
     let pdfjs = null;
     try {
@@ -467,15 +473,15 @@ const FormAutoFill = () => {
       await page.render(renderContext).promise;
       setNaturalSize({ w: viewport.width, h: viewport.height });
       setCurrentPage(startPage);
-      // repaint any saved values for this page
-      setTimeout(() => repaintValuesOnCanvas(startPage), 50);
+      // --- REFACTOR --- No longer need to repaint values; DOM overlays will handle it.
+      // setTimeout(() => repaintValuesOnCanvas(startPage), 50);
     } catch (err) {
       console.error('PDF render failed', err);
       setPdfRenderError('Failed to render PDF preview');
     }
   };
 
-  const renderPage = async (pageNum) => {
+  async function renderPage(pageNum) {
     try {
       if (!pdfRef.current) return;
       const pdf = pdfRef.current;
@@ -492,39 +498,20 @@ const FormAutoFill = () => {
       await page.render({ canvasContext: ctx, viewport }).promise;
       setNaturalSize({ w: viewport.width, h: viewport.height });
       setCurrentPage(pageNum);
-      // repaint saved values for the rendered page
-      setTimeout(() => repaintValuesOnCanvas(pageNum), 50);
+      // --- REFACTOR --- No longer need to repaint values; DOM overlays will handle it.
+      // setTimeout(() => repaintValuesOnCanvas(pageNum), 50);
     } catch (err) {
       console.error('renderPage failed', err);
       setPdfRenderError('Failed to render PDF page');
     }
   };
 
-  // repaint saved values onto the current canvas (for PDF pages or images)
-  const repaintValuesOnCanvas = (pageNum) => {
-    try {
-      if (isPdf) {
-        // for pdf, draw values for fields on the given page onto the pdf canvas
-        fields.forEach(f => {
-          const fPage = f.page || 1;
-          if (fPage !== pageNum) return;
-          const val = fieldValues[f.id];
-          if (val) drawValueOnCanvas(f, val);
-        });
-      } else {
-        // for images, create a new image with values baked in
-        const canvas = applyAllValuesToCanvas();
-        if (!canvas) return;
-        const dataUrl = canvas.toDataURL('image/png');
-        setImageUrl(dataUrl);
-      }
-    } catch (err) {
-      console.warn('repaintValuesOnCanvas failed', err);
-    }
-  };
+  // --- REFACTOR --- repaintValuesOnCanvas is no longer needed.
+  // Values are rendered as DOM overlays in the JSX.
+  // const repaintValuesOnCanvas = (pageNum) => { ... };
 
   // heuristic detection of rectangular light fields from the rendered canvas
-  const detectFieldBoxes = async () => {
+  async function detectFieldBoxes() {
     try {
       // get source canvas: pdf canvas if PDF, otherwise draw image to offscreen canvas
       let srcCanvas = null;
@@ -651,7 +638,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const analyze = async () => {
+  async function analyze() {
     if (!file) { toast.error('Please upload a form image or PDF first.'); return; }
     setLoading(true);
     try {
@@ -730,12 +717,12 @@ const FormAutoFill = () => {
 
   // sample loader removed - use backend analyze endpoint instead
 
-  const onImageLoad = (e) => {
+  function onImageLoad(e) {
     const img = e.target;
     setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
   };
 
-  const scaleBbox = (bbox) => {
+  function scaleBbox(bbox) {
     if (!bbox) return null;
     const el = isPdf ? pdfCanvasRef.current : imgRef.current;
     if (!el) return null;
@@ -764,7 +751,7 @@ const FormAutoFill = () => {
   };
 
   // --- pdf.js based label + thumbnail resolver ---
-  const resolveAllFieldLabels = async (fieldsList, pdfBuffer) => {
+  async function resolveAllFieldLabels(fieldsList, pdfBuffer) {
     if (!fieldsList || !fieldsList.length || !pdfBuffer) return;
     let pdfjs = null;
     try {
@@ -797,7 +784,7 @@ const FormAutoFill = () => {
             const left = Math.min(vpRect[0], vpRect[2]);
             const top = Math.min(vpRect[1], vpRect[3]);
             const width = Math.abs(vpRect[2] - vpRect[0]);
-            const height = Math.abs(vpRect[3] - vpRect[1]);
+            const height = Math.abs(vpRect[3] - vpRect[0]);
 
             // get nearby text
             const textContent = await page.getTextContent();
@@ -877,19 +864,22 @@ const FormAutoFill = () => {
     }
   };
 
-  const handleOverlayClick = (field) => {
+  function handleOverlayClick(field) {
+    // --- REFACTOR ---
+    // Clicking an overlay just selects the field for value editing.
+    // It no longer immediately enables the resizable selectionBox.
     setSelectedField(field);
-    // open editable selection box for this field so user can move/resize
-    try {
-      const pos = scaleBbox(field.bboxNorm);
-      if (pos) setSelectionBox({ left: pos.left, top: pos.top, width: pos.width, height: pos.height, page: field.page || currentPage });
-    } catch (e) {
-      // ignore
-    }
+    // (Old logic removed)
+    // try {
+    //   const pos = scaleBbox(field.bboxNorm);
+    //   if (pos) setSelectionBox({ left: pos.left, top: pos.top, width: pos.width, height: pos.height, page: field.page || currentPage });
+    // } catch (e) {
+    //   // ignore
+    // }
   };
 
   // draw single text into a canvas context within bbox
-  const drawTextOnCtx = (ctx, bbox, text) => {
+  function drawTextOnCtx(ctx, bbox, text) {
     if (!ctx || !bbox || !text) return;
     const padding = Math.max(4, Math.floor(bbox.h * 0.12));
     const fontSize = Math.max(10, Math.floor(bbox.h * 0.65));
@@ -917,36 +907,17 @@ const FormAutoFill = () => {
     ctx.restore();
   };
 
-  const drawValueOnCanvas = (field, value) => {
-    if (!field) return;
-    const bbox = field.bboxNorm;
-    if (!bbox) return;
-    if (isPdf && pdfCanvasRef.current) {
-      const canvas = pdfCanvasRef.current;
-      const ctx = canvas.getContext('2d');
-      drawTextOnCtx(ctx, bbox, value || '');
-    } else if (!isPdf && imgRef.current) {
-      // draw on offscreen canvas and update imageUrl to the new filled image
-      const img = imgRef.current;
-      const off = document.createElement('canvas');
-      const w = naturalSize.w || img.naturalWidth || img.width;
-      const h = naturalSize.h || img.naturalHeight || img.height;
-      off.width = w; off.height = h;
-      const ctx = off.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      // bbox is relative to natural size
-      drawTextOnCtx(ctx, bbox, value || '');
-      const dataUrl = off.toDataURL('image/png');
-      // update displayed image
-      setImageUrl(dataUrl);
-      // update naturalSize
-      setNaturalSize({ w, h });
-    }
-  };
+  // --- REFACTOR --- drawValueOnCanvas is no longer used for live preview
+  // It permanently mutates the canvas, which we want to avoid.
+  // The DOM overlay renders the preview instead.
+  // const drawValueOnCanvas = (field, value) => { ... };
 
-  const applyAllValuesToCanvas = () => {
+  function applyAllValuesToCanvas() {
     // apply all fieldValues onto a canvas copy for download
     if (isPdf && pdfCanvasRef.current) {
+      // --- REFACTOR --- This path is no longer used for download.
+      // The downloadFilled function now handles multi-page rendering.
+      // We keep the logic for image-based download.
       const src = pdfCanvasRef.current;
       const copy = document.createElement('canvas');
       copy.width = src.width; copy.height = src.height;
@@ -954,18 +925,29 @@ const FormAutoFill = () => {
       ctx.drawImage(src, 0, 0);
       fields.forEach(f => {
         const val = fieldValues[f.id];
-        if (val) drawTextOnCtx(ctx, f.bboxNorm, val);
+        // --- REFACTOR --- Only draw fields for the *current page*
+        const fPage = f.page || 1;
+        if (val && fPage === currentPage) {
+            drawTextOnCtx(ctx, f.bboxNorm, val);
+        }
       });
       return copy;
     }
     if (!isPdf && imgRef.current) {
+      // --- REFACTOR --- This path *is* used for image download.
+      // It must draw onto a *clean* image, not one that already has
+      // values baked in (which imgRef.current might be if we used drawValueOnCanvas).
+      // Since `onFileChange` and `restore` now set `imageUrl` to the *original*
+      // file URL, `imgRef.current` should be the clean source image.
       const img = imgRef.current;
       const off = document.createElement('canvas');
       const w = naturalSize.w || img.naturalWidth || img.width;
       const h = naturalSize.h || img.naturalHeight || img.height;
       off.width = w; off.height = h;
       const ctx = off.getContext('2d');
+      // Draw the original image
       ctx.drawImage(img, 0, 0, w, h);
+      // Now draw *all* values on top
       fields.forEach(f => {
         const val = fieldValues[f.id];
         if (val) drawTextOnCtx(ctx, f.bboxNorm, val);
@@ -977,7 +959,7 @@ const FormAutoFill = () => {
 
   // helper removed: using jsPDF instead of pdf-lib, so no longer need dataURL->Uint8 conversion
 
-  const downloadFilled = async () => {
+  async function downloadFilled() {
     try {
       // For PDFs: render each page to an offscreen canvas, draw only that page's values,
       // then assemble into a multi-page PDF. This avoids overlays from other pages
@@ -991,15 +973,17 @@ const FormAutoFill = () => {
         let pdfOut = null;
 
         for (let p = 1; p <= num; p++) {
+          // --- REFACTOR --- This loop correctly renders each page *fresh* from the original PDF
           const page = await pdfDoc.getPage(p);
           const viewport = page.getViewport({ scale: 1 });
           const off = document.createElement('canvas');
           off.width = Math.round(viewport.width);
           off.height = Math.round(viewport.height);
           const ctx = off.getContext('2d');
+          // 1. Render the clean PDF page
           await page.render({ canvasContext: ctx, viewport }).promise;
 
-          // draw only values that belong to this page
+          // 2. Draw only values that belong to this page
           fields.forEach(f => {
             const fPage = f.page || 1;
             if (fPage !== p) return;
@@ -1034,6 +1018,8 @@ const FormAutoFill = () => {
         setTimeout(() => URL.revokeObjectURL(url), 2000);
       } else {
         // image path: previous behavior (single page)
+        // --- REFACTOR --- This now relies on `applyAllValuesToCanvas`
+        // which renders values onto the *original* source image.
         const canvas = applyAllValuesToCanvas();
   if (!canvas) { toast.error('Nothing to download'); return; }
         const dataUrl = canvas.toDataURL('image/png');
@@ -1063,7 +1049,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const suggestField = async (field) => {
+  async function suggestField(field) {
     if (!field) return;
     setSuggestLoading(true);
     try {
@@ -1080,7 +1066,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const autoFillAll = async () => {
+  async function autoFillAll() {
     setSuggestLoading(true);
     try {
       const payload = { context: fieldValues };
@@ -1096,7 +1082,7 @@ const FormAutoFill = () => {
     }
   };
 
-  const askAi = async (field) => {
+  async function askAi(field) {
   if (!aiPrompt) { toast.error('Please enter a question or prompt for the AI.'); return; }
     setAiLoading(true);
     try {
@@ -1114,7 +1100,7 @@ const FormAutoFill = () => {
   };
 
   // --- user-help helpers ---
-  const examplesForField = (field) => {
+  function examplesForField(field) {
     if (!field) return [];
     const label = (field.label_text || field.id || '').toLowerCase();
     if (label.includes('given') || label.includes('first')) return ['John', 'Alice', 'Maria'];
@@ -1128,7 +1114,7 @@ const FormAutoFill = () => {
     return ['Example value'];
   };
 
-  const guideQuestionsForField = (field) => {
+  function guideQuestionsForField(field) {
     if (!field) return [];
     const label = (field.label_text || field.id || '').toLowerCase();
     if (label.includes('given') || label.includes('first')) return [
@@ -1146,11 +1132,11 @@ const FormAutoFill = () => {
 
   // simulation helpers removed - backend assist/suggest endpoints are used instead
 
-  const handleValueChange = (id, value) => {
+  function handleValueChange(id, value) {
     setFieldValues(prev => ({ ...prev, [id]: value }));
   };
 
-  const exportValues = async () => {
+  async function exportValues() {
     const payload = Object.entries(fieldValues).map(([id, value]) => ({ id, value }));
     try {
       await papi.post('/api/forms/export', { values: payload });
@@ -1201,12 +1187,14 @@ const FormAutoFill = () => {
           {imageUrl ? (
             isPdf ? (
               <div className="w-full h-auto">
+                {/* --- REFACTOR --- This canvas is now *only* for rendering the clean PDF page */}
                 <canvas ref={pdfCanvasRef} />
                 {pdfRenderError && (
                   <div className="p-3 mt-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded">{pdfRenderError}</div>
                 )}
               </div>
             ) : (
+              // --- REFACTOR --- This img src is the *original* image
               <img ref={imgRef} src={imageUrl} alt="form" onLoad={onImageLoad} className="w-full h-auto block" />
             )
           ) : (
@@ -1222,14 +1210,45 @@ const FormAutoFill = () => {
             const pos = scaleBbox(bbox);
             if (!bbox || !pos) return null;
             const displayLabel = f.label || f.label_text || f.id;
+            
+            // --- REFACTOR --- Get the value from state to display in the overlay
+            const value = fieldValues[f.id];
+            const fontSize = Math.max(10, Math.min(18, Math.round(pos.height * 0.7))); // Auto-scale font
+            
             return (
-              <div key={f.id} onClick={() => handleOverlayClick(f)} style={{ left: pos.left, top: pos.top, width: pos.width, height: pos.height }} className="absolute border-2 text-xs border-blue-400/60 bg-blue-400/8 hover:bg-blue-400/12 cursor-pointer rounded-sm" title={displayLabel}>
-                {/* show entered value as a DOM overlay so it's visible immediately */}
-                {/* {value ? (
-                  <div className="pointer-events-none text-xs overflow-hidden text-left" style={{ padding: 4, fontSize: fontSize, lineHeight: '1', color: '#000' }}>
+              <div 
+                key={f.id} 
+                onClick={() => handleOverlayClick(f)} 
+                style={{ 
+                  left: pos.left, 
+                  top: pos.top, 
+                  width: pos.width, 
+                  height: pos.height,
+                  // --- REFACTOR --- Highlight if selected
+                  borderColor: (selectedField && selectedField.id === f.id) ? '#F59E0B' : '#60A5FA',
+                  backgroundColor: (selectedField && selectedField.id === f.id) ? 'rgba(245, 158, 11, 0.1)' : 'rgba(96, 165, 250, 0.08)',
+                }} 
+                className="absolute border-2 text-xs hover:bg-blue-400/12 cursor-pointer rounded-sm" 
+                title={displayLabel}
+              >
+                {/* --- REFACTOR --- show entered value as a DOM overlay */}
+                {value ? (
+                  <div 
+                    className="pointer-events-none overflow-hidden text-left text-black" 
+                    style={{ 
+                      paddingLeft: '4px',
+                      paddingRight: '4px',
+                      paddingTop: '2px', // Adjust padding for vertical centering
+                      fontSize: fontSize, 
+                      lineHeight: 1.2, // Use line-height for better centering
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'center', // Vertical center
+                    }}
+                  >
                     {String(value)}
                   </div>
-                ) : null} */}
+                ) : null}
                 {/* tiny label badge */}
                 {/* <div className="pointer-events-none absolute left-0 -top-5 bg-white/90 text-[0.5] text-gray-700 px-1 rounded">{displayLabel.length > 24 ? displayLabel.slice(0,24) + '…' : displayLabel}</div> */}
               </div>
@@ -1272,17 +1291,10 @@ const FormAutoFill = () => {
 
         <div className="w-1/3 bg-white border rounded-md p-4">
           <h3 className="font-semibold mb-2">Field Inspector</h3>
-          {selectionBox && (
-            <div className="mb-4 p-3 border rounded bg-yellow-50">
-              <div className="text-sm font-medium mb-2">Manual selection</div>
-              <div className="text-xs text-gray-600 mb-2">Left: {selectionBox.left}px, Top: {selectionBox.top}px, W: {selectionBox.width}px, H: {selectionBox.height}px</div>
-              <div className="flex gap-2">
-                <button onClick={saveSelectionAsField} className="px-3 py-2 bg-yellow-600 text-white rounded">Save Box</button>
-                <button onClick={() => setSelectionBox(null)} className="px-3 py-2 bg-gray-100 rounded">Cancel</button>
-              </div>
-            </div>
-          )}
-          {/* Simple AcroForm UI: displayed when simpleFields are detected */}
+
+          {/* --- REFACTOR --- Cleaned up inspector logic --- */}
+
+          {/* Workflow 1: Simple AcroForm UI */}
           {simpleFields && simpleFields.length > 0 && (
             <div className="mb-4 p-3 border rounded bg-gray-50">
               <div className="text-sm font-medium mb-2">Detected form fields (fillable PDF)</div>
@@ -1300,106 +1312,140 @@ const FormAutoFill = () => {
               </div>
             </div>
           )}
-          {!selectedField ? (
-            <div className="text-sm text-gray-500">
-
-          {/* (selection overlay rendered inside preview container) */}
-              {isPdf ? (
-                `PDF preview shown. Showing page ${currentPage} of ${totalPages}. Click a highlighted box to inspect a field.`
-              ) : (
-                "Click a highlighted box on the left to inspect a field."
-              )}
-            </div>
-          ) : (
-            <div>
-              <div className="text-sm text-gray-700 font-medium mb-1">{selectedField.label_text || selectedField.id}</div>
-              {/* <div className="text-xs text-gray-500 mb-3">Field ID: {selectedField.id}</div> */}
-              {selectedField.description && (
-                <div>
-                  {/* <div className="text-xs text-gray-500 mb-1">Field Description</div> */}
-                  <div className="text-s text-blue-700 font-bold mb-3 whitespace-pre-wrap">{selectedField.description}</div>
-                </div>
-              )}
-
-              <div className="mb-3">
-                <div className="text-xs text-gray-500 mb-1">Suggestions</div>
-                <div className="flex flex-wrap gap-2">
-                  {(selectedField.suggestions || []).map((s, idx) => (
-                    <button key={idx} onClick={() => handleValueChange(selectedField.id, s)} className="px-2 py-1 bg-gray-100 rounded text-sm">{s}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="mb-3">
-                <div className="text-xs text-gray-500 mb-2">Examples</div>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {examplesForField(selectedField).map((ex, i) => (
-                    <button key={i} onClick={() => handleValueChange(selectedField.id, ex)} className="px-2 py-1 bg-gray-50 border rounded text-sm">{ex}</button>
-                  ))}
-                </div>
-               
-              </div>
-
-              {guideActive && (
-                <div className="mb-3 p-3 bg-gray-50 rounded">
-                  <div className="text-sm font-medium mb-2">Guided questions</div>
-                  {guideQuestionsForField(selectedField).map((q, idx) => (
-                    <div key={q.id} className={`mb-2 ${guideStep === idx ? '' : 'hidden'}`}>
-                      <div className="text-xs text-gray-600 mb-1">{q.text}</div>
-                      {q.type === 'choice' ? (
-                        <div className="flex gap-2">
-                          {q.options.map(opt => (
-                            <button key={opt} onClick={() => setGuideAnswers(prev => ({ ...prev, [q.id]: opt }))} className={`px-3 py-2 rounded ${guideAnswers[q.id] === opt ? 'bg-indigo-600 text-white' : 'bg-white border'}`}>{opt}</button>
-                          ))}
-                        </div>
-                      ) : (
-                        <input value={guideAnswers[q.id] || ''} onChange={(e) => setGuideAnswers(prev => ({ ...prev, [q.id]: e.target.value }))} className="w-full border rounded px-3 py-2" />
-                      )}
-                    </div>
-                  ))}
-
-                  <div className="flex items-center gap-2 mt-2">
-                    <button onClick={() => setGuideStep(s => Math.max(0, s - 1))} className="px-3 py-2 bg-gray-100 rounded">Back</button>
-                    <button onClick={() => setGuideStep(s => s + 1)} className="px-3 py-2 bg-gray-100 rounded">Next</button>
-                    <button onClick={() => {
-                      const guidePrompt = Object.entries(guideAnswers || {}).map(([k, v]) => `${k}: ${v}`).join('; ');
-                      setAiPrompt(guidePrompt);
-                      askAi(selectedField);
-                    }} className="px-3 py-2 bg-yellow-500 text-white rounded">Show suggestion</button>
-                    <button onClick={() => setGuideActive(false)} className="px-3 py-2 bg-gray-200 rounded">Done</button>
+          
+          {/* Workflow 2: Complex Analysis UI (only if simple fields aren't active) */}
+          {(!simpleFields || simpleFields.length === 0) && (
+            <>
+              {/* Panel 2a: Manual Box Selection (if active) */}
+              {selectionBox && (
+                <div className="mb-4 p-3 border rounded bg-yellow-50">
+                  <div className="text-sm font-medium mb-2">
+                    {selectedField ? 'Editing field box' : 'Creating new box'}
+                  </div>
+                  <div className="text-xs text-gray-600 mb-2">Left: {selectionBox.left}px, Top: {selectionBox.top}px, W: {selectionBox.width}px, H: {selectionBox.height}px</div>
+                  <div className="flex gap-2">
+                    <button onClick={saveSelectionAsField} className="px-3 py-2 bg-yellow-600 text-white rounded">Save Box</button>
+                    <button onClick={() => setSelectionBox(null)} className="px-3 py-2 bg-gray-100 rounded">Cancel</button>
                   </div>
                 </div>
               )}
 
-              <div className="mb-3">
-                <label className="text-xs text-gray-500">Value</label>
-                <input value={fieldValues[selectedField.id] || ''} onChange={(e) => handleValueChange(selectedField.id, e.target.value)} className="w-full mt-1 border rounded px-3 py-2" />
-              </div>
+              {/* Panel 2b: Selected Field Inspector (if no box is being edited) */}
+              {!selectionBox && selectedField && (
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="text-sm text-gray-700 font-medium">{selectedField.label_text || selectedField.id}</div>
+                    {/* --- REFACTOR --- Add "Edit Box" button */}
+                    <button 
+                      onClick={() => {
+                        const pos = scaleBbox(selectedField.bboxNorm);
+                        if (pos) setSelectionBox({ left: pos.left, top: pos.top, width: pos.width, height: pos.height, page: selectedField.page || currentPage });
+                      }} 
+                      className="px-3 py-1 bg-gray-200 text-sm rounded hover:bg-gray-300"
+                    >
+                      Edit Box
+                    </button>
+                  </div>
+                  {/* <div className="text-xs text-gray-500 mb-3">Field ID: {selectedField.id}</div> */}
+                  {selectedField.description && (
+                    <div>
+                      {/* <div className="text-xs text-gray-500 mb-1">Field Description</div> */}
+                      <div className="text-s text-blue-700 font-bold mb-3 whitespace-pre-wrap">{selectedField.description}</div>
+                    </div>
+                  )}
 
-              <div className="mb-3">
-                
-                {suggestions && suggestions.length > 0 && (
-                  <div className="mt-2 text-sm text-gray-700">
+                  <div className="mb-3">
                     <div className="text-xs text-gray-500 mb-1">Suggestions</div>
                     <div className="flex flex-wrap gap-2">
-                      {suggestions.map((s, i) => (
-                        <button key={i} onClick={() => handleValueChange(selectedField.id, s)} className="px-2 py-1 bg-gray-100 rounded text-sm">{s}</button>
+                      {(selectedField.suggestions || []).map((s, idx) => (
+                        <button key={idx} onClick={() => handleValueChange(selectedField.id, s)} className="px-2 py-1 bg-gray-100 rounded text-sm">{s}</button>
                       ))}
                     </div>
                   </div>
-                )}
-              </div>
+                  <div className="mb-3">
+                    <div className="text-xs text-gray-500 mb-2">Examples</div>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {examplesForField(selectedField).map((ex, i) => (
+                        <button key={i} onClick={() => handleValueChange(selectedField.id, ex)} className="px-2 py-1 bg-gray-50 border rounded text-sm">{ex}</button>
+                      ))}
+                    </div>
+                  
+                  </div>
 
-              <div className="flex items-center justify-between">
-                <button onClick={() => { drawValueOnCanvas(selectedField, fieldValues[selectedField.id] || ''); setSelectedField(null); }} className="px-3 py-2 bg-gray-100 rounded">Done</button>
-                <div className="flex items-center gap-2">
-                  {/* <button onClick={() => exportValues()} className="px-3 py-2 bg-blue-600 text-white rounded">Export All</button> */}
-                  <button onClick={() => downloadFilled()} className="px-3 py-2 bg-green-700 text-white rounded">Download Filled</button>
+                  {guideActive && (
+                    <div className="mb-3 p-3 bg-gray-50 rounded">
+                      <div className="text-sm font-medium mb-2">Guided questions</div>
+                      {guideQuestionsForField(selectedField).map((q, idx) => (
+                        <div key={q.id} className={`mb-2 ${guideStep === idx ? '' : 'hidden'}`}>
+                          <div className="text-xs text-gray-600 mb-1">{q.text}</div>
+                          {q.type === 'choice' ? (
+                            <div className="flex gap-2">
+                              {q.options.map(opt => (
+                                <button key={opt} onClick={() => setGuideAnswers(prev => ({ ...prev, [q.id]: opt }))} className={`px-3 py-2 rounded ${guideAnswers[q.id] === opt ? 'bg-indigo-600 text-white' : 'bg-white border'}`}>{opt}</button>
+                              ))}
+                            </div>
+                          ) : (
+                            <input value={guideAnswers[q.id] || ''} onChange={(e) => setGuideAnswers(prev => ({ ...prev, [q.id]: e.target.value }))} className="w-full border rounded px-3 py-2" />
+                          )}
+                        </div>
+                      ))}
+
+                      <div className="flex items-center gap-2 mt-2">
+                        <button onClick={() => setGuideStep(s => Math.max(0, s - 1))} className="px-3 py-2 bg-gray-100 rounded">Back</button>
+                        <button onClick={() => setGuideStep(s => s + 1)} className="px-3 py-2 bg-gray-100 rounded">Next</button>
+                        <button onClick={() => {
+                          const guidePrompt = Object.entries(guideAnswers || {}).map(([k, v]) => `${k}: ${v}`).join('; ');
+                          setAiPrompt(guidePrompt);
+                          askAi(selectedField);
+                        }} className="px-3 py-2 bg-yellow-500 text-white rounded">Show suggestion</button>
+                        <button onClick={() => setGuideActive(false)} className="px-3 py-2 bg-gray-200 rounded">Done</button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mb-3">
+                    <label className="text-xs text-gray-500">Value</label>
+                    <input value={fieldValues[selectedField.id] || ''} onChange={(e) => handleValueChange(selectedField.id, e.target.value)} className="w-full mt-1 border rounded px-3 py-2" />
+                  </div>
+
+                  <div className="mb-3">
+                    
+                    {suggestions && suggestions.length > 0 && (
+                      <div className="mt-2 text-sm text-gray-700">
+                        <div className="text-xs text-gray-500 mb-1">Suggestions</div>
+                        <div className="flex flex-wrap gap-2">
+                          {suggestions.map((s, i) => (
+                            <button key={i} onClick={() => handleValueChange(selectedField.id, s)} className="px-2 py-1 bg-gray-100 rounded text-sm">{s}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    {/* --- REFACTOR --- "Done" button just closes the inspector */}
+                    <button onClick={() => setSelectedField(null)} className="px-3 py-2 bg-gray-100 rounded">Done</button>
+                    <div className="flex items-center gap-2">
+                      {/* <button onClick={() => exportValues()} className="px-3 py-2 bg-blue-600 text-white rounded">Export All</button> */}
+                      <button onClick={() => downloadFilled()} className="px-3 py-2 bg-green-700 text-white rounded">Download Filled</button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
               
-              
-            </div>
+              {/* Panel 2c: Placeholder (no selection) */}
+              {!selectionBox && !selectedField && (
+                <div className="text-sm text-gray-500">
+                  {isPdf ? (
+                    `PDF preview shown. Showing page ${currentPage} of ${totalPages}. Click a highlighted box to inspect and fill a field.`
+                  ) : (
+                    "Click a highlighted box on the left to inspect and fill a field."
+                  )}
+                </div>
+              )}
+            </>
           )}
+
         </div>
       </div>
     </div>
