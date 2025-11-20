@@ -3,6 +3,11 @@ import { Chat } from "../models/Chat.js";
 // Upload & process ANY document → create chat
 export const uploadDocument = async (req, res) => {
   try {
+    // Guest users cannot upload documents
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot upload documents. Please sign up to continue.' });
+    }
+    
     const chat = new Chat({
       user: req.user.id,
       title: req.body.title || "Untitled notebook",
@@ -25,6 +30,11 @@ export const uploadDocument = async (req, res) => {
 
 export const deleteChat = async (req, res) => {
   try {
+    // Guest users cannot delete chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot delete chats.' });
+    }
+    
     const { id } = req.params;
 
     const chat = await Chat.findOneAndDelete({
@@ -45,6 +55,11 @@ export const deleteChat = async (req, res) => {
 // Get all chats of logged-in user
 export const getUserChats = async (req, res) => {
   try {
+    // Guest users have no chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.json({ chats: [] });
+    }
+    
     // return only legal-desk chats (dossiers) for the user's notebook view
     const chats = await Chat.find({ user: req.user.id, channel: 'legal_desk' }).sort({ createdAt: -1 });
 
@@ -56,6 +71,11 @@ export const getUserChats = async (req, res) => {
 
 export const getChatbyId = async (req, res) => {
   try {
+    // Guest users cannot fetch chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot access chats.' });
+    }
+    
     const { id } = req.params;
 
     const chat = await Chat.findOne({

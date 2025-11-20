@@ -1,0 +1,85 @@
+# Cloud Build configuration for building and deploying the backend to Cloud Run
+# This file enables automated deployments with zero-downtime rollouts
+
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/legal-sahai-backend:$SHORT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/legal-sahai-backend:latest'
+      - '-f'
+      - 'Dockerfile'
+      - '.'
+    dir: 'backend'
+
+  # Step 2: Push the image to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/legal-sahai-backend:$SHORT_SHA'
+
+  # Step 3: Push the 'latest' tag
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/legal-sahai-backend:latest'
+
+  # Step 4: Deploy to Cloud Run with zero-downtime settings
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'legal-sahai-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/legal-sahai-backend:$SHORT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '5000'
+      # Autoscaling settings
+      - '--min-instances'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--cpu'
+      - '2'
+      - '--memory'
+      - '2Gi'
+      # Zero-downtime deployment settings
+      - '--no-traffic'  # Don't send traffic to new revision immediately
+      - '--tag'
+      - 'candidate'
+    dir: 'backend'
+
+  # Step 5: Gradually migrate traffic (manual approval recommended for production)
+  # Uncomment this step for automatic traffic migration
+  # - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  #   entrypoint: gcloud
+  #   args:
+  #     - 'run'
+  #     - 'services'
+  #     - 'update-traffic'
+  #     - 'legal-sahai-backend'
+  #     - '--to-latest'
+  #     - '--region'
+  #     - 'us-central1'
+
+# Timeout for the entire build
+timeout: '1200s'
+
+# Images to be pushed to Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/legal-sahai-backend:$SHORT_SHA'
+  - 'gcr.io/$PROJECT_ID/legal-sahai-backend:latest'
+
+# Options
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

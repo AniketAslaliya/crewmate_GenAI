@@ -1,6 +1,7 @@
 import { Message } from "../models/Message.js";
 import crypto from "crypto";
 import mongoose from 'mongoose';
+import { uploadToDropbox } from "../utils/dropbox.js";
 
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16; // AES requires 16-byte IV
@@ -53,12 +54,19 @@ const decrypt = (encryptedText) => {
 // 📩 Send a message
 export const sendMessage = async (req, res) => {
   try {
+    // Guest users cannot send messages
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot send messages. Please sign up to continue.' });
+    }
+    
     const { chatId, content, role } = req.body;
+    const file = req.file;
 
-    if (!chatId || !content || !role) {
+    // At least content or file must be provided
+    if (!chatId || !role || (!content && !file)) {
       return res
         .status(400)
-        .json({ error: "chatId, content, and role are required" });
+        .json({ error: "chatId, role, and (content or file) are required" });
     }
 
     // validate chatId is an ObjectId
@@ -66,14 +74,37 @@ export const sendMessage = async (req, res) => {
       return res.status(400).json({ error: 'invalid chatId' });
     }
 
-    // Encrypt the message content
-    const encryptedContent = encrypt(content);
+    // Encrypt the message content if provided
+    const encryptedContent = content ? encrypt(content) : '';
+
+    // Handle file upload to Dropbox if file exists
+    let attachmentData = null;
+    if (file) {
+      try {
+        const uploadResult = await uploadToDropbox(
+          file.buffer,
+          file.originalname,
+          `/chat-files/${chatId}`
+        );
+        attachmentData = {
+          url: uploadResult.url,
+          filename: uploadResult.filename,
+          fileType: file.mimetype,
+          fileSize: file.size,
+          uploadedAt: new Date()
+        };
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return res.status(500).json({ error: 'Failed to upload file' });
+      }
+    }
 
     const message = new Message({
       chat: chatId,
       user: req.user.id,
       role,
       content: encryptedContent, // Save encrypted content
+      attachment: attachmentData
     });
 
     await message.save();
