@@ -44,6 +44,11 @@ const encrypt = (text) => {
 // Create a new chat container for General Ask (channel: 'general_ask')
 export const createGeneralChat = async (req, res) => {
   try {
+    // Guest users cannot create chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot create chats. Please sign up to continue.' });
+    }
+    
     const title = req.body.title || 'General Ask';
     // Use an allowed channel value from Chat schema ('private' or 'legal_desk')
     // Mark these chats as 'general_ask' so they don't mix with private lawyer chats
@@ -60,6 +65,11 @@ export const createGeneralChat = async (req, res) => {
 // answer and persists both user and assistant messages to the Messages collection.
 export const askGeneral = async (req, res) => {
   try {
+    // Guest users cannot ask questions
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot ask questions. Please sign up to continue.' });
+    }
+    
     const { query, output_language = 'en', chatId } = req.body || {};
     if (!query || String(query).trim().length === 0) return res.status(422).json({ detail: [{ loc: ['body','query'], msg: 'query is required', type: 'value_error.missing' }] });
 
@@ -125,6 +135,11 @@ export const askGeneral = async (req, res) => {
 // Optional endpoint: save an array of messages for an existing chat (best-effort)
 export const saveGeneralChat = async (req, res) => {
   try {
+    // Guest users cannot save chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot save chats.' });
+    }
+    
     const { chatId, messages } = req.body || {};
     if (!chatId) return res.status(400).json({ error: 'chatId required' });
     // ensure provided chatId is valid ObjectId
@@ -152,6 +167,11 @@ export const saveGeneralChat = async (req, res) => {
 
 export const listGeneralChats = async (req, res) => {
   try {
+    // Guest users have no chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.json({ chats: [] });
+    }
+    
     // only return chats belonging to the General Ask channel so private/ lawyer chats are excluded
     const chats = await Chat.find({ user: req.user.id, channel: 'general_ask' }).sort({ updatedAt: -1, createdAt: -1 });
     // for each chat, retrieve the last message (decrypted) as a preview
@@ -170,6 +190,11 @@ export const listGeneralChats = async (req, res) => {
 // Rename a general chat's title (used when first question becomes the chat name)
 export const renameGeneralChat = async (req, res) => {
   try {
+    // Guest users cannot rename chats
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot rename chats.' });
+    }
+    
     const { chatId, title } = req.body || {};
     if (!chatId || !title) return res.status(400).json({ error: 'chatId and title required' });
     if (!mongoose.Types.ObjectId.isValid(String(chatId))) return res.status(400).json({ error: 'invalid chatId' });

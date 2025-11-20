@@ -34,3 +34,70 @@ Thumbs.db
 *.ntvs*
 *.njsproj
 *.sln
+*.swp
+*.swo
+*~
+
+# Build outputs
+dist/
+build/
+out/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Package manager lock files (optional - uncomment if you want to ignore them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Uploads and generated files
+uploads/
+public/uploads/
+*.pdf
+*.docx
+*.xlsx
+
+# Database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Test coverage
+.nyc_output/
+coverage/
+*.lcov
+
+# Debug files
+*.log
+logs/
+
+# Cloud deployment
+.gcloud/
+.firebase/
+
+# Docker
+.dockerignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+pip-log.txt
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

@@ -1,0 +1,53 @@
+# This file specifies files that are intentionally untracked by gcloud and should be
+# ignored when building/deploying to Cloud Run
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+.yarn
+
+# Environment files (should use Secret Manager instead)
+.env
+.env.*
+!.env.example
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+GCP_DEPLOY_README.md
+*.md
+
+# Deployment scripts (not needed in container)
+deploy-cloudrun.ps1
+cloudbuild.yaml
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Testing
+coverage/
+.nyc_output/
+test/
+tests/
+*.test.js
+*.spec.js
+
+# Misc
+.editorconfig
+.prettierrc
+.eslintrc*
