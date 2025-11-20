@@ -61,12 +61,8 @@ const Home = () => {
 
   const authUser = useAuthStore(s => s.user) || {};
   const isLawyer = authUser?.role === 'lawyer';
-  
-
- 
-
-  
-  // const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
+  const verificationStatus = authUser?.verificationStatus;
+  const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
 
   // role-aware quick action sets
   let quickActions = [];
@@ -112,6 +108,83 @@ const Home = () => {
                 </div>
               </div>
           </motion.div>
+
+          {/* Lawyer Verification Status Banner */}
+          {isLawyer && isOnboarded && (
+            <>
+              {verificationStatus === 'pending' && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-semibold text-yellow-900">Profile Under Review</h3>
+                      <p className="text-xs text-yellow-800 mt-1">
+                        Your lawyer profile is being verified by our admin team. You'll be notified once approved. This typically takes 24-48 hours.
+                      </p>
+                      <button
+                        onClick={() => navigate('/onboard-lawyer')}
+                        className="mt-2 text-xs text-yellow-700 hover:text-yellow-900 font-medium underline"
+                      >
+                        View Status Details →
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {verificationStatus === 'rejected' && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-semibold text-red-900">Verification Declined</h3>
+                      <p className="text-xs text-red-800 mt-1">
+                        Your lawyer profile verification was not approved. Please review the feedback and resubmit your application.
+                      </p>
+                      <button
+                        onClick={() => navigate('/onboard-lawyer')}
+                        className="mt-2 text-xs text-red-700 hover:text-red-900 font-medium underline"
+                      >
+                        View Rejection Details & Resubmit →
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {verificationStatus === 'approved' && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <svg className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-semibold text-green-900">Profile Verified! 🎉</h3>
+                      <p className="text-xs text-green-800 mt-1">
+                        Your lawyer profile is verified and active. You can now accept client requests and appear in the lawyer directory.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </>
+          )}
 
           {/* Quick Guide shortcuts */}
           {!isLawyer && (

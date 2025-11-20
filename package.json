@@ -9,9 +9,12 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.12",
     "install": "^0.13.0",
+    "jspdf": "^2.5.1",
     "lucide-react": "^0.540.0",
+    "mermaid": "^11.12.1",
     "nodemon": "^3.1.10",
     "npm": "^11.6.2",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^3.11.174",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -23,8 +26,6 @@
     "vis-data": "^8.0.1",
     "vis-network": "^10.0.1",
     "web-vitals": "^2.1.4",
-  "pdf-lib": "^1.17.1",
-  "jspdf": "^2.5.1",
     "zustand": "^5.0.7"
   },
   "scripts": {

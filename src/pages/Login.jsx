@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../Axios/axios';
 import useAuthStore from '../context/AuthContext';
 import { useToast } from '../components/ToastProvider';
@@ -7,6 +8,7 @@ import { useToast } from '../components/ToastProvider';
 const backendUrl = process.env.REACT_APP_BACKEND_URL;
 
 const Login = () => {
+  const navigate = useNavigate();
   const setToken = useAuthStore(s => s.setToken);
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
@@ -17,6 +19,23 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const toast = useToast();
+
+  const handleGuestLogin = async () => {
+    setIsLoading(true);
+    try {
+      const res = await api.post('/auth/guest-login');
+      if (res.data?.token) {
+        setToken(res.data.token);
+        toast.success('Welcome! Exploring as Guest');
+        window.location.href = '/home';
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to start guest mode');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const submit = async () => {
     // Clear previous errors
@@ -45,16 +64,36 @@ const Login = () => {
     try {
       let res;
       if (mode === 'signup') {
-        res = await api.post('/auth/signup', { email, password, name, role });
-        if (res.data?.token) setToken(res.data.token);
+        // Send verification code first
+        await api.post('/auth/send-verification-code', { email, name });
+        toast.success('Verification code sent to your email!');
+        
+        // Navigate to verification page with signup data
+        navigate('/verify-email', { 
+          state: { email, name, password, role } 
+        });
       } else {
         res = await api.post('/auth/login', { email, password });
         if (res.data?.token) setToken(res.data.token);
-      }
-      const token = res.data?.token || useAuthStore.getState().token;
-      if (token) {
-        await api.get('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-        window.location.href = '/home';
+        const token = res.data?.token || useAuthStore.getState().token;
+        if (token) {
+          // Fetch user profile to check role and verification status
+          const userRes = await api.get('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+          const user = userRes.data?.user;
+          
+          // Check if user is a lawyer who needs onboarding
+          if (user?.role === 'lawyer') {
+            // Check if lawyer profile is incomplete or not verified
+            if (!user.isVerified || !user.specialization || user.specialization.length === 0) {
+              // Redirect to lawyer onboarding
+              window.location.href = '/lawyer-onboard';
+              return;
+            }
+          }
+          
+          // Default redirect to home
+          window.location.href = '/home';
+        }
       }
     } catch (e) {
       console.error(e);
@@ -65,7 +104,7 @@ const Login = () => {
       } else if (resp?.error) {
         toast.error(resp.error);
       } else {
-        toast.error('Authentication failed. Please check your credentials.');
+        toast.error(mode === 'signup' ? 'Failed to send verification code' : 'Authentication failed. Please check your credentials.');
       }
     } finally {
       setIsLoading(false);
@@ -110,7 +149,7 @@ const Login = () => {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-indigo-50 p-4 relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4 relative overflow-hidden">
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
@@ -155,79 +194,76 @@ const Login = () => {
       </div>
 
       <div className="max-w-6xl w-full bg-white/80 backdrop-blur-lg rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-2 border border-white/20 relative z-10">
-        {/* Left Panel - Brand & Welcome */}
+        {/* Left Panel - Brand & Value Proposition */}
         <motion.div
-          initial={{ x: -100, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="p-12 flex flex-col justify-between relative overflow-hidden"
-          style={{
-            background: 'linear-gradient(135deg, #1e3a8a 0%, #3730a3 50%, #5b21b6 100%)'
-          }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6 }}
+          className="p-10 lg:p-12 flex flex-col justify-between relative overflow-hidden bg-gradient-to-br from-indigo-900 via-indigo-800 to-blue-900"
         >
-          <div className="absolute inset-0 bg-black/10" />
+          {/* Subtle Grid Background */}
+          <div className="absolute inset-0 opacity-[0.03]" style={{
+            backgroundImage: `linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+                             linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px)`,
+            backgroundSize: '50px 50px'
+          }} />
           
-          {/* Brand Header */}
           <div className="relative z-10">
-            <motion.div
-              initial={{ scale: 0, rotate: -180 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ delay: 0.3, type: "spring", stiffness: 100 }}
-              className="flex items-center space-x-3 mb-8"
-            >
-              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm border border-white/20">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-white font-serif">Legal Sahai</h1>
-                <p className="text-blue-100 text-sm">Your Trusted Legal Companion</p>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="space-y-4"
-            >
-              <div className="flex items-center space-x-3 p-4 bg-white/10 rounded-2xl backdrop-blur-sm border border-white/10">
-                <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            {/* Brand Section */}
+            <div className="mb-10">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center border border-indigo-400/30">
+                  <svg className="w-6 h-6 text-indigo-300" viewBox="0 0 512 512" fill="currentColor">
+                    <path d="M504.5,247.522l-63.255-63.255c-4.862-4.862-11.519-7.633-18.435-7.633c-6.916,0-13.573,2.771-18.435,7.633 c-10.172,10.172-10.172,26.698,0,36.87l22.261,22.261H332.8c-5.12-39.822-39.066-70.4-79.644-70.4 c-44.433,0-80.533,36.1-80.533,80.533s36.1,80.533,80.533,80.533c40.578,0,74.524-30.578,79.644-70.4h93.867l-22.261,22.261 c-10.172,10.172-10.172,26.698,0,36.87c5.086,5.086,11.776,7.629,18.466,7.629s13.38-2.543,18.466-7.629l63.255-63.255 C514.672,274.219,514.672,257.693,504.5,247.522z M253.156,280.178c-14.811,0-26.844-12.033-26.844-26.844 s12.033-26.844,26.844-26.844s26.844,12.033,26.844,26.844S267.967,280.178,253.156,280.178z"/>
+                    <path d="M253.156,360.178c-54.044,0-98.133-43.255-99.911-96.711H58.311l22.261,22.261c10.172,10.172,10.172,26.698,0,36.87 c-5.086,5.086-11.776,7.629-18.466,7.629s-13.38-2.543-18.466-7.629L7.395,286.353c-10.172-10.172-10.172-26.698,0-36.87 l63.255-63.255c10.172-10.172,26.698-10.172,36.87,0c10.172,10.172,10.172,26.698,0,36.87l-22.261,22.261h94.933 c1.778-53.456,45.867-96.711,99.911-96.711c55.198,0,100.978,44.78,100.978,100.978S308.354,360.178,253.156,360.178z"/>
                   </svg>
                 </div>
                 <div>
-                  <div className="text-white font-semibold">AI-Powered Legal Assistance</div>
-                  <div className="text-blue-100 text-sm">Smart document analysis</div>
+                  <h1 className="text-2xl font-semibold text-white tracking-tight">Legal Sahai</h1>
+                  <p className="text-sm text-indigo-300">Modern Legal Solutions</p>
                 </div>
               </div>
+              
+              <p className="text-indigo-100 text-[15px] leading-relaxed">
+                Navigate the legal landscape with confidence. We connect you with expert lawyers and provide intelligent tools to simplify your legal journey.
+              </p>
+            </div>
 
-              <div className="flex items-center space-x-3 p-4 bg-white/10 rounded-2xl backdrop-blur-sm border border-white/10">
-                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                </div>
+            {/* Key Benefits - Clean List */}
+            <div className="space-y-3 mb-10">
+              <div className="flex items-start space-x-3">
+                <div className="w-1 h-1 rounded-full bg-emerald-400 mt-2" />
                 <div>
-                  <div className="text-white font-semibold">End-to-end Encryption</div>
-                  <div className="text-blue-100 text-sm">Documents and messages are encrypted for your privacy</div>
+                  <p className="text-white font-medium text-sm">Smart Document Analysis</p>
+                  <p className="text-indigo-200 text-xs">AI extracts key info from your legal documents instantly</p>
                 </div>
               </div>
+              
+              <div className="flex items-start space-x-3">
+                <div className="w-1 h-1 rounded-full bg-blue-400 mt-2" />
+                <div>
+                  <p className="text-white font-medium text-sm">Connect with Verified Lawyers</p>
+                  <p className="text-indigo-200 text-xs">Direct access to experienced legal professionals</p>
+                </div>
+              </div>
+              
+              <div className="flex items-start space-x-3">
+                <div className="w-1 h-1 rounded-full bg-violet-400 mt-2" />
+                <div>
+                  <p className="text-white font-medium text-sm">Secure & Confidential</p>
+                  <p className="text-indigo-200 text-xs">Your documents and conversations are encrypted</p>
+                </div>
+              </div>
+              
+              <div className="flex items-start space-x-3">
+                <div className="w-1 h-1 rounded-full bg-amber-400 mt-2" />
+                <div>
+                  <p className="text-white font-medium text-sm">24/7 Legal Guidance</p>
+                  <p className="text-indigo-200 text-xs">Get instant answers to your legal questions anytime</p>
+                </div>
+              </div>
+            </div>
 
-              <div className="flex items-center space-x-3 p-4 bg-white/10 rounded-2xl backdrop-blur-sm border border-white/10">
-                <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
-                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="text-white font-semibold">Expert Network</div>
-                  <div className="text-blue-100 text-sm">Connect with legal professionals</div>
-                </div>
-              </div>
-            </motion.div>
           </div>
 
           {/* Mode Toggle */}
@@ -237,13 +273,13 @@ const Login = () => {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.7 }}
           >
-            <div className="bg-white/10 rounded-2xl p-2 backdrop-blur-sm border border-white/10 inline-flex">
+            <div className="bg-indigo-800/30 rounded-2xl p-2 backdrop-blur-sm border border-indigo-400/20 inline-flex">
               <button
                 onClick={() => setMode('login')}
                 className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 ${
                   mode === 'login' 
-                    ? 'bg-white text-blue-600 shadow-lg' 
-                    : 'text-white hover:bg-white/10'
+                    ? 'bg-white text-indigo-600 shadow-lg' 
+                    : 'text-white hover:bg-indigo-700/30'
                 }`}
               >
                 Sign In
@@ -252,8 +288,8 @@ const Login = () => {
                 onClick={() => setMode('signup')}
                 className={`px-6 py-3 rounded-xl font-semibold transition-all duration-300 ${
                   mode === 'signup' 
-                    ? 'bg-white text-blue-600 shadow-lg' 
-                    : 'text-white hover:bg-white/10'
+                    ? 'bg-white text-indigo-600 shadow-lg' 
+                    : 'text-white hover:bg-indigo-700/30'
                 }`}
               >
                 Sign Up
@@ -401,9 +437,13 @@ const Login = () => {
                         <p className="text-sm text-red-600 mt-1">{fieldErrors.email}</p>
                       )}
                   </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
-                    <input
+                  <div >
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="block text-sm font-semibold text-gray-700">Password</label>
+                      
+                    </div>
+                    <div className="relative">
+                      <input
                       placeholder="Enter your password"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
@@ -413,7 +453,17 @@ const Login = () => {
                       {fieldErrors.password && (
                         <p className="text-sm text-red-600 mt-1">{fieldErrors.password}</p>
                       )}
+                       <button
+                        type="button"
+                        onClick={() => navigate('/forgot-password')}
+                        className="right-0 top-14 absolute text-[12px] text-blue-600 hover:text-blue-700 font-semibold transition-colors"
+                      >
+                        Forgot Password?
+                      </button>
+                    </div>
+                    
                   </div>
+                 
                  
                 </div>
               )}
@@ -479,6 +529,20 @@ const Login = () => {
                   Continue with Google
                 </motion.a>
               </div>
+
+              {/* Guest Login */}
+              {mode === 'login' && (
+                <div className="text-center pt-4">
+                  <button
+                    onClick={handleGuestLogin}
+                    disabled={isLoading}
+                    className="text-sm underline text-blue-600 hover:text-gray-800  transition-colors disabled:opacity-50"
+                  >
+                     Continue as Guest (Explore without signup)
+                  </button>
+
+                </div>
+              )}
 
               {/* Footer Links */}
               <div className="text-center pt-6 border-t border-gray-100">

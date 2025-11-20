@@ -24,6 +24,18 @@
 	color: var(--text);
 }
 
+/* Prevent horizontal scroll globally on narrow screens */
+html, body, #root {
+	max-width: 100vw;
+	overflow-x: hidden;
+}
+
+/* Media elements should never overflow their containers */
+img, canvas, video {
+	max-width: 100%;
+	height: auto;
+}
+
 .panel {
 	background: var(--panel);
 	color: var(--text);

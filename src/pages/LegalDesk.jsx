@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
 import Button from '../components/ui/Button';
 import { useToast } from '../components/ToastProvider';
+import { useGuestAccess } from '../hooks/useGuestAccess';
+import GuestAccessModal from '../components/GuestAccessModal';
 
 // Modern legal background with enhanced professional pattern
 const ModernBackground = () => (
@@ -123,11 +125,9 @@ const LegalDesk = () => {
   const [sortBy, setSortBy] = useState("newest");
   const [ingestionStatus, setIngestionStatus] = useState([]);
   const toast = useToast();
-
-  useEffect(() => {
-    fetchChats();
-    fetchUserProfile();
-  }, []);
+  
+  // Guest access control
+  const { isGuest, showGuestModal, blockedFeature, checkGuestAccess, closeGuestModal } = useGuestAccess();
 
   const fetchUserProfile = async () => {
     try {
@@ -144,16 +144,31 @@ const LegalDesk = () => {
     }
   };
 
-  const fetchChats = async () => {
+  const fetchChats = useCallback(async () => {
     try {
       const res = await api.get("/api/getallchats");
       setChats(res.data.chats || []);
     } catch (err) {
       console.error("Failed to fetch chats:", err);
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to fetch chats';
+      toast.error(errorMsg);
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    // Don't fetch past chats for guests
+    if (!isGuest) {
+      fetchChats();
+    }
+    fetchUserProfile();
+  }, [isGuest, fetchChats]);
 
   const handleAddlegaldesk = async () => {
+    // Check guest access - block if access denied
+    if (!checkGuestAccess('Legal Desk Creation')) {
+      return;
+    }
+    
     if (!file || !title.trim()) {
       toast.error("Please provide both a title and a file.");
       return;
@@ -174,7 +189,7 @@ const LegalDesk = () => {
         { id: 1, text: "Uploading secure document...", status: 'pending' },
         { id: 2, text: "Parsing and segmenting legal clauses...", status: 'pending' },
         { id: 3, text: "Generating legal knowledge embeddings...", status: 'pending' },
-        { id: 4, text: "Encrypting with AES-256 security...", status: 'pending' },
+        { id: 4, text: "Encrypting with security...", status: 'pending' },
         { id: 5, text: "Indexing for rapid legal search...", status: 'pending' },
   { id: 6, text: "Finalizing your Legal Desk...", status: 'pending' }
       ];
@@ -206,7 +221,8 @@ const LegalDesk = () => {
       await new Promise(resolve => setTimeout(resolve, 500));
 
     } catch (err) {
-      toast.error("Error creating legal desk. Please try again.");
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Error creating legal desk. Please try again.';
+      toast.error(errorMsg);
       setChats(prev => prev.filter(c => c.title !== title));
     } finally {
       setUploading(false);
@@ -222,8 +238,8 @@ const LegalDesk = () => {
         await api.delete(`/api/delete/${id}`);
         setChats(chats.filter((chat) => chat._id !== id));
       } catch (err) {
-  
-  toast.error("Failed to delete Legal Desk. Please try again.");
+        const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to delete Legal Desk. Please try again.';
+        toast.error(errorMsg);
       }
     }
   };
@@ -399,7 +415,10 @@ const LegalDesk = () => {
                   <div className="flex items-center justify-between">
                     <Button
                       variant="primary"
-                      onClick={() => navigate(`/legal-desk/${chat._id}`)}
+                      onClick={() => {
+                        if (!checkGuestAccess('Legal Desk Access')) return;
+                        navigate(`/legal-desk/${chat._id}`);
+                      }}
                       className="flex-1 mr-3 py-3 rounded-xl font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 transition-all"
                     >
                       Open Legal Desk
@@ -618,6 +637,13 @@ const LegalDesk = () => {
           </motion.div>
         )}
       </AnimatePresence>
+      
+      {/* Guest Access Modal */}
+      <GuestAccessModal
+        isOpen={showGuestModal}
+        onClose={closeGuestModal}
+        featureName={blockedFeature}
+      />
     </div>
   );
 };

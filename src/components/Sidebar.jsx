@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import useAuthStore from "../context/AuthContext";
 import { formatDisplayName } from '../utils/name';
 // icons: outline vs filled for selected state
-import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb } from 'react-icons/md';
+import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb, MdAdminPanelSettings, MdOutlineAdminPanelSettings } from 'react-icons/md';
 import InitialAvatar from './InitialAvatar';
 import useIsMobile from '../hooks/useIsMobile';
 import { MdOutlineDocumentScanner } from "react-icons/md";
@@ -24,6 +24,8 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
   const pathname = location.pathname || '';
 
   const isLawyer = authUser?.role === 'lawyer';
+  const isAdmin = authUser?.role === 'admin';
+  const isGuest = authUser?.isGuest === true || authUser?.role === 'guest';
   // server-side authoritative onboarded flag preferred; fall back to profile heuristics
   const isOnboarded = Boolean(authUser?.onboarded) || Boolean((authUser?.bio && authUser.bio.length > 0) || (authUser?.specialties && authUser.specialties.length > 0));
 
@@ -104,8 +106,14 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
           <IconBtn onClick={() => go('/chats?target=client')} active={pathname.startsWith('/chats')} label="Chat with Clients" icon={pathname.startsWith('/chats') ? <MdPerson size={20} /> : <MdOutlinePerson size={20} />} labelText="Chat with Clients" />
         )}
 
-        {isLawyer && !isOnboarded && (
-          <IconBtn onClick={() => go('/onboard-lawyer')} active={pathname.startsWith('/onboard-lawyer')} label="Become a lawyer" icon={pathname.startsWith('/onboard-lawyer') ? <MdAddCircle size={20} /> : <MdOutlineAddCircle size={20} />} labelText="Become a Lawyer" />
+        {isLawyer && authUser?.verificationStatus !== 'approved' && (
+          <IconBtn 
+            onClick={() => go('/onboard-lawyer')} 
+            active={pathname.startsWith('/onboard-lawyer')} 
+            label={(isOnboarded && (authUser?.verificationStatus === 'pending' || authUser?.verificationStatus === 'rejected')) ? 'Application Status' : 'Become a lawyer'} 
+            icon={pathname.startsWith('/onboard-lawyer') ? <MdAddCircle size={20} /> : <MdOutlineAddCircle size={20} />} 
+            labelText={(isOnboarded && (authUser?.verificationStatus === 'pending' || authUser?.verificationStatus === 'rejected')) ? 'Application Status' : 'Become a Lawyer'} 
+          />
         )}
 
         {isLawyer && (
@@ -121,6 +129,11 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         />
         {/* General Ask / Quick Guide feature */}
   <IconBtn onClick={() => go('/general-ask')} active={pathname.startsWith('/general-ask')} label="Quick Guide" icon={pathname.startsWith('/general-ask') ? <MdLightbulb size={20} /> : <MdOutlineLightbulb size={20} />} labelText="Quick Guide" />
+        
+        {/* Admin Panel - Only visible to admin users */}
+        {isAdmin && (
+          <IconBtn onClick={() => go('/admin')} active={pathname.startsWith('/admin')} label="Admin Panel" icon={pathname.startsWith('/admin') ? <MdAdminPanelSettings size={20} /> : <MdOutlineAdminPanelSettings size={20} />} labelText="Admin Panel" />
+        )}
       </nav>
 
   <div className="flex-1" />
@@ -131,13 +144,57 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
         </div>
 
         {/* user profile moved to bottom */}
-        <div className="flex items-center gap-3 p-3 bg-card rounded-md">
-          <InitialAvatar name={authUser?.name} className="w-10 h-10 rounded-md" />
-          {isOpen && (
-            <div className="flex-1">
-                <div className="text-sm font-medium text-primary">{formatDisplayName(authUser?.name) || 'Guest'}</div>
-              <div className="text-xs text-primary/60">{authUser?.role === 'lawyer' ? (isOnboarded ? 'Onboarded Lawyer' : 'Lawyer') : (authUser?.role ? 'Helpseeker' : 'Guest')}</div>
+        <div className="w-full p-3 bg-card rounded-md">
+          {isGuest && isOpen && (
+            <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded-md">
+              <p className="text-xs text-amber-700 font-medium text-center">
+                 Exploring as Guest
+              </p>
+              <button
+                onClick={() => navigate('/login')}
+                className="w-full mt-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-xs font-semibold transition-colors"
+              >
+                Sign Up to Unlock
+              </button>
             </div>
+          )}
+          
+          <div className="flex items-center gap-3">
+            <InitialAvatar name={authUser?.name} className="w-10 h-10 rounded-md" />
+            {isOpen && (
+              <div className="flex-1">
+                <div className="text-sm font-medium text-primary">{formatDisplayName(authUser?.name) || 'Guest'}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-primary/60">
+                    {isGuest ? ' Guest' : authUser?.role === 'admin' ? 'Admin' : authUser?.role === 'lawyer' ? (isOnboarded ? 'Lawyer' : 'Lawyer') : (authUser?.role ? 'Helpseeker' : 'Guest')}
+                  </div>
+                  {authUser?.role === 'lawyer' && isOnboarded && authUser?.verificationStatus && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                      authUser.verificationStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                      authUser.verificationStatus === 'approved' ? 'bg-green-100 text-green-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {authUser.verificationStatus === 'pending' ? '⏳ Pending' :
+                       authUser.verificationStatus === 'approved' ? '✓ Verified' :
+                       '✗ Rejected'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Profile Button - Hidden for guests */}
+          {isOpen && !isGuest && (
+            <button
+              onClick={() => navigate('/profile')}
+              className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md transition-colors text-sm font-medium"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              View Profile
+            </button>
           )}
         </div>
 

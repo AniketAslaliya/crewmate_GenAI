@@ -7,6 +7,8 @@ import useAuthStore from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import { useToast } from '../components/ToastProvider';
 import InitialAvatar from '../components/InitialAvatar';
+import { useGuestAccess } from '../hooks/useGuestAccess';
+import GuestAccessModal from '../components/GuestAccessModal';
 
 const FindLawyer = () => {
   const [lawyers, setLawyers] = useState([]);
@@ -37,6 +39,7 @@ const FindLawyer = () => {
   const isLawyer = user?.role === 'lawyer';
   const navigate = useNavigate();
   const toast = useToast();
+  const { checkGuestAccess, showGuestModal, closeGuestModal, blockedFeature } = useGuestAccess();
 
   // Memoized update filter function
   const updateFilter = useCallback((key, value) => {
@@ -101,6 +104,7 @@ const FindLawyer = () => {
   }, []);
 
   const requestLawyer = async (lawyerId) => {
+    if (!checkGuestAccess('Request Consultation')) return;
     setRequesting(lawyerId);
     try {
       await api.post('/api/lawyers/request', { 
@@ -200,51 +204,12 @@ const FindLawyer = () => {
     return { available, avgRating };
   }, [filteredLawyers]);
 
-  // FilterSection moved to `FiltersContainer` to avoid re-renders
-
-  const DetailRow = React.memo(function DetailRow({ icon, title, items }) {
-    const [expanded, setExpanded] = useState(false);
-
-    if (!items || items.length === 0) return null;
-
-    const visible = expanded ? items : items.slice(0, 3);
-    const hiddenCount = items.length > 3 ? items.length - 3 : 0;
-
-    return (
-      <div className="flex items-start space-x-3 py-2">
-        <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
-          {icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-gray-500 mb-1">{title}</div>
-          <div className="flex flex-wrap gap-2 items-center">
-            {visible.map((item, index) => (
-              <span
-                key={index}
-                className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
-              >
-                {item}
-              </span>
-            ))}
-
-            {hiddenCount > 0 && (
-              <button
-                type="button"
-                aria-expanded={expanded}
-                onClick={() => setExpanded(prev => !prev)}
-                className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
-              >
-                {expanded ? 'Show less' : `+${hiddenCount} more`}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  });
-
   const LawyerCard = React.memo(function LawyerCard({ lawyer, isConnected = false, chatId, onRequest, requestingId }) {
     const [specialtiesExpanded, setSpecialtiesExpanded] = useState(false);
+    const [languagesExpanded, setLanguagesExpanded] = useState(false);
+    const [educationExpanded, setEducationExpanded] = useState(false);
+    const [courtsExpanded, setCourtsExpanded] = useState(false);
+    const [modesExpanded, setModesExpanded] = useState(false);
 
     return (
     <motion.div
@@ -255,22 +220,6 @@ const FindLawyer = () => {
       whileHover={{ y: -8, scale: 1.02 }}
       className="bg-white rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-300 border border-gray-100 overflow-hidden group"
     >
-      {/* Verified Badge */}
-      {lawyer.verified && (
-        <div className="absolute top-4 right-4 z-10">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            className="px-3 py-1 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-xs font-semibold rounded-full flex items-center gap-1 shadow-lg"
-          >
-            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-            </svg>
-            Verified
-          </motion.div>
-        </div>
-      )}
-
       {/* Lawyer Image and Basic Info */}
       <div className="p-6">
         <div className="flex items-start space-x-4">
@@ -297,10 +246,28 @@ const FindLawyer = () => {
                 <span>{(lawyer.city || lawyer.location) || 'Location not specified'}</span>
               </div>
 
-              <div className="text-sm text-gray-500 flex items-center gap-2">
+              <div className="text-sm text-gray-500 flex items-center gap-2 flex-wrap">
                 <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded-full text-xs font-medium">{lawyer.successRate !== undefined ? `${lawyer.successRate}% success` : 'Success rate N/A'}</span>
                 <span className="px-2 py-0.5 bg-gray-50 text-gray-700 rounded-full text-xs">{lawyer.yearsExperience ? `${lawyer.yearsExperience} yrs` : 'Experience N/A'}</span>
+                
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Consultation Fee */}
+        <div className="mt-4 flex items-start space-x-3 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl px-3">
+         
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium text-gray-700 mb-1">CONSULTATION FEE</div>
+            <div className="text-sm font-semibold text-gray-900">
+              {lawyer.fee !== undefined && lawyer.fee > 0 ? (
+                `₹${lawyer.fee} per session`
+              ) : lawyer.freeFirst ? (
+                <span className="text-purple-600">Free First Session</span>
+              ) : (
+                <span className="text-gray-400 italic text-xs">Not specified</span>
+              )}
             </div>
           </div>
         </div>
@@ -308,75 +275,202 @@ const FindLawyer = () => {
         {/* Specialties */}
         <div className="mt-4">
           <div className="text-xs font-medium text-gray-500 mb-2">SPECIALTIES</div>
-          <div className="flex flex-wrap gap-2 items-center">
-            {(specialtiesExpanded ? (lawyer.specialties || []) : (lawyer.specialties || []).slice(0, 4)).map((specialty, index) => (
-              <motion.span
-                key={`${specialty}-${index}`}
-                initial={{ opacity: 0, scale: 0 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: index * 0.05 }}
-                className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-xs font-medium rounded-full shadow-sm"
-              >
-                {specialty}
-              </motion.span>
-            ))}
+          <div className="flex flex-wrap gap-2 items-start">
+            {!lawyer.specialties || lawyer.specialties.length === 0 ? (
+              <span className="text-xs text-gray-400 italic">Not specified</span>
+            ) : (
+              <>
+                {(specialtiesExpanded ? lawyer.specialties : lawyer.specialties.slice(0, 2)).map((specialty, index) => (
+                  <motion.span
+                    key={`${specialty}-${index}`}
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: index * 0.05 }}
+                    className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 text-white text-xs font-medium rounded-full shadow-sm flex-shrink-0"
+                  >
+                    {specialty}
+                  </motion.span>
+                ))}
 
-            {((lawyer.specialties || []).length - 4) > 0 && (
-              <button
-                type="button"
-                onClick={() => setSpecialtiesExpanded(prev => !prev)}
-                className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
-                aria-expanded={specialtiesExpanded}
-              >
-                {specialtiesExpanded ? 'Show less' : `+${(lawyer.specialties || []).length - 4} more`}
-              </button>
+                {lawyer.specialties.length > 2 && !specialtiesExpanded && (
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtiesExpanded(true)}
+                    className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 flex-shrink-0"
+                  >
+                    +{lawyer.specialties.length - 2} more
+                  </button>
+                )}
+
+                {specialtiesExpanded && lawyer.specialties.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => setSpecialtiesExpanded(false)}
+                    className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200 flex-shrink-0"
+                  >
+                    Show less
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
 
         {/* Detailed Information Rows */}
-        <div className="mt-4 space-y-1">
-          <DetailRow
-            icon={
+        <div className="mt-4 space-y-3">
+          {/* Languages */}
+          <div className="flex items-start space-x-3 py-2 min-h-[48px]">
+            <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
               </svg>
-            }
-            title="LANGUAGES"
-            items={lawyer.languages}
-          />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-gray-500 mb-1">LANGUAGES</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {!lawyer.languages || lawyer.languages.length === 0 ? (
+                  <span className="text-xs text-gray-400 italic">Not specified</span>
+                ) : (
+                  <>
+                    {(languagesExpanded ? lawyer.languages : lawyer.languages.slice(0, 3)).map((item, index) => (
+                      <span
+                        key={index}
+                        className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                    {lawyer.languages.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setLanguagesExpanded(prev => !prev)}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                        aria-expanded={languagesExpanded}
+                      >
+                        {languagesExpanded ? 'Show less' : `+${lawyer.languages.length - 3} more`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
 
-          <DetailRow
-            icon={
+          {/* Education */}
+          <div className="flex items-start space-x-3 py-2 min-h-[48px]">
+            <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14v6l9-5-9-5-9 5 9 5z" />
               </svg>
-            }
-            title="EDUCATION"
-            items={lawyer.education}
-          />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-gray-500 mb-1">EDUCATION</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {!lawyer.education || lawyer.education.length === 0 ? (
+                  <span className="text-xs text-gray-400 italic">Not specified</span>
+                ) : (
+                  <>
+                    {(educationExpanded ? lawyer.education : lawyer.education.slice(0, 3)).map((item, index) => (
+                      <span
+                        key={index}
+                        className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                    {lawyer.education.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setEducationExpanded(prev => !prev)}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                        aria-expanded={educationExpanded}
+                      >
+                        {educationExpanded ? 'Show less' : `+${lawyer.education.length - 3} more`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
 
-          <DetailRow
-            icon={
+          {/* Courts */}
+          <div className="flex items-start space-x-3 py-2 min-h-[48px]">
+            <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
               </svg>
-            }
-            title="COURTS"
-            items={lawyer.courts}
-          />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-gray-500 mb-1">COURTS</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {!lawyer.courts || lawyer.courts.length === 0 ? (
+                  <span className="text-xs text-gray-400 italic">Not specified</span>
+                ) : (
+                  <>
+                    {(courtsExpanded ? lawyer.courts : lawyer.courts.slice(0, 3)).map((item, index) => (
+                      <span
+                        key={index}
+                        className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                    {lawyer.courts.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setCourtsExpanded(prev => !prev)}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                        aria-expanded={courtsExpanded}
+                      >
+                        {courtsExpanded ? 'Show less' : `+${lawyer.courts.length - 3} more`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
 
-          <DetailRow
-            icon={
+          {/* Consultation Modes */}
+          <div className="flex items-start space-x-3 py-2 min-h-[48px]">
+            <div className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-            }
-            title="CONSULTATION MODES"
-            items={lawyer.modes}
-          />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-gray-500 mb-1">CONSULTATION MODES</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {!lawyer.modes || lawyer.modes.length === 0 ? (
+                  <span className="text-xs text-gray-400 italic">Not specified</span>
+                ) : (
+                  <>
+                    {(modesExpanded ? lawyer.modes : lawyer.modes.slice(0, 3)).map((item, index) => (
+                      <span
+                        key={index}
+                        className="inline-block px-2 py-1 bg-gray-50 text-gray-700 text-xs rounded-md border border-gray-200"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                    {lawyer.modes.length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setModesExpanded(prev => !prev)}
+                        className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200"
+                        aria-expanded={modesExpanded}
+                      >
+                        {modesExpanded ? 'Show less' : `+${lawyer.modes.length - 3} more`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -470,7 +564,7 @@ const FindLawyer = () => {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-8"
         >
-          <h1 className="text-4xl font-bold text-gray-900 mb-4 font-serif bg-gradient-to-r from-blue-900 to-indigo-800 bg-clip-text text-transparent">
+          <h1 className="mt-10 md:mt-0 text-4xl font-bold text-gray-900 mb-4 font-serif bg-gradient-to-r from-blue-900 to-indigo-800 bg-clip-text text-transparent">
             Find Your Legal Expert
           </h1>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
@@ -580,9 +674,6 @@ const FindLawyer = () => {
                     ) : (
                       myLawyers.map(connection => {
                         const lawyer = connection.to || {};
-                        const lastMsg = connection.lastMessage || connection.last_message || null;
-                        const lastText = lastMsg?.text || lastMsg?.content || '';
-                        const lastAt = lastMsg?.createdAt || lastMsg?.created_at || connection.updatedAt || connection.lastUpdated || null;
                         const unread = connection.unread || connection.unreadCount || 0;
 
                         return (
@@ -598,26 +689,11 @@ const FindLawyer = () => {
                           >
                             <div className="flex items-center gap-4 min-w-0">
                               <InitialAvatar name={lawyer.name} className="w-12 h-12 rounded-lg border border-white shadow-sm flex-shrink-0" />
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-semibold text-gray-900 truncate">{lawyer.name || 'Unknown'}</h4>
-                                  <span className="text-xs text-gray-400">•</span>
-                                  <span className="text-xs text-gray-500 truncate">{lawyer.organization || 'Independent'}</span>
-                                </div>
-                                <div className="text-sm text-gray-600 truncate mt-1 max-w-[40ch]">
-                                  {lastText ? lastText : <span className="text-gray-400">No messages yet</span>}
-                                </div>
+                              <div className="min-w-0 flex-1">
+                                <h4 className="font-semibold text-gray-900 truncate">{lawyer.name || 'Unknown'}</h4>
                               </div>
-                            </div>
-
-                            <div className="flex flex-col items-end ml-4">
-                              {lastAt && (
-                                <div className="text-xs text-gray-400 mb-2">{new Date(lastAt).toLocaleString()}</div>
-                              )}
-                              {unread > 0 ? (
-                                <div className="bg-red-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full">{unread}</div>
-                              ) : (
-                                <div className="text-xs text-gray-300">&nbsp;</div>
+                              {unread > 0 && (
+                                <div className="bg-red-500 text-white text-xs font-semibold px-2 py-0.5 rounded-full ml-4">{unread}</div>
                               )}
                             </div>
                           </motion.div>
@@ -660,6 +736,12 @@ const FindLawyer = () => {
           </div>
         )}
       </div>
+
+      <GuestAccessModal
+        isOpen={showGuestModal}
+        onClose={closeGuestModal}
+        featureName={blockedFeature}
+      />
     </div>
   );
 };

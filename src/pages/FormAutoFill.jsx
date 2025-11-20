@@ -3,6 +3,10 @@ import papi from '../Axios/paxios';
 // framer-motion not required here
 import api from '../Axios/axios';
 import { useToast } from '../components/ToastProvider';
+import { useLanguage } from '../context/LanguageContext';
+import SpeakerButton from '../components/SpeakerButton';
+import { useGuestAccess } from '../hooks/useGuestAccess';
+import GuestAccessModal from '../components/GuestAccessModal';
 
 // Helper functions (can stay as const, they are at the top level)
 const normalizeBbox = (bbox) => {
@@ -76,6 +80,22 @@ const FormAutoFill = () => {
   const [selectionBox, setSelectionBox] = useState(null);
   const dragRef = useRef({ mode: null, dir: null, startX: 0, startY: 0, origLeft: 0, origTop: 0, origW: 0, origH: 0 });
   const toast = useToast();
+  const { language, setLanguage } = useLanguage();
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const { checkGuestAccess, showGuestModal, closeGuestModal, blockedFeature } = useGuestAccess();
+
+  const languages = [
+    { code: 'en', name: 'English' },
+    { code: 'hi', name: 'हिन्दी' },
+    { code: 'gu', name: 'ગુજરાતી' },
+    { code: 'mr', name: 'मराठी' },
+    { code: 'ta', name: 'தமிழ்' },
+    { code: 'te', name: 'తెలుగు' },
+    { code: 'bn', name: 'বাংলা' },
+    { code: 'kn', name: 'ಕನ್ನಡ' },
+    { code: 'ml', name: 'മലയാളം' },
+    { code: 'pa', name: 'ਪੰਜਾਬੀ' }
+  ];
 
   // (simulation removed - component always calls backend APIs; client-side fallbacks remain)
 
@@ -344,6 +364,7 @@ const FormAutoFill = () => {
   }, [fieldValues, simpleValues]);
 
   function onFileChange(e) {
+    if (!checkGuestAccess('Upload Form')) return;
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     setFile(f);
@@ -639,11 +660,13 @@ const FormAutoFill = () => {
   };
 
   async function analyze() {
+    if (!checkGuestAccess('Analyze Form')) return;
     if (!file) { toast.error('Please upload a form image or PDF first.'); return; }
     setLoading(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
+      fd.append('output_language', language);
       const res = await papi.post('/api/forms/analyze', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       // Expect res.data.fields = [{ id, label_text, suggestions: [], bbox: {...} }, ...]
       const returned = res.data.fields || [];
@@ -709,7 +732,8 @@ const FormAutoFill = () => {
       setSelectedField(null);
     } catch (err) {
       console.error('Analyze failed', err);
-      toast.error('Failed to analyze form.');
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to analyze form.';
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -1150,12 +1174,12 @@ const FormAutoFill = () => {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-semibold">AutoFill Forms</h2>
+        <h2 className="mt-10 md:mt-0 text-2xl font-semibold">AutoFill Forms</h2>
         {/* simulation mode removed - always uses backend APIs */}
       </div>
-      <div className="mb-4 flex items-center gap-3">
+  <div className="mb-4 flex flex-wrap items-center gap-3">
         <input type="file" accept="image/*,.pdf" onChange={onFileChange} />
-  <button onClick={analyze} disabled={!file || loading} className="px-4 py-2 bg-blue-600 text-white rounded-md">{loading ? 'Analyzing...' : 'Analyze Form'}</button>
+  <button onClick={() => setShowLanguageModal(true)} disabled={!file || loading} className="px-4 py-2 bg-blue-600 text-white rounded-md">{loading ? 'Analyzing...' : 'Analyze Form'}</button>
       <button onClick={downloadFilled} disabled={!hasEdits} className={`px-4 py-2 rounded-md ${hasEdits ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>Download Filled</button>
       <button onClick={createNewBox} disabled={!imageUrl && !isPdf} className="px-3 py-2 bg-indigo-600 text-white rounded">New Box</button>
         {/* <button onClick={extractAcroFields} disabled={!file || loadingExtractSimple} className="px-4 py-2 bg-indigo-600 text-white rounded-md">{loadingExtractSimple ? 'Detecting fields...' : 'Detect AcroForm fields'}</button> */}
@@ -1168,8 +1192,44 @@ const FormAutoFill = () => {
         }} disabled={!imageUrl} className="px-3 py-2 bg-gray-200 rounded-md">Auto-detect boxes</button> */}
       </div>
 
-      <div className="flex gap-6">
-        <div ref={containerRef} className="relative bg-gray-50 border rounded-md flex-1" style={{ minHeight: 500 }}>
+      {/* Language Selection Modal */}
+      {showLanguageModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-xl font-semibold mb-4">Select Language for Analysis</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Choose the language in which you want help with form filling and text-to-speech:
+            </p>
+            <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
+              {languages.map(lang => (
+                <button
+                  key={lang.code}
+                  onClick={() => {
+                    setLanguage(lang.code);
+                    setShowLanguageModal(false);
+                    analyze();
+                  }}
+                  className={`px-4 py-3 rounded-md border-2 text-left hover:bg-blue-50 transition-colors ${
+                    language === lang.code ? 'border-blue-600 bg-blue-50' : 'border-gray-200'
+                  }`}
+                >
+                  <div className="font-medium">{lang.name}</div>
+                  <div className="text-xs text-gray-500">{lang.code.toUpperCase()}</div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowLanguageModal(false)}
+              className="mt-4 w-full px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col md:flex-row gap-6">
+        <div ref={containerRef} className="relative bg-gray-50 border rounded-md flex-1 max-w-full overflow-auto" style={{ maxHeight: 'calc(100vh - 150px)' }}>
             {/* page navigation for multipage PDFs */}
             {isPdf && totalPages > 1 && (
               <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/80 p-1 rounded">
@@ -1289,7 +1349,7 @@ const FormAutoFill = () => {
           )}
         </div>
 
-        <div className="w-1/3 bg-white border rounded-md p-4">
+  <div className="w-full md:w-1/3 bg-white border rounded-md p-4">
           <h3 className="font-semibold mb-2">Field Inspector</h3>
 
           {/* --- REFACTOR --- Cleaned up inspector logic --- */}
@@ -1319,8 +1379,13 @@ const FormAutoFill = () => {
               {/* Panel 2a: Manual Box Selection (if active) */}
               {selectionBox && (
                 <div className="mb-4 p-3 border rounded bg-yellow-50">
-                  <div className="text-sm font-medium mb-2">
-                    {selectedField ? 'Editing field box' : 'Creating new box'}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-medium">
+                      {selectedField ? 'Editing field box' : 'Creating new box'}
+                    </div>
+                    {selectedField && (
+                      <SpeakerButton text={selectedField.label_text || selectedField.id} language={language} />
+                    )}
                   </div>
                   <div className="text-xs text-gray-600 mb-2">Left: {selectionBox.left}px, Top: {selectionBox.top}px, W: {selectionBox.width}px, H: {selectionBox.height}px</div>
                   <div className="flex gap-2">
@@ -1350,7 +1415,10 @@ const FormAutoFill = () => {
                   {selectedField.description && (
                     <div>
                       {/* <div className="text-xs text-gray-500 mb-1">Field Description</div> */}
-                      <div className="text-s text-blue-700 font-bold mb-3 whitespace-pre-wrap">{selectedField.description}</div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="text-s text-blue-700 font-bold whitespace-pre-wrap flex-1">{selectedField.description}</div>
+                        <SpeakerButton text={selectedField.description} language={language} />
+                      </div>
                     </div>
                   )}
 
@@ -1405,7 +1473,12 @@ const FormAutoFill = () => {
 
                   <div className="mb-3">
                     <label className="text-xs text-gray-500">Value</label>
-                    <input value={fieldValues[selectedField.id] || ''} onChange={(e) => handleValueChange(selectedField.id, e.target.value)} className="w-full mt-1 border rounded px-3 py-2" />
+                    <div className="flex items-center gap-2">
+                      <input value={fieldValues[selectedField.id] || ''} onChange={(e) => handleValueChange(selectedField.id, e.target.value)} className="flex-1 mt-1 border rounded px-3 py-2" />
+                      <div className="mt-1">
+                        <SpeakerButton text={fieldValues[selectedField.id] || ''} language={language} />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="mb-3">
@@ -1448,6 +1521,12 @@ const FormAutoFill = () => {
 
         </div>
       </div>
+
+      <GuestAccessModal
+        isOpen={showGuestModal}
+        onClose={closeGuestModal}
+        featureName={blockedFeature}
+      />
     </div>
   );
 };

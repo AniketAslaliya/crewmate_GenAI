@@ -54,7 +54,7 @@ const FiltersContainer = ({ filters, onFilterChange, onReset, show = true, onClo
               </div>
             </FilterSection>
 
-            <FilterSection title="Experience & Rating">
+            <FilterSection title="Experience">
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">Min Experience</label>
@@ -67,19 +67,6 @@ const FiltersContainer = ({ filters, onFilterChange, onReset, show = true, onClo
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Min Rating</label>
-                  <input
-                    value={filters.minRating}
-                    onChange={e => onFilterChange('minRating', e.target.value)}
-                    type="number"
-                    min="0"
-                    max="5"
-                    step="0.1"
-                    placeholder="0-5"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
               </div>
             </FilterSection>
 
@@ -89,12 +76,16 @@ const FiltersContainer = ({ filters, onFilterChange, onReset, show = true, onClo
                   <input
                     value={filters.feeMin}
                     onChange={e => onFilterChange('feeMin', e.target.value)}
+                    type="number"
+                    min="0"
                     placeholder="Min ₹"
                     className="w-1/2 px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <input
                     value={filters.feeMax}
                     onChange={e => onFilterChange('feeMax', e.target.value)}
+                    type="number"
+                    min="0"
                     placeholder="Max ₹"
                     className="w-1/2 px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
@@ -119,31 +110,11 @@ const FiltersContainer = ({ filters, onFilterChange, onReset, show = true, onClo
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={!!filters.verifiedOnly}
-                    onChange={e => onFilterChange('verifiedOnly', e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                  />
-                  <label className="text-sm text-gray-700">Verified Lawyers Only</label>
-                </div>
+                
               </div>
             </FilterSection>
 
-            {/* Quick stats (optional counts passed from parent) */}
-            <div className="pt-4 border-t border-gray-100">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-blue-50 rounded-xl"> 
-                  <div className="text-2xl font-bold text-blue-900">{counts.available ?? '-'}</div>
-                  <div className="text-xs text-blue-600">Available</div>
-                </div>
-                <div className="text-center p-4 bg-green-50 rounded-xl">
-                  <div className="text-2xl font-bold text-green-900">{counts.avgRating ?? '-'}</div>
-                  <div className="text-xs text-green-600">Avg Rating</div>
-                </div>
-              </div>
-            </div>
+
           </div>
         </div>
       </div>

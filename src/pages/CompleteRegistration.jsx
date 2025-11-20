@@ -84,17 +84,30 @@ const CompleteRegistration = () => {
       toast.error('Please choose a role'); 
       return; 
     }
+    if (!name.trim()) {
+      toast.error('Please enter your full name');
+      return;
+    }
     setLoading(true);
     try {
       await api.post(
         '/auth/set-role',
-        { role: selectedRole, name, email },
+        { role: selectedRole, name: name.trim(), email },
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
       const me = await api.get('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-      setUser(me.data.user || me.data);
-      navigate('/home');
+      const updatedUser = me.data.user || me.data;
+      setUser(updatedUser);
+      
+      toast.success('Profile created successfully!');
+      
+      // If user selected lawyer role, redirect to onboard-lawyer page
+      if (selectedRole === 'lawyer') {
+        navigate('/onboard-lawyer');
+      } else {
+        navigate('/home');
+      }
     } catch (err) {
       console.error(err);
       toast.error('Failed to complete registration. Please try again.');
@@ -257,12 +270,15 @@ const CompleteRegistration = () => {
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Full Name <span className="text-red-500">*</span>
+                    </label>
                     <input 
                       value={name} 
                       onChange={(e) => setName(e.target.value)} 
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm"
                       placeholder="Enter your full name"
+                      required
                     />
                   </div>
                   

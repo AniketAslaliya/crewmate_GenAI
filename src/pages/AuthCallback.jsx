@@ -23,33 +23,15 @@ const AuthCallback = () => {
           });
           const user = res.data.user || res.data;
           setUser(user);
-          // If user has no role, try to read a pre-selected role stored before OAuth
+          
+          // If user has no role, they must complete registration
           if (!user || !user.role) {
-            try {
-              const prefRole = localStorage.getItem('pre_oauth_role');
-              if (prefRole) {
-                // Attempt to set role on the server and refresh profile
-                try {
-                  await api.post('/auth/set-role', { role: prefRole }, { headers: { Authorization: `Bearer ${token}` } });
-                  // remove the pref after applying
-                  localStorage.removeItem('pre_oauth_role');
-                  const me2 = await api.get('/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-                  const updatedUser = me2.data.user || me2.data;
-                  setUser(updatedUser);
-                  navigate('/home');
-                  return;
-                } catch (err) {
-                  console.warn('Failed to set pref role automatically', err);
-                  // fallthrough to complete-registration UI
-                }
-              }
-            } catch (e) {
-              console.warn('Could not read pre_oauth_role', e);
-            }
-
-            // If we couldn't apply prefRole or it didn't exist, go to complete-registration
             navigate('/complete-registration');
+          } else if (user.role === 'lawyer' && !user.onboarded && (!user.specialties || user.specialties.length === 0)) {
+            // Lawyer registered but hasn't submitted onboarding application
+            navigate('/onboard-lawyer');
           } else {
+            // User already has role and completed setup, go to home
             navigate('/home');
           }
         } catch (err) {

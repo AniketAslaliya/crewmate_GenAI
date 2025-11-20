@@ -1,7 +1,6 @@
 import "./App.css";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import useIsMobile from './hooks/useIsMobile';
 import Home from "./pages/Home";
 import LegalDesk from "./pages/LegalDesk";
 import Login from "./pages/Login";
@@ -20,6 +19,10 @@ import { MdMenu } from 'react-icons/md';
 import useAuthStore from "./context/AuthContext";
 import AuthCallback from "./pages/AuthCallback";
 import FormAutoFill from './pages/FormAutoFill';
+import AdminPanel from './pages/AdminPanel';
+import Profile from './pages/Profile';
+import VerifyEmail from './pages/VerifyEmail';
+import ForgotPassword from './pages/ForgotPassword';
 import { applyPalette, defaultPalette } from './utils/palette';
 
 function App() {
@@ -27,14 +30,11 @@ function App() {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
   const [theme] = useState("light");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const isMobile = useIsMobile();
+  // Sidebar overlay open state for small screens
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // auto-close sidebar on small screens
-  useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-    else setSidebarOpen(true);
-  }, [isMobile]);
+  // On larger screens the sidebar is always visible via CSS (md:block),
+  // so we only need overlay state for small screens.
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -58,62 +58,57 @@ function App() {
 
   return (
     <Router>
-      <div className="app-root min-h-screen w-full">
-        <main className="w-full px-0 py-0 flex-1">
+      <div className="app-root min-h-screen w-full overflow-x-hidden">
+        <main className="w-full px-0 py-0 flex-1 overflow-x-hidden">
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Protected area with sidebar + inner routes */}
             <Route
               path="/*"
               element={
-                <div className="flex w-full h-screen min-h-0">
+                <div className="flex w-full h-screen min-h-0 overflow-x-hidden">
+                  {/* Persistent sidebar on md+ */}
                   {user?.role ? (
-                    !isMobile ? (
-                      <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(s => !s)} />
-                    ) : (
-                      sidebarOpen && (
-                        <div className="fixed inset-0 z-50 flex">
-                          {/* backdrop */}
-                          <div 
-                            className="absolute inset-0 bg-black/40" 
-                            onClick={() => setSidebarOpen(false)} 
-                          />
-                          <div className="relative z-50 w-72 h-full shadow-lg bg-surface">
-                            <Sidebar isOpen={true} toggleSidebar={() => setSidebarOpen(false)} />
-                          </div>
-                        </div>
-                      )
-                    )
+                    <div className="hidden md:block">
+                      <Sidebar isOpen toggleSidebar={() => setSidebarOpen(false)} />
+                    </div>
                   ) : null}
-                  
-                  {/* small open button when sidebar is closed */}
-                  {!sidebarOpen && (
-                    <button 
-                      onClick={() => setSidebarOpen(true)} 
-                      className="fixed top-6 left-4 z-50 p-2 rounded-md bg-white shadow-md text-primary/90 hover:bg-gray-50 transition-colors duration-200"
+
+                  {/* Overlay sidebar for small screens */}
+                  {user?.role && sidebarOpen && (
+                    <div className="fixed inset-0 z-50 flex md:hidden">
+                      <div
+                        className="absolute inset-0 bg-black/40"
+                        onClick={() => setSidebarOpen(false)}
+                      />
+                      <div className="relative z-50 w-72 h-full shadow-lg bg-surface">
+                        <Sidebar isOpen={true} toggleSidebar={() => setSidebarOpen(false)} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hamburger button for small screens */}
+                  {user?.role && (
+                    <button
+                      onClick={() => setSidebarOpen(true)}
+                      className="md:hidden fixed top-4 left-4 z-40 p-2 rounded-md bg-white shadow-md text-primary/90 hover:bg-gray-50 transition-colors duration-200"
+                      aria-label="Open menu"
                     >
                       <MdMenu size={20} />
                     </button>
                   )}
 
                   <div className="flex-1 min-h-0 flex flex-col w-full">
-                    {/* Mobile header */}
-                    {isMobile && (
-                      <div className="w-full border-b bg-white/80 backdrop-blur-md sticky top-0 z-40 px-4 flex items-center justify-between h-16 shadow-sm">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div 
-                            className="ml-2 text-lg font-semibold truncate" 
-                            style={{ color: 'var(--color-primary)' }}
-                          >
-                            Legal SahAI
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                    {/* Mobile header placeholder (optional brand bar) */}
+                    {/* <div className="md:hidden w-full border-b bg-white/80 backdrop-blur-md sticky top-0 z-30 px-4 flex items-center justify-center h-12 shadow-sm">
+                      <div className="text-base font-semibold truncate" style={{ color: 'var(--color-primary)' }}>Legal SahAI</div>
+                    </div> */}
                     
-                    <div className="flex-1 min-h-0 overflow-auto w-full">
+                    <div className="flex-1 min-h-0 overflow-auto w-full overflow-x-hidden">
                       <Routes>
                         <Route
                           path="/home"
@@ -144,7 +139,7 @@ function App() {
                         <Route
                           path="/find-lawyer"
                           element={
-                            <ProtectedRoute>
+                            <ProtectedRoute allowGuest={true}>
                               <FindLawyer />
                             </ProtectedRoute>
                           }
@@ -197,6 +192,22 @@ function App() {
                             </ProtectedRoute>
                           }
                         />
+                        <Route
+                          path="/admin"
+                          element={
+                            <ProtectedRoute>
+                              <AdminPanel />
+                            </ProtectedRoute>
+                          }
+                        />
+                        <Route
+                          path="/profile"
+                          element={
+                            <ProtectedRoute>
+                              <Profile />
+                            </ProtectedRoute>
+                          }
+                        />
                         <Route 
                           path="/chat/:id" 
                           element={
@@ -205,13 +216,13 @@ function App() {
                             </ProtectedRoute>
                           } 
                         />
-                        <Route 
-                          path="/chats" 
+                        <Route
+                          path="/chats"
                           element={
                             <ProtectedRoute>
                               <ChatView />
                             </ProtectedRoute>
-                          } 
+                          }
                         />
                         <Route 
                           path="/chats/:id" 

@@ -5,6 +5,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/ToastProvider';
 // papi is the AI backend axios instance (used for model answers)
 import papi from '../Axios/paxios';
+import { useGuestAccess } from '../hooks/useGuestAccess';
+import GuestAccessModal from '../components/GuestAccessModal';
 // Simple General Ask chat UI (not PDF-bound). Stores chats locally and attempts
 // to persist to backend at /api/general-ask/save (optional). Uses /api/general-ask
 // to get AI answers from the server's general knowledge base.
@@ -26,6 +28,7 @@ const GeneralAsk = () => {
   const [optimisticMsgs, setOptimisticMsgs] = useState({}); // { chatId: text }
   const ACTIVE_CHAT_KEY = 'generalAsk:activeChatId';
   const toast = useToast();
+  const { checkGuestAccess, showGuestModal, closeGuestModal, blockedFeature } = useGuestAccess();
 
   // helper to set active chat and persist selection across reloads
   const setActive = useCallback((id) => {
@@ -327,7 +330,8 @@ const GeneralAsk = () => {
       }
     } catch (err) {
       console.error('Transcription API call failed:', err);
-      toast.error('Transcription failed. Please try again.');
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Transcription failed. Please try again.';
+      toast.error(errorMsg);
     } finally {
       setIsProcessingAudio(false);
     }
@@ -340,6 +344,7 @@ const GeneralAsk = () => {
   }, [chats, isAiThinking]);
 
   const sendQuery = async () => {
+    if (!checkGuestAccess('Ask Legal Question')) return;
     const txt = (query || '').trim();
     if (!txt) return;
     setQuery('');
@@ -491,8 +496,10 @@ const GeneralAsk = () => {
 
     } catch (err) {
       console.error('general ask failed', err);
-      const errMsg = { role: 'assistant', text: 'Error: failed to get an answer. Please try again.', createdAt: new Date().toISOString() };
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to get an answer. Please try again.';
+      const errMsg = { role: 'assistant', text: `Error: ${errorMsg}`, createdAt: new Date().toISOString() };
       setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, errMsg], updated: Date.now() } : c));
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
       setIsAiThinking(false);
@@ -522,8 +529,9 @@ const GeneralAsk = () => {
   };
 
   return (
-    <div className="h-[100vh] flex bg-[var(--bg)] overflow-hidden rounded min-h-0">
-      <div className="w-80 border-r flex flex-col min-h-0 h-full bg-[var(--panel)]" style={{borderColor:'var(--palette-3)'}}>
+    <div className="h-[100vh] flex bg-[var(--bg)] overflow-hidden rounded min-h-0 overflow-x-hidden">
+      {/* List (left) - full width on mobile, fixed on md+ */}
+      <div className={`${activeChat ? 'hidden' : 'flex'} md:flex w-full md:w-80 border-r flex-col min-h-0 h-full bg-[var(--panel)]`} style={{borderColor:'var(--palette-3)'}}>
         <div className="p-3 border-b flex items-center justify-between">
           <div className="font-semibold">Quick Guide</div>
           <div>
@@ -562,13 +570,19 @@ const GeneralAsk = () => {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden h-full">
-        <div className="flex-none p-3 border-b flex items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
+      {/* Thread (right) - hidden on mobile until a chat is active */}
+      <div className={`${activeChat ? 'flex' : 'hidden'} md:flex flex-1 flex-col min-h-0 overflow-hidden h-full`}>
+        {/* Mobile header with back */}
+        <div className="md:hidden flex-none p-3 border-b flex items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
+          <button onClick={()=>setActive(null)} className="mr-1 px-2 py-1 rounded hover:bg-gray-100" aria-label="Back to list">←</button>
+          <div className="font-semibold truncate">{activeChat ? (activeChat.title || 'Conversation') : 'Quick Guide'}</div>
+        </div>
+        {/* Desktop header */}
+        <div className="hidden md:flex flex-none p-3 border-b items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
           <div className="font-semibold">{activeChat ? (activeChat.title || 'Conversation') : 'Quick Guide'}</div>
-          {/* <div className="text-xs text-[var(--muted)] ml-2">Ask general legal questions (answers come from the knowledge base)</div> */}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-[var(--palette-4)]">
+  <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-[var(--palette-4)]">
           {activeChat ? (
             displayMessages.map((m, idx) => (
               <div key={m._id || idx} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -624,6 +638,12 @@ const GeneralAsk = () => {
           <button onClick={sendQuery} disabled={loading} className="px-3 py-1 btn-primary text-white rounded">{loading ? 'Asking...' : 'Ask'}</button>
         </div>
       </div>
+
+      <GuestAccessModal
+        isOpen={showGuestModal}
+        onClose={closeGuestModal}
+        featureName={blockedFeature}
+      />
     </div>
   );
 };
