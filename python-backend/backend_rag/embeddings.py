@@ -23,7 +23,7 @@ def embed_texts(texts: List[str]) -> np.ndarray:
         texts,
         convert_to_numpy=True,
         show_progress_bar=False,
-        normalize_embeddings=True,
+        normalize_embeddings=False,
     )
 
 

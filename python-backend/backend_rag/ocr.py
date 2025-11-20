@@ -282,7 +282,7 @@ from pydub import AudioSegment
 # (Make sure the necessary imports are at the top, like speech, AudioSegment, io, etc.)
 # (Also ensure the _get_speech_client() function is present in the file)
 
-def speech_to_text_from_bytes(content: bytes, language_code: str | None = None) -> str:
+def speech_to_text_from_bytes(content: bytes, language_code: str | None = None,enable_automatic_punctuation: bool = True) -> str:
     """
     Transcribes audio using Google Cloud Speech-to-Text v2.
     If `language_code` is provided, it forces that language.

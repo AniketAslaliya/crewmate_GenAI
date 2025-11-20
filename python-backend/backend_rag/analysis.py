@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import json
@@ -11,7 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 import httpx
-
+# Near the top of analysis.py
+# In backend_rag/analysis.py (at the top with other imports)
+   # <-- NEW
 # External dependencies used across versions
 from bs4 import BeautifulSoup, NavigableString
 
@@ -180,261 +180,307 @@ quick_analyze_for_thread = quick_analyze_thread
 
 
 # In backend_rag/analysis.py
+# --- (Keep all your existing imports at the top) ---
 from .vectorstore_pinecone import get_or_create_index, namespace, query_top_k
 from .embeddings import get_embedding_dimension
 from .models import call_model_system_then_user
 from typing import Any, Dict, List, Optional
-import json # For parsing Agent 1's output
+import json 
 import re
 
+# ... (Keep your other functions like quick_analyze_thread, generate_faq, etc.) ...
+
+# =========================================================================
+# === NEW DYNAMIC STUDY GUIDE (V2)                                      ===
+# =========================================================================
+#
+# DELETE the old _legal_agent1, _legal_agent2, _legal_agent3, _legal_agent4,
+# and the old generate_study_guide functions.
+#
+# REPLACE them with these new agents:
 # In backend_rag/analysis.py
 
-# === LEGAL AGENT 1: Section Classifier / Extractor ===
-def _legal_agent1_extract_sections(context: str) -> Dict[str, str]:
+# === HELPER: UNIVERSAL ADAPTER ===
+def _normalize_response(doc_type: str, raw_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Identifies and extracts text corresponding to standard legal sections.
-    Returns a dictionary mapping section names (e.g., 'facts', 'judgment') to their text.
+    Transforms specific agent outputs into a Single Universal Schema 
+    for the Frontend.
     """
-    print("--- [Legal Agent 1] Identifying and extracting sections... ---")
-    system_prompt = (
-        "You are an expert legal document parser. Analyze the provided text excerpts and identify content belonging to these standard sections: "
-        "'Case Title / Citation', 'Facts of the Case', 'Issues Raised', 'Arguments (Petitioner/Respondent)', 'Judgment / Decision', 'Legal Provisions / Precedents Cited'.\n"
-        "Rules:\n"
-        "- Return a valid JSON object where keys are the section names (use snake_case like 'case_title', 'facts_of_case', 'issues_raised', 'arguments', 'judgment', 'legal_provisions').\n"
-        "- The value for each key should be the extracted text belonging to that section. If a section is not found or empty, use an empty string \"\".\n"
-        "- Extract the core text for each section, omitting redundant headers or boilerplate if possible.\n"
-        "- If arguments for both sides are distinct, combine them under 'arguments'.\n"
-        "- Ensure the output is ONLY the JSON object, nothing else."
-    )
-    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract sections into JSON:"
-    
-    default_sections = {
-        "case_title": "", "facts_of_case": "", "issues_raised": "", 
-        "arguments": "", "judgment": "", "legal_provisions": ""
+    # Default Universal Structure
+    normalized = {
+        "document_type": doc_type,
+        "title": "Untitled Document",
+        "overview": "No summary available.",
+        "structured_data": [],  # Frontend will loop this: [{label, value}]
+        "critical_points": []   # Frontend will loop this: [string]
     }
+
+    # --- MAP: CASE JUDGMENT ---
+    if doc_type == "Case Judgment":
+        normalized["title"] = raw_data.get("case_title", "Unknown Case")
+        normalized["overview"] = raw_data.get("facts", "")
+        
+        # Map specific fields to generic structured_data
+        normalized["structured_data"] = [
+            {"label": "Verdict", "value": raw_data.get("verdict", "Not specified")},
+            {"label": "Key Laws", "value": ", ".join(raw_data.get("key_laws", []))},
+            {"label": "Precedents", "value": ", ".join(raw_data.get("key_precedents", []))}
+        ]
+        
+        # Map issues/arguments to critical_points
+        issues = raw_data.get("issues", [])
+        if isinstance(issues, list):
+            normalized["critical_points"] = issues[:5] # Top 5 issues
+
+    # --- MAP: AGREEMENT/CONTRACT ---
+    elif doc_type == "Agreement/Contract":
+        normalized["title"] = raw_data.get("document_title", "Untitled Agreement")
+        normalized["overview"] = raw_data.get("purpose", "")
+        
+        normalized["structured_data"] = [
+            {"label": "Parties", "value": ", ".join(raw_data.get("parties", []))},
+            {"label": "Termination", "value": raw_data.get("term_and_termination", "Not specified")},
+            {"label": "Jurisdiction", "value": raw_data.get("governing_law", "Not specified")}
+        ]
+        
+        # Obligations become critical points
+        obligations = raw_data.get("key_obligations", [])
+        if isinstance(obligations, list):
+            normalized["critical_points"] = obligations[:5]
+
+    # --- MAP: LEGAL FILING ---
+    elif doc_type == "Legal Filing":
+        normalized["title"] = f"{raw_data.get('filing_type', 'Filing')} - {raw_data.get('court', 'Unknown Court')}"
+        normalized["overview"] = raw_data.get("summary_of_facts", "")
+        
+        normalized["structured_data"] = [
+            {"label": "Parties", "value": ", ".join(raw_data.get("parties", []))},
+            {"label": "Filing Type", "value": raw_data.get("filing_type", "Petition")}
+        ]
+        
+        # Prayers (what they want) become critical points
+        prayers = raw_data.get("summary_of_prayers", [])
+        if isinstance(prayers, list):
+            normalized["critical_points"] = prayers[:5]
+
+    # --- MAP: OTHER ---
+    else:
+        normalized["title"] = raw_data.get("document_title", "Legal Document")
+        normalized["overview"] = raw_data.get("general_summary", "")
+        topics = raw_data.get("key_topics", [])
+        if isinstance(topics, list):
+             normalized["critical_points"] = topics[:5]
+
+    return normalized
+# --- AGENT 1: DOCUMENT CLASSIFIER ---
+def _agent_classify_document_type(context: str) -> str:
+    """
+    Analyzes the document context and classifies it into a specific type.
+    """
+    print("--- [Study Guide V2 - Agent 1] Classifying document type... ---")
+    system_prompt = (
+        "You are a legal document classifier. Analyze the provided text excerpts and determine the "
+        "primary type of the document. Respond with ONE of the following classifications ONLY:\n"
+        "- 'Case Judgment' (if it's a court decision, order, or petition)\n"
+        "- 'Agreement/Contract' (if it's a lease, NDA, employment agreement, settlement, etc.)\n"
+        "- 'Legal Filing' (if it's a petition, affidavit, complaint, or other filing)\n"
+        "- 'Other Legal Document' (for anything else, like a policy, will, or academic article)\n\n"
+        "Respond with the classification string and nothing else."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context[:10000]}\n---\n\nClassification:"
     
     try:
         response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
-        # Find JSON within potential ```json ... ``` markers
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if match:
-            extracted_sections = json.loads(match.group(0))
-            # Validate and merge with defaults
-            validated_sections = {k: extracted_sections.get(k, "") for k in default_sections}
-            print("--- [Legal Agent 1] Sections extracted successfully. ---")
-            return validated_sections
-        else:
-            print("--- [Legal Agent 1] Failed: Could not find JSON in response.")
-            return default_sections
-    except Exception as e:
-        print(f"--- [Legal Agent 1] Failed: {e} ---")
-        return default_sections # Return default structure on error
-
-# === LEGAL AGENT 2: Section Summarization ===
-def _legal_agent2_summarize_section(section_name: str, section_text: str) -> str:
-    """
-    Generates a concise summary for a specific legal section.
-    """
-    if not section_text.strip():
-        return "Not specified in the provided excerpts."
         
-    print(f"--- [Legal Agent 2] Summarizing section: {section_name}... ---")
-    
-    # Tailor the prompt based on the section
-    prompt_guidance = {
-        "facts_of_case": "Summarize the key facts, events, dates, and parties involved.",
-        "issues_raised": "List the main legal questions or points of contention raised.",
-        "arguments": "Briefly outline the core arguments presented by the petitioner(s) and respondent(s).",
-        "judgment": "State the final decision/verdict of the court and the primary reasoning.",
-        "legal_provisions": "List the key laws, sections, or precedent cases mentioned."
-    }.get(section_name, "Summarize the main points of this section.") # Default prompt
-    
-    system_prompt = (
-        f"You are a legal summarization expert. Based ONLY on the provided text for the '{section_name}' section, {prompt_guidance}\n"
-        "Rules:\n"
-        "- Be concise and use plain English.\n"
-        "- Preserve critical legal details, names, and outcomes.\n"
-        "- If the provided text is insufficient or irrelevant, state 'Insufficient information provided for this section.'\n"
-        "- Output ONLY the summary text."
-    )
-    user_prompt = f"Section Text:\n---\n{section_text}\n---\n\nSummary:"
-    
-    try:
-        summary = call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
-        print(f"--- [Legal Agent 2] Summarized {section_name}. ---")
-        return summary.strip()
+        # Clean up the response to get one of the keys
+        if "Case Judgment" in response: return "Case Judgment"
+        if "Agreement/Contract" in response: return "Agreement/Contract"
+        if "Legal Filing" in response: return "Legal Filing"
+        return "Other Legal Document"
+        
     except Exception as e:
-        print(f"--- [Legal Agent 2] Failed to summarize {section_name}: {e} ---")
-        return f"(Error summarizing {section_name})"
+        print(f"--- [Agent 1] Error during classification: {e} ---")
+        return "Other Legal Document" # Default fallback
 
-# === LEGAL AGENT 3: Legal Insight Extraction ===
-def _legal_agent3_extract_insights(sections: Dict[str, str]) -> Dict[str, str]:
+# --- AGENT 2: CASE JUDGMENT SUMMARIZER ---
+def _agent_summarize_case_judgment(context: str) -> Dict[str, Any]:
     """
-    Extracts key legal insights like verdict, laws, and precedents.
-    Focuses analysis on judgment and legal provisions sections.
+    Extracts key information from a document identified as a Case Judgment.
+    This is the logic from your *original* successful prompt.
     """
-    print("--- [Legal Agent 3] Extracting legal insights... ---")
-    # Combine relevant sections for analysis
-    context_for_insights = (
-        f"Judgment/Decision:\n{sections.get('judgment', 'Not specified.')}\n\n"
-        f"Legal Provisions/Precedents:\n{sections.get('legal_provisions', 'Not specified.')}\n\n"
-        f"Facts Summary (for context):\n{sections.get('facts_of_case', 'Not specified.')}" # Add facts for context
-    )
-    
+    print("--- [Study Guide V2 - Agent 2] Routing to Case Judgment summarizer... ---")
     system_prompt = (
-        "You are a legal insight analyst. Based ONLY on the provided text excerpts (primarily focusing on Judgment and Legal Provisions), "
-        "extract the following key insights. Return a valid JSON object.\n"
+        "You are an expert legal analyst summarizing a court case document. "
+        "Analyze the provided text and extract the key components into a valid JSON object.\n"
         "Required JSON Keys:\n"
-        "- `verdict`: string (e.g., 'Petition Allowed', 'Appeal Dismissed', 'Partially Allowed', 'Remanded', 'Not specified'). Determine this from the judgment text.\n"
-        "- `key_laws`: list of strings (e.g., ['Constitution of India, Art 21', 'Indian Penal Code, S 302']). Extract specific laws/sections mentioned.\n"
-        "- `key_precedents`: list of strings (e.g., ['Kesavananda Bharati v. State of Kerala', 'Maneka Gandhi v. Union of India']). Extract cited case names.\n"
+        "- `case_title`: string (e.g., 'Case Name v. Respondent Name')\n"
+        "- `facts`: string (a concise summary of the case facts)\n"
+        "- `issues`: list[string] (a list of the main legal questions)\n"
+        "- `arguments`: string (a brief summary of arguments from both sides)\n"
+        "- `verdict`: string (the final operative order, e.g., 'Petition dismissed.')\n"
+        "- `key_laws`: list[string] (e.g., ['Indian Penal Code, S 302'])\n"
+        "- `key_precedents`: list[string] (e.g., ['Case Name v. State of U.P.'])\n\n"
         "Rules:\n"
-        "- If information for a key is not found, use an appropriate default (e.g., 'Not specified' for verdict, empty list [] for laws/precedents).\n"
-        "- Be precise in extracting names and section numbers.\n"
+        "- If information for a key is not found, use 'Not specified' or an empty list [].\n"
         "- Output ONLY the JSON object."
     )
-    user_prompt = f"Document Excerpts for Insight Extraction:\n---\n{context_for_insights}\n---\n\nExtract insights into JSON:"
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract summary into JSON:"
 
-    default_insights = {"verdict": "Not specified", "key_laws": [], "key_precedents": []}
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except Exception as e:
+        print(f"--- [Agent 2] Error parsing case summary: {e} ---")
+    
+    return {"error": "Failed to parse case judgment summary."}
+
+# --- AGENT 3: AGREEMENT/CONTRACT SUMMARIZER ---
+def _agent_summarize_agreement_contract(context: str) -> Dict[str, Any]:
+    """
+    Extracts key information from a document identified as an Agreement or Contract.
+    """
+    print("--- [Study Guide V2 - Agent 3] Routing to Agreement/Contract summarizer... ---")
+    system_prompt = (
+        "You are an expert contract analyst. Analyze the provided legal agreement "
+        "and extract the key components into a valid JSON object.\n"
+        "Required JSON Keys:\n"
+        "- `document_title`: string (e.g., 'Residential Lease Agreement', 'Non-Disclosure Agreement')\n"
+        "- `parties`: list[string] (The names of the parties involved, e.g., ['Party A', 'Party B'])\n"
+        "- `purpose`: string (A one-sentence summary of the agreement's purpose)\n"
+        "- `key_obligations`: list[string] (3-5 key duties or responsibilities for the parties)\n"
+        "- `term_and_termination`: string (Summary of the agreement's duration and how it can be ended)\n"
+        "- `governing_law`: string (The jurisdiction, e.g., 'State of [X], India')\n\n"
+        "Rules:\n"
+        "- If information for a key is not found, use 'Not specified' or an empty list [].\n"
+        "- Output ONLY the JSON object."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract summary into JSON:"
     
     try:
         response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if match:
-            insights = json.loads(match.group(0))
-            # Validate and merge with defaults
-            validated_insights = {
-                "verdict": insights.get("verdict", default_insights["verdict"]),
-                "key_laws": insights.get("key_laws", default_insights["key_laws"]),
-                "key_precedents": insights.get("key_precedents", default_insights["key_precedents"]),
-            }
-            print("--- [Legal Agent 3] Insights extracted successfully. ---")
-            return validated_insights
-        else:
-            print("--- [Legal Agent 3] Failed: Could not find JSON in response.")
-            return default_insights
+            return json.loads(match.group(0))
     except Exception as e:
-        print(f"--- [Legal Agent 3] Failed: {e} ---")
-        return default_insights
+        print(f"--- [Agent 3] Error parsing agreement summary: {e} ---")
+        
+    return {"error": "Failed to parse agreement/contract summary."}
 
-# === LEGAL AGENT 4: Formatting Agent ===
-def _legal_agent4_format_summary(
-    sections: Dict[str, str], 
-    summaries: Dict[str, str], 
-    insights: Dict[str, Any]
-) -> str:
+# --- AGENT 4: LEGAL FILING SUMMARIZER ---
+def _agent_summarize_legal_filing(context: str) -> Dict[str, Any]:
     """
-    Compiles all extracted and summarized information into a final formatted Markdown report.
+    Extracts key information from a document identified as a Legal Filing (Petition, Affidavit, etc.).
     """
-    print("--- [Legal Agent 4] Formatting final summary... ---")
+    print("--- [Study Guide V2 - Agent 4] Routing to Legal Filing summarizer... ---")
+    system_prompt = (
+        "You are an expert legal clerk. Analyze the provided legal filing "
+        "and extract the key components into a valid JSON object.\n"
+        "Required JSON Keys:\n"
+        "- `filing_type`: string (e.g., 'Writ Petition', 'Affidavit', 'Complaint')\n"
+        "- `parties`: list[string] (e.g., ['Petitioner Name', 'Respondent Name'])\n"
+        "- `court`: string (The court it is filed in, e.g., 'High Court of Delhi')\n"
+        "- `summary_of_facts`: string (A brief summary of the facts presented in the filing)\n"
+        "- `summary_of_prayers`: list[string] (The key reliefs or 'prayers' requested from the court)\n\n"
+        "Rules:\n"
+        "- If information for a key is not found, use 'Not specified' or an empty list [].\n"
+        "- Output ONLY the JSON object."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract summary into JSON:"
     
-    # Helper to format lists for Markdown
-    def format_list(items: List[str]) -> str:
-        if not items: return "None specified."
-        return "\n".join([f"- {item}" for item in items])
-
-    # Build the final Markdown string
-    formatted_text = f"""
-## ⚖️ Legal Document Summary
-
-**📘 Case Title:** {summaries.get('case_title', sections.get('case_title', 'Not Specified'))}
-
----
-
-**🧾 Facts:**
-{summaries.get('facts_of_case', 'Not Specified')}
-
----
-
-**❓ Issues Raised:**
-{summaries.get('issues_raised', 'Not Specified')}
-
----
-
-**📚 Arguments:**
-{summaries.get('arguments', 'Not Specified')}
-
----
-
-**🔍 Judgement / Verdict:**
-**Verdict:** {insights.get('verdict', 'Not Specified')}
-**Summary:** {summaries.get('judgment', 'Not Specified')}
-
----
-
-**📖 Legal References:**
-**Key Laws & Sections:**
-{format_list(insights.get('key_laws', []))}
-
-**Key Precedents Cited:**
-{format_list(insights.get('key_precedents', []))}
-
-**Full Extracted Text (if available):** {summaries.get('legal_provisions', 'None specified.')}
-"""
-    print("--- [Legal Agent 4] Formatting complete. ---")
-    return formatted_text.strip()
-
-
-# In backend_rag/analysis.py
-
-# === Legal Study Guide Orchestrator ===
-# In backend_rag/analysis.py
-
-# === Legal Study Guide Orchestrator (JSON Output Version) ===
-def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: int = 25) -> Dict[str, Any]:
-    """
-    Orchestrates the legal multi-agent process to generate a structured
-    JSON summary of the document.
-    """
-    print("--- [Legal Study Guide] Starting generation... ---")
     try:
-        # 1. Get Broad Context
-        index = get_or_create_index(dim=get_embedding_dimension())
-        ns = namespace(user_id, thread_id)
-        initial_hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=max_snippets)
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except Exception as e:
+        print(f"--- [Agent 4] Error parsing filing summary: {e} ---")
+        
+    return {"error": "Failed to parse legal filing summary."}
 
+# --- AGENT 5: GENERAL/OTHER DOCUMENT SUMMARIZER ---
+def _agent_summarize_other(context: str) -> Dict[str, Any]:
+    """
+    Provides a general summary for documents that don't fit other categories.
+    """
+    print("--- [Study Guide V2 - Agent 5] Routing to General summarizer... ---")
+    system_prompt = (
+        "You are a document analyst. Analyze the provided text and "
+        "generate a concise summary as a valid JSON object.\n"
+        "Required JSON Keys:\n"
+        "- `document_title`: string (The title or a descriptive title if none is found)\n"
+        "- `key_topics`: list[string] (A list of the 5-7 main topics discussed in the document)\n"
+        "- `general_summary`: string (A 3-4 sentence paragraph summarizing the document's content)\n\n"
+        "Rules:\n"
+        "- If information for a key is not found, use 'Not specified' or an empty list [].\n"
+        "- Output ONLY the JSON object."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract summary into JSON:"
+    
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+    except Exception as e:
+        print(f"--- [Agent 5] Error parsing general summary: {e} ---")
+        
+    return {"error": "Failed to parse general document summary."}
+
+# === NEW V2 ORCHESTRATOR ===
+def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: int = 50) -> Dict[str, Any]:
+    """
+    Orchestrates the dynamic multi-agent process AND normalizes the output
+    so the frontend always receives the exact same JSON structure.
+    """
+    print("--- [Study Guide V2] Starting generation & normalization... ---")
+    try:
+        # 1. Get Context (Standard RAG)
+        index = get_or_create_index(dim=get_embedding_dimension()) 
+        ns = namespace(user_id, thread_id)
+        initial_hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=max_snippets) 
+        
         if not initial_hits: return {"success": False, "message": "No document excerpts available."}
         snippets = [hit.get("metadata", {}).get("text", "") for hit in initial_hits if hit.get("metadata", {}).get("text", "")]
         if not snippets: return {"success": False, "message": "No valid text snippets found."}
-        initial_context = "\n\n---\n\n".join(snippets)
+        full_context = "\n\n---\n\n".join(snippets)
 
-        # 2. Agent 1: Extract Sections
-        extracted_sections = _legal_agent1_extract_sections(initial_context)
+        # 2. Classify
+        doc_type = _agent_classify_document_type(full_context)
+        print(f"--- [Orchestrator] Classified as: {doc_type} ---")
 
-        # 3. Agent 2: Summarize Key Sections Individually
-        section_summaries = {}
-        sections_to_summarize = ['case_title', 'facts_of_case', 'issues_raised', 'arguments', 'judgment', 'legal_provisions']
-        for section_name in sections_to_summarize:
-            section_text = extracted_sections.get(section_name, "")
-            section_summaries[section_name] = _legal_agent2_summarize_section(section_name, section_text)
+        # 3. Route to Agent (Get Specific Data)
+        raw_agent_data = {}
+        if doc_type == "Case Judgment":
+            raw_agent_data = _agent_summarize_case_judgment(full_context)
+        elif doc_type == "Agreement/Contract":
+            raw_agent_data = _agent_summarize_agreement_contract(full_context)
+        elif doc_type == "Legal Filing":
+            raw_agent_data = _agent_summarize_legal_filing(full_context)
+        else:
+            raw_agent_data = _agent_summarize_other(full_context)
 
-        # 4. Agent 3: Extract Insights
-        legal_insights = _legal_agent3_extract_insights(extracted_sections)
+        if "error" in raw_agent_data:
+             # Fallback if agent failed
+             return {"success": False, "message": "Analysis failed for this document type."}
 
-        # 5. Compile Final JSON Output (Instead of Formatting Agent)
-        final_json_output = {
-            "case_title": section_summaries.get('case_title', 'Not Specified'),
-            "summary": {
-                "facts": section_summaries.get('facts_of_case', 'Not Specified'),
-                "issues": section_summaries.get('issues_raised', 'Not Specified'),
-                "arguments": section_summaries.get('arguments', 'Not Specified'),
-                "judgment": section_summaries.get('judgment', 'Not Specified')
-            },
-            "insights": {
-                "verdict": legal_insights.get('verdict', 'Not Specified'),
-                "key_laws": legal_insights.get('key_laws', []),
-                "key_precedents": legal_insights.get('key_precedents', []),
-                "legal_provisions_summary": section_summaries.get('legal_provisions', 'Not Specified')
-            }
-        }
-
-        print("--- [Legal Study Guide] Generation complete (JSON format). ---")
-        # Return the structured dictionary in the 'study_guide' field
-        return {"success": True, "study_guide": final_json_output}
+        # 4. NORMALIZE (Transform to Universal Schema)
+        # This ensures the frontend always sees the same keys
+        universal_output = _normalize_response(doc_type, raw_agent_data)
+        
+        print("--- [Orchestrator] Normalized output ready. ---")
+        return {"success": True, "study_guide": universal_output}
 
     except Exception as e:
-        print(f"--- [Legal Study Guide] Error: {e} ---")
+        print(f"--- [Orchestrator] Error: {e} ---")
         return {"success": False, "message": f"generate_study_guide error: {e}"}
+
+# =========================================================================
+# === END OF NEW STUDY GUIDE (V2) SECTION                               ===
+# =========================================================================
+
+# ... (Keep your other functions like get_term_context, generate_faq, generate_timeline, etc.) ...
 
 def get_term_context(user_id: Optional[str], thread_id: str, term: str) -> Dict[str, Any]:
     """
@@ -726,71 +772,9 @@ def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int 
 
 ## --- CASE LAW SUGGESTION: FINAL ARCHITECTURE ---
 
-# --- MODIFIED: Handle failure gracefully ---
-def _agent0_identify_legal_domain(context: str) -> str:
-    """Agent 0: Identifies the core legal domain of the document."""
-    print("--- [AGENT 0] Identifying legal domain... ---")
-    system_prompt = (
-        "Based on the text, identify the primary area of Indian law. "
-        "Respond with ONLY the name of the area and the key statute, if applicable. "
-        "Examples: 'Indian Contract Act, 1872', 'Transfer of Property Act, 1882', 'Income Tax Act, 1961', 'Code of Civil Procedure, 1908'. "
-        "Be concise."
-    )
-    user_prompt = f"Document Text:\n---\n{context}\n---"
-    try:
-        domain = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
-        print(f"--- [AGENT 0] Identified Domain: {domain} ---")
-        return domain.strip()
-    except Exception as e:
-        # Instead of returning a hardcoded default, return an empty string to signal failure.
-        print(f"--- [AGENT 0] ERROR: Could not identify legal domain due to: {e} ---")
-        return ""
 
-def _agent1_generate_search_queries(context: str, domain: str) -> List[str]:
-    print(f"--- [AGENT 1] Generating search-engine-friendly queries for domain: {domain}... ---")
-    system_prompt = (
-        "You are a legal research assistant creating search queries for a simple engine like Google. "
-        "Based on the document text, generate three short, simple search phrases to find relevant Indian case law.\n\n"
-        "**RULES:**\n"
-        "- Use simple keywords.\n"
-        "- **DO NOT** include section numbers (like 'Section 125' or 'Section 24').\n"
-        "- **DO NOT** use legal jargon like 'pendente lite' or 'vs.'.\n"
-        "- **DO NOT** number the queries.\n"
-        "- Keep each query under 7 words.\n\n"
-        "**GOOD EXAMPLES:**\n"
-        "maintenance from date of application\n"
-        "interim maintenance for educated wife\n"
-        "overlapping jurisdiction HMA DV Act\n\n"
-        "**BAD EXAMPLES:**\n"
-        "1. Hindu Marriage Act Section 24 interim maintenance unemployed wife\n"
-        "2. maintenance pendente lite vs permanent alimony"
-    )
-    user_prompt = f"Document Text:\n---\n{context}\n---"
-    try:
-        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
-        queries = [q.strip() for q in response.split('\n') if q.strip()]
-        if not queries: raise ValueError("LLM returned no queries.")
-        print(f"--- [AGENT 1] Generated queries: {queries} ---")
-        return queries[:3]
-    except Exception as e:
-        print(f"--- [AGENT 1] Failed to generate queries: {e} ---")
-        return []
-
-def _clean_scraped_text_heuristic(soup: BeautifulSoup) -> str:
-    for element in soup(["script", "style", "header", "footer", "nav", "form"]):
-        element.decompose()
-    text = soup.get_text(separator='\n', strip=True)
-    lines = text.split('\n')
-    start_index = 0
-    anchor_keywords = ["J U D G M E N T", "JUDGMENT", "O R D E R", "ORDER"]
-    for i, line in enumerate(lines):
-        if line.strip().upper() in anchor_keywords:
-            start_index = i + 1
-            break
-    content_lines = lines[start_index:]
-    stop_phrases = [ "Get this document in PDF", "Warning on translation", "Share Link", "Desktop View", "Cites", "Cited by", "Equivalent citations:", "Author:", "Bench:", "PETITIONER:", "RESPONDENT:", "DATE OF JUDGMENT", "Virtual Legal Assistant" ]
-    cleaned_lines = [line for line in content_lines if not any(phrase.lower() in line.lower() for phrase in stop_phrases)]
-    return "\n".join(cleaned_lines).strip()
+import os
+import httpx
 
 import random
 import requests
@@ -802,160 +786,232 @@ from typing import List, Dict
 # In backend_rag/analysis.py
 
 # --- Add these imports at the top of your file ---
-from playwright.sync_api import sync_playwright
+
 # --- Make sure the other necessary imports are still there ---
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 from typing import List, Dict, Optional
 import os
 
-# This is the function you need to replace.
-def _agent2_retrieve_cases_from_indian_kanoon(queries: List[str], max_cases: int = 3) -> List[Dict]:
+
+
+# In backend_rag/analysis.py
+# In backend_rag/analysis.py
+# REPLACE the old Agent 2 with this one:
+
+# --- Make sure you have this import at the top of analysis.py ---
+from urllib.parse import quote
+
+# In backend_rag/analysis.py
+# REPLACE the old Agent 2 with this one:
+import requests # <-- ADD THIS
+import time
+import html
+# --- Make sure you have these imports at the top ---
+import httpx
+import json
+import os
+from typing import Any, Dict, List, Optional
+from .vectorstore_pinecone import get_or_create_index, namespace, query_top_k # (and other existing imports)
+from urllib.parse import quote_plus
+def clean_html(text: str) -> str:
+    """Remove HTML tags like <b>, <i> and decode entities."""
+    text = re.sub(r"<[^>]+>", "", text or "")  # strip tags
+    return html.unescape(text.strip())
+
+# --- NEW: AGENT 1 (Fact Extractor) ---
+def _agent1_extract_searchable_facts(context: str) -> List[str]:
     """
-    Uses Playwright to control a real browser, bypassing anti-bot measures.
-    NOTE: This is resource-intensive and may be difficult to deploy.
+    Reads a large document context and extracts 3-5 key legal
+    facts or questions that are ideal for a case law search.
     """
-    if not queries:
-        return []
-
-    all_results: Dict[str, Dict] = {}
-
-    try:
-        with sync_playwright() as p:
-            # Launch the browser once for all operations
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-
-            # 1. Search for all cases to find their URLs
-            for query in queries:
-                full_query = f'"{query}"'
-                target_url = f"https://indiankanoon.org/search/?formInput={quote(full_query)}"
-                print(f"--- [AGENT 2] Navigating to search page for query: '{full_query}' ---")
-                
-                try:
-                    page.goto(target_url, timeout=60000)
-                    html = page.content()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    for result in soup.find_all('div', class_='result', limit=max_cases):
-                        if (title_div := result.find('div', class_='result_title')) and (link := title_div.find('a')):
-                            case_url = "https://indiankanoon.org" + link['href']
-                            if case_url not in all_results:
-                                all_results[case_url] = {"case_name": link.get_text(strip=True), "url": case_url}
-                except Exception as e:
-                    print(f"--- [AGENT 2] Playwright failed during search for query '{query}': {e} ---")
-
-            unique_cases = list(all_results.values())[:max_cases]
-            if not unique_cases:
-                print("--- [AGENT 2] No relevant case URLs found after searching.")
-                browser.close()
-                return []
-
-            # 2. Scrape each unique case page for its full text
-            print(f"--- [AGENT 2] Found {len(unique_cases)} unique cases to scrape. ---")
-            for case in unique_cases:
-                try:
-                    print(f"--- [AGENT 2] Scraping page: {case['url']} ---")
-                    page.goto(case['url'], timeout=60000)
-                    html = page.content()
-                    
-                    case_soup = BeautifulSoup(html, 'html.parser')
-                    cleaned_text = _clean_scraped_text_heuristic(case_soup)
-                    
-                    if len(cleaned_text) > 300:
-                        case['raw_text'] = cleaned_text[:25000]
-                        print(f"--- [AGENT 2] SUCCESS: Extracted {len(case['raw_text'])} chars for '{case['case_name']}'.")
-                    else:
-                        case['raw_text'] = ""
-                except Exception as e:
-                    case['raw_text'] = ""
-                    print(f"--- [AGENT 2] FAILED to scrape '{case['url']}': {e} ---")
-            
-            # Close the browser when all work is done
-            browser.close()
-
-    except Exception as e:
-        print(f"--- [AGENT 2] A critical error occurred in Playwright setup: {e} ---")
-        return []
-            
-    return [case for case in unique_cases if case.get('raw_text')]
-
-def _agent3_consolidated_analysis(user_context: str, case: Dict, domain: str) -> Optional[Dict]:
-    raw_text = case.get("raw_text", "")
-    if len(raw_text) < 300: return None
+    print("--- [AGENT 1] Extracting searchable facts from document... ---")
     system_prompt = (
-        f"You are an expert legal analyst for Indian law, specializing in the '{domain}'. Your task is to analyze a historical court case and explain its relevance to a user's current situation within this specific legal domain. Respond in a strict JSON format. CRITICAL RULE: The keys in the JSON output ('is_useful', 'reason_if_not_useful', etc.) MUST be in English and must not be translated.\n\n"
-        "Output JSON schema:\n"
-        "{\n"
-        "  \"is_useful\": true|false,\n"
-  		"  \"reason_if_not_useful\": \"If is_useful=false, briefly explain why it's not relevant to the user's situation under {domain}.\",\n"
-        "  \"similarity_summary\": \"If is_useful=true, explain the similarity between the user's situation and the historical case, focusing on principles from the {domain}.\",\n"
-        "  \"case_outcome\": \"If is_useful=true, state the final decision of the historical case.\"\n"
-        "}"
+        "You are a legal analyst. Read the provided document excerpts and identify the 3-5 most critical legal questions or key factual situations. "
+        "Return each item on a new line. Be concise.\n\n"
+        "**Example Output:**\n"
+        "Rights of an adult daughter to marry against parents' wishes\n"
+        "Police protection for interfaith couple\n"
+        "Validity of anticipatory bail in a 498a case\n"
     )
-    user_prompt = f"USER_SITUATION:\n---\n{user_context}\n---\n\nHISTORICAL_CASE_TEXT for '{case.get('case_name')}':\n---\n{raw_text}\n---"
+    user_prompt = f"Document Excerpts:\n---\n{context}\n---\n\nExtract the 3-5 most important searchable facts/questions:"
+    
     try:
-        response_str = call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
-        match = re.search(r'\{.*\}', response_str, re.DOTALL)
-        if not match:
-            print(f"--- [AGENT 3] Could not find JSON in response for '{case.get('case_name')}'.")
-            return None
-        analysis = json.loads(match.group(0))
-        if analysis.get("is_useful"):
-            print(f"--- [AGENT 3] AI deemed case '{case.get('case_name')}' as USEFUL.")
-            return {"case_name": case.get("case_name"), "url": case.get("url"), "details": analysis.get("similarity_summary"), "outcome": analysis.get("case_outcome")}
-        else:
-            reason = analysis.get("reason_if_not_useful", "Not relevant.")
-            print(f"--- [AGENT 3] AI deemed case '{case.get('case_name')}' not useful. Reason: {reason} ---")
-            return None
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
+        facts = [f.strip() for f in response.split('\n') if f.strip()]
+        print(f"--- [AGENT 1] Extracted facts: {facts} ---")
+        return facts[:5] # Limit to 5
     except Exception as e:
-        print(f"--- [AGENT 3] Failed to parse analysis for '{case.get('case_name')}': {e} ---")
+        print(f"--- [AGENT 1] Error extracting facts: {e} ---")
+        return []
+
+# --- RENAMED: AGENT 2 (API Search Tool) ---
+# This is your working function, renamed to be an "agent"
+def _agent2_search_api(query_text: str) -> List[Dict]:
+    """
+    Searches the Indian Kanoon API for a single query text
+    and returns a list of parsed case dictionaries.
+    """
+    print(f"--- [AGENT 2] Searching API for: '{query_text[:80]}...' ---")
+    
+    api_key = os.environ.get("INDIAN_KANOON_API_KEY") # Use consistent key name
+    if not api_key:
+        print("--- [AGENT 2] ERROR: Missing KANOON_API key.")
+        return [] # Return empty list on failure
+
+    base_url = "https://api.indiankanoon.org/search/"
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "User-Agent": "CaseLawFinder/1.0",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {"formInput": query_text, "pagenum": 0}
+
+    try:
+        response = requests.post(base_url, headers=headers, data=data, timeout=15)
+
+        if response.status_code == 200:
+            api_data = response.json()
+            results = []
+            for doc in api_data.get("docs", []):
+                case_id = doc.get("tid", "")
+                results.append({
+                    "title": clean_html(doc.get("title", "Unknown Title")),
+                    "url": f"https://indiankanoon.org/doc/{case_id}/" if case_id else "",
+                    "citation": clean_html(doc.get("citation", "")),
+                    "court": clean_html(doc.get("docsource", "")),
+                    "date": clean_html(doc.get("publishdate", "")),
+                    "snippet": clean_html(doc.get("headline", ""))
+                })
+            print(f"--- [AGENT 2] Found {len(results)} cases. ---")
+            return results
+        else:
+            print(f"--- [AGENT 2] Server error: {response.status_code} ---")
+            return []
+
+    except requests.RequestException as e:
+        print(f"--- [AGENT 2] Request error: {e} ---")
+        return []
+
+# --- NEW: AGENT 3 (Relevancy Filter) ---
+# In backend_rag/analysis.py
+# (This is the only function you need to replace)
+
+def _agent3_check_relevancy(user_context: str, case: Dict) -> Optional[str]:
+    """
+    Checks if a case snippet is relevant to the user's document
+    AND is not the *same* document.
+    """
+    print(f"--- [AGENT 3] Checking relevancy for: {case.get('title')} ---")
+    case_snippet = case.get('snippet', '')
+    if not case_snippet:
+        return None # No snippet to check
+
+    # --- THIS IS THE NEW, SMARTER PROMPT ---
+    system_prompt = (
+        "You are a legal analyst. You will see a user's document and a snippet from a potential case law. "
+        "Your job is to find *other* relevant cases (precedents).\n\n"
+        "**CRITICAL RULE:** If the 'CASE LAW SNIPPET' is from the **exact same document** as the 'USER'S DOCUMENT' (e.g., it discusses the same parties, facts, and petition numbers), you **MUST** respond with 'NO'. The user already has this document.\n\n"
+        "**YOUR TASK:**\n"
+        "1.  Read both texts.\n"
+        "2.  If they are the **same document**, respond with 'NO'.\n"
+        "3.  If they are **different**, but the snippet is **relevant**, respond with a 1-sentence explanation of *why* it is relevant.\n"
+        "4.  If they are **different** and **NOT relevant**, respond with 'NO'."
+    )
+
+    # We also pass the case title in the user prompt to help it spot duplicates
+    case_title = case.get('title', 'Unknown Title')
+    user_prompt = (
+        f"**USER'S DOCUMENT (Context):**\n{user_context[:2000]}\n\n"
+        f"**CASE LAW SNIPPET (from '{case_title}'):**\n{case_snippet}\n\n"
+        f"**Decision:** (If it's the *same document* or *not relevant*, respond 'NO'. If it's a *different, relevant* case, explain *why* in 1 sentence.)"
+    )
+    # --- END OF PROMPT CHANGES ---
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
+        
+        # Check for the "NO" response
+        if response.strip().upper() == "NO" or "not relevant" in response.lower() or "same document" in response.lower():
+            print(f"--- [AGENT 3] Result: NOT RELEVANT (or is a duplicate) ---")
+            return None
+        else:
+            # Any other response is the relevancy explanation
+            print(f"--- [AGENT 3] Result: RELEVANT ({response}) ---")
+            return response 
+    except Exception as e:
+        print(f"--- [AGENT 3] Error checking relevancy: {e} ---")
         return None
 
-# --- MODIFIED: Handle failure from Agent 0 ---
+# --- NEW: Orchestrator Function ---
+# This is the new main function called by api_server.py
 def suggest_case_law(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
-    """Main orchestrator for the domain-focused case law feature."""
+    """
+    Orchestrates the multi-agent pipeline to:
+    1. Extract facts from the user's doc.
+    2. Search for cases for each fact.
+    3. Filter all results for relevancy.
+    """
+    print("\n--- [Orchestrator] Starting automated case law suggestion... ---")
+    
+    # 1. Get User Document Context
     try:
-        index = get_or_create_index(dim=384)
+        dim = get_embedding_dimension()
+        index = get_or_create_index(dim)
         ns = namespace(user_id, thread_id)
-        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=25)
+        # Get a large context for analysis
+        query_result = query_top_k(index, ns, query_vec=[0.0] * dim, top_k=25)
         if not query_result:
             return {"success": False, "message": "No document excerpts for analysis."}
+        
         user_context = "\n".join([hit.get("metadata", {}).get("text", "").strip() for hit in query_result])
         if len(user_context.strip()) < 100:
             return {"success": False, "message": "Document content is too short for analysis."}
-        context_snippet = user_context[:4000]
-
-        # Step 0: Identify the Legal Domain
-        legal_domain = _agent0_identify_legal_domain(context_snippet)
-        
-        # --- NEW: Check if Agent 0 failed ---
-        if not legal_domain:
-            return {"success": False, "message": "Could not automatically identify the legal domain of the document. The AI model may be temporarily unavailable."}
-        
-        # Step 1: Generate Domain-Specific, Search-Friendly Queries
-        search_queries = _agent1_generate_search_queries(context_snippet, legal_domain)
-        
-        # Step 2: Perform Filtered Search and Scrape
-        retrieved_cases = _agent2_retrieve_cases_from_indian_kanoon(search_queries)
-        if not retrieved_cases:
-            return {"success": True, "suggested_cases": [], "message": f"No relevant cases under '{legal_domain}' could be found online for this document."}
-
-        # Step 3: Perform Domain-Aware Analysis
-        final_cases = []
-        for case in retrieved_cases:
-            if analysis_result := _agent3_consolidated_analysis(context_snippet, case, legal_domain):
-                final_cases.append(analysis_result)
-        
-        if not final_cases:
-            return {"success": True, "suggested_cases": [], "message": f"Found some potential cases, but none were sufficiently relevant to your document's specific context within '{legal_domain}'."}
-
-        return {"success": True, "suggested_cases": final_cases}
-
     except Exception as e:
-        print(f"--- [ERROR] An unexpected error occurred in suggest_case_law: {e}")
-        return {"success": False, "message": f"An unexpected error occurred: {e}"}
+        return {"success": False, "message": f"Error retrieving document: {e}"}
+
+    # 2. Agent 1: Extract Facts
+    facts = _agent1_extract_searchable_facts(user_context)
+    if not facts:
+        return {"success": False, "message": "Agent 1 failed to extract any facts from the document."}
+
+    # 3. Agents 2 & 3: Search and Filter
+    all_relevant_cases = {} # Use a dict to auto-deduplicate based on URL
     
+    for fact in facts:
+        # Agent 2: Search for this fact
+        cases_from_fact = _agent2_search_api(fact)
+        
+        for case in cases_from_fact:
+            url = case.get('url')
+            if not url or url in all_relevant_cases:
+                continue # Skip duplicates
+            
+            # Agent 3: Check for relevancy
+            relevance_reason = _agent3_check_relevancy(user_context, case)
+            
+            if relevance_reason:
+                case["relevance"] = relevance_reason # Add the new "relevance" field
+                all_relevant_cases[url] = case
+                
+    # 4. Format Output
+    final_cases_list = list(all_relevant_cases.values())
+    
+    if not final_cases_list:
+        return {
+            "success": True,
+            "suggested_cases": [],
+            "message": f"Searched for {len(facts)} facts, but found no relevant cases after filtering."
+        }
+
+    return {
+        "success": True,
+        "suggested_cases": final_cases_list,
+        "message": f"Found {len(final_cases_list)} relevant cases from {len(facts)} searched facts."
+    }
+
+
+        
 def _predictive_agent1_extract_facts(context: str) -> str:
     """Agent 1: Scans the document to identify and create a structured list of all key facts, obligations, and liabilities."""
     print("--- [Predictive Agent 1] Extracting critical facts... ---")
@@ -987,7 +1043,7 @@ def _predictive_agent3_synthesize_prediction(facts_summary: str, comprehensive_a
     system_prompt = (
         "You are a senior legal strategist. You have been given a list of facts, a primary analysis of strengths/risks, and an adversarial analysis of counter-arguments. "
         "Your task is to synthesize ALL of this information into a balanced predictive forecast. Generate a summary of 2-3 potential future outcomes or scenarios. "
-        "For each outcome, your reasoning should be robust and consider both sides of the argument. "
+        "For each outcome, your reasoning should be and in easy understable language and robust and consider both sides of the argument. "
         "Conclude with a standard legal disclaimer. "
         "The output MUST be a valid JSON object with two keys: `scenarios` (a list of objects, each with `outcome` and `reasoning` keys) and `disclaimer` (a string)."
         "CRITICAL RULE: The keys in the JSON output ('scenarios', 'outcome', 'reasoning', 'disclaimer') MUST be in English and must not be translated."
@@ -1037,3 +1093,187 @@ def generate_predictive_output(user_id: Optional[str], thread_id: str) -> Dict[s
     except Exception as e:
         print(f"--- [ERROR] An unexpected error occurred in generate_predictive_output: {e}")
         return {"success": False, "message": f"An unexpected error occurred: {e}"}
+    
+
+# In backend_rag/analysis.py
+# (Add this new function alongside your other agents like generate_faq, etc.)
+
+def _agent_explain_complex_clauses(context: str) -> Dict[str, str]:
+    """
+    Scans the document context, identifies the top 5-7 most complex/high-risk
+    legal clauses, and generates a simple, plain-English explanation for each.
+    """
+    print("--- [Jargon Buster Agent] Finding and explaining complex clauses... ---")
+    
+    system_prompt = (
+        "You are an expert legal analyst with a talent for simple explanations. "
+        "Your task is to scan the provided document text, identify the 5-7 most "
+        "complex, high-risk, or jargon-filled clauses, and explain them in "
+        "plain English for a non-lawyer.\n\n"
+        "Common clauses to look for: 'Indemnity', 'Limitation of Liability', "
+        "'Governing Law', 'Arbitration', 'Termination for Convenience', "
+        "'Confidentiality', 'Warranty', 'Non-Compete'.\n\n"
+        "Return a single, valid JSON object where:\n"
+        "- The KEY is the name of the clause (e.g., 'Indemnity Clause').\n"
+        "- The VALUE is a 2-3 sentence, simple explanation of what it means "
+        "and what the potential risk is for the user.\n\n"
+        "Example Output:\n"
+        "{\n"
+        "  \"Indemnity Clause\": \"This means you agree to pay for the other party's "
+        "legal costs if they get sued because of something you did. "
+        "This can be very expensive.\",\n"
+        "  \"Limitation of Liability\": \"This clause tries to cap the amount of "
+        "money a party has to pay if they break the contract. You should check if "
+        "this limit is fair to you.\"\n"
+        "}"
+    )
+    
+    user_prompt = f"Document Excerpts:\n---\n{context[:25000]}\n---\n\n" \
+                  "Generate the JSON of complex clauses and their simple explanations:"
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
+        
+        # Find the JSON object in the response
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            clauses = json.loads(match.group(0))
+            print(f"--- [Jargon Buster Agent] Extracted {len(clauses)} clauses. ---")
+            return clauses
+        else:
+            print("--- [Jargon Buster Agent] Failed: Could not find JSON in response.")
+            return {}
+            
+    except Exception as e:
+        print(f"--- [Jargon Buster Agent] Error: {e} ---")
+        return {}
+
+def generate_clause_explanations(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """
+    Orchestrator for the Jargon Buster. Gets all text and calls the agent.
+    """
+    try:
+        # Get a large context of the document
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        # Query for many snippets to form a complete picture
+        hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=50)
+        
+        if not hits:
+            return {"success": False, "message": "No document excerpts available."}
+        
+        snippets = [hit.get("metadata", {}).get("text", "") for hit in hits if hit.get("metadata", {}).get("text", "")]
+        if not snippets:
+            return {"success": False, "message": "No valid text snippets found."}
+            
+        full_context = "\n\n---\n\n".join(snippets)
+
+        # Call the new agent
+        explanations = _agent_explain_complex_clauses(full_context)
+        
+        if not explanations:
+            return {"success": False, "message": "AI could not identify specific complex clauses to explain."}
+
+        # Convert from Dict {key: val} to List [{"clause": key, "explanation": val}]
+        # This is much easier for your frontend to display
+        explanation_list = [
+            {"clause": key, "explanation": value} 
+            for key, value in explanations.items()
+        ]
+
+        return {"success": True, "explanations": explanation_list}
+
+    except Exception as e:
+        print(f"--- [Jargon Buster] Orchestrator Error: {e} ---")
+        return {"success": False, "message": f"An error occurred: {e}"}
+
+
+# In backend_rag/analysis.py
+
+# === 1. MIND MAP GENERATOR (Returns Mermaid Code) ===
+def _agent_generate_mindmap_only(context: str) -> str:
+    """
+    Generates ONLY the Mermaid.js Mindmap code.
+    """
+    print("--- [Visual Agent] Generating Mind Map... ---")
+    system_prompt = (
+        "You are a legal visualization expert. Create a `mindmap` code block for the provided document.\n"
+        "- Root node: Document Title.\n"
+        "- Branches: Key Themes, Core Issues, Evidence, Outcomes.\n"
+        "- Focus on **Knowledge Clusters**.\n"
+        "- Output ONLY the raw Mermaid syntax (no markdown)."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context[:25000]}\n---\n\nGenerate Mermaid mindmap:"
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
+        return response.replace("```mermaid", "").replace("```", "").strip()
+    except Exception as e:
+        print(f"--- [Mindmap Agent] Error: {e} ---")
+        return "mindmap\n root((Error))"
+
+def generate_mindmap(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """Orchestrator for Mind Map only."""
+    try:
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=40)
+        if not hits: return {"success": False, "message": "No context."}
+        
+        full_context = "\n".join([h.get("metadata", {}).get("text", "") for h in hits])
+        code = _agent_generate_mindmap_only(full_context)
+        
+        return {"success": True, "mindmap_code": code}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+# === 2. STRUCTURED TIMELINE GENERATOR (Returns JSON Data) ===
+def _agent_generate_event_data(context: str) -> List[Dict[str, str]]:
+    """
+    Generates a structured JSON list of events for a custom timeline UI.
+    """
+    print("--- [Timeline Agent] Generating structured event list... ---")
+    system_prompt = (
+        "You are a legal analyst. Extract the chronological sequence of events from the document.\n"
+        "Return a valid JSON list of objects `[]`, where each object represents a step.\n\n"
+        "**JSON Structure:**\n"
+        "[\n"
+        "  {\n"
+        "    \"order\": 1,\n"
+        "    \"actor\": \"Name of the Actor (e.g., Court, Police, Petitioner, Government)\",\n"
+        "    \"event\": \"Concise description of the action (max 10-15 words)\",\n"
+        "    \"date\": \"Date if mentioned, else 'N/A'\"\n"
+        "  }\n"
+        "]\n\n"
+        "**Rules:**\n"
+        "- Ensure the list is strictly chronological.\n"
+        "- The 'actor' field is critical for grouping in the UI.\n"
+        "- Output ONLY the JSON list."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context[:25000]}\n---\n\nGenerate JSON Timeline:"
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
+        match = re.search(r'\[.*\]', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return []
+    except Exception as e:
+        print(f"--- [Timeline Agent] Error: {e} ---")
+        return []
+
+def generate_structured_timeline(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """Orchestrator for Event Timeline data."""
+    try:
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=40)
+        if not hits: return {"success": False, "message": "No context."}
+        
+        full_context = "\n".join([h.get("metadata", {}).get("text", "") for h in hits])
+        timeline_data = _agent_generate_event_data(full_context)
+        
+        return {"success": True, "timeline": timeline_data}
+    except Exception as e:
+        return {"success": False, "message": str(e)}

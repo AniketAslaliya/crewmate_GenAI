@@ -15,6 +15,8 @@ import shutil
 from fastapi import Body, APIRouter # Add Body and APIRouter if you plan to use it
 from pydantic import Field as PydanticField # If needed for complex models
 from backend_rag.form_processing import DetailedOcrResult, OcrPage, OcrWord
+from fastapi.responses import Response
+from backend_rag.tts import generate_speech_audio
 # Import the new form processing functions
 from backend_rag.form_processing import (
     detect_form_fields,
@@ -25,7 +27,7 @@ from backend_rag.form_processing import (
 )
 # In api_server.py, at the top with other imports
 
-from backend_rag.prompts import build_strict_system_prompt as _build_strict_prompt
+from backend_rag.prompts import build_strict_system_prompt 
 from backend_rag.prompts import WEB_ANSWER_SYSTEM_PROMPT
 from backend_rag.web_search import google_search
 from backend_rag.models import model # Import both models
@@ -50,9 +52,12 @@ from backend_rag.analysis import (
     generate_timeline,
     suggest_case_law,
     generate_predictive_output, 
+    generate_clause_explanations,
+    generate_mindmap,              
+    generate_structured_timeline
 )
 from backend_rag.prompts import (
-    build_strict_system_prompt as _build_strict_prompt, 
+    build_strict_system_prompt , 
     WEB_ANSWER_SYSTEM_PROMPT,
     GENERAL_LEGAL_QA_PROMPT  
 )
@@ -76,16 +81,9 @@ except Exception:
             return f"(model error: {e})"
 
 # optional: use your prompt builder if it exists, otherwise a safe default
-try:
-    from backend_rag.prompts import build_strict_system_prompt as _build_strict_prompt
-except Exception:
-    def _build_strict_prompt(context: str) -> str:
-        return (
-            "You are a meticulous document Q&A assistant. Use ONLY the provided excerpts to answer.\n"
-            "If the answer is not present in the excerpts, reply exactly: 'Not stated in document.'\n"
-            "Keep answers concise and plain-English. Do NOT invent facts.\n\n"
-            f"Document excerpts:\n{context}\n"
-        )
+
+from backend_rag.prompts import build_strict_system_prompt 
+from backend_rag.prompts import build_summary_system_prompt
 
 # ----------------------------- FastAPI app ------------------------------------
 app = FastAPI(title="RAG Backend API", version="1.0.0")
@@ -115,6 +113,9 @@ class PredictiveOutputReq(BaseModel):
     thread_id: str
     output_language: Optional[str] = 'en' # Add this
 
+class SpeakReq(BaseModel):
+    text: str
+    language: str = "en"
 
 # --- START: ADDED FOR FORM FILLING (Pydantic Models) ---
 class DetectedField(BaseModel):
@@ -138,6 +139,10 @@ class FormAnalyzeResponse(BaseModel):
 class FieldValue(BaseModel):
     id: str
     value: str
+
+class ChatMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
 
 class FormExportRequest(BaseModel):
     form_id: str # ID received from analyze response
@@ -177,6 +182,7 @@ class AskReq(BaseModel):
     query: str
     top_k: int = 4
     output_language: Optional[str] = 'en' # Add this
+    history: List[ChatMessage] = []
 
 class CaseLawReq(BaseModel):
     user_id: Optional[str] = None
@@ -199,9 +205,66 @@ class GeneralAskReq(BaseModel):
     query: str
     output_language: Optional[str] = 'en'
 
+class ClauseReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    output_language: Optional[str] = 'en'
+
+class FlowchartReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+
 
 
 # ----------------------------- Utils ------------------------------------------
+
+from backend_rag.Translation import translate_text # Ensure this is imported
+from typing import Any, Dict, List, Optional, Union # Ensure these are imported
+
+# ... (keep all your other code and endpoints) ...
+
+# --- ADD THIS NEW HELPER FUNCTION near the top of api_server.py ---
+# This function can "walk" through a JSON object and translate all string values,
+# leaving the keys in English, which is perfect for your new output.
+def _translate_json_values(
+    data: Union[Dict, List, str], 
+    target_language: str
+) -> Union[Dict, List, str]:
+    """
+    Recursively translates string values in a JSON object or list.
+    Keeps all keys in English.
+    """
+    if not data or target_language == 'en':
+        return data
+
+    try:
+        if isinstance(data, str):
+            # Base case: translate the string
+            # Avoid translating errors or "not specified" placeholders
+            if data.strip().lower() in ["not specified", "not specified in the provided excerpts."]:
+                return data
+            translated = translate_text(data, target_language)
+            return translated if translated else data
+
+        if isinstance(data, list):
+            # If it's a list, translate each item
+            return [_translate_json_values(item, target_language) for item in data]
+
+        if isinstance(data, dict):
+            # If it's a dict, translate all values, keep keys
+            return {
+                key: _translate_json_values(value, target_language)
+                for key, value in data.items()
+            }
+        
+        # If it's a number, boolean, or other type, just return it
+        return data
+
+    except Exception as e:
+        print(f"--- [TRANSLATE_JSON] Error during recursive translation: {e} ---")
+        return data # Return original data on error
+
+
 def _stream_text_file(text: str, filename: str, media_type: str = "text/plain; charset=utf-8"):
     buf = io.BytesIO(text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
@@ -344,19 +407,39 @@ def health():
 
 @app.post("/api/study-guide")
 def study_guide(req: StudyGuideReq):
-    print("\n--- SERVER CHECK: The /api/study-guide endpoint was called. ---")
+    """
+    Generates a structured study guide by classifying the document
+    and routing to the correct summarization agent.
+    """
+    print("\n--- SERVER CHECK: The /api/study-guide (V2) endpoint was called. ---")
     try:
+        # 1. Generate the structured JSON output
+        # This function now returns a dict:
+        # { "success": True, "study_guide": { "document_type": "...", "summary": {...} } }
         result = generate_study_guide(req.user_id, req.thread_id)
-        if req.output_language and req.output_language != 'en':
-            english_text = result.get("study_guide", "")
-            if english_text:
-                translated_text = translate_text(english_text, req.output_language)
-                if translated_text:
-                    result["study_guide"] = translated_text
 
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+
+        # 2. Check for translation
+        if req.output_language and req.output_language != 'en':
+            print(f"--- [API Study Guide] Translating structured JSON to {req.output_language}... ---")
+            # Get the structured object to be translated
+            study_guide_json = result.get("study_guide", {})
+            
+            # Use the new recursive translation helper
+            translated_guide = _translate_json_values(study_guide_json, req.output_language)
+            
+            if translated_guide:
+                result["study_guide"] = translated_guide
+            else:
+                print(f"--- [API Study Guide] Recursive translation failed. Returning English. ---")
+
+        # 3. Return the (potentially translated) structured JSON
         return result
 
     except Exception as e:
+        print(f"--- [API Study Guide] Error: {e} ---")
         raise HTTPException(status_code=500, detail=f"Error generating study guide: {e}")
 
 @app.post("/api/quick-analyze")
@@ -467,6 +550,9 @@ import html
 
 
 
+# In api_server.py
+# (Replace your old api_ask function with this one)
+
 @app.post("/api/ask")
 def api_ask(req: AskReq):
     # --- Step 1: Translate query to English if needed ---
@@ -497,8 +583,17 @@ def api_ask(req: AskReq):
 
         context_combined = "\n\n".join(context_blobs)
 
-    # Use the correct JSON-based prompt
-    system_prompt_rag = _build_strict_prompt(context_combined)
+    # --- NEW: Process History from Request ---
+    history_text = ""
+    # Take the last 6 messages to keep context focused and avoid token limits
+    recent_history = req.history[-6:] 
+    for msg in recent_history:
+        # Map 'user'/'assistant' to clear labels for the AI
+        role_label = "User" if msg.role == "user" else "AI"
+        history_text += f"{role_label}: {msg.content}\n"
+
+    # --- UPDATED: Pass history_text to the prompt builder ---
+    system_prompt_rag = build_strict_system_prompt(context_combined, chat_history_str=history_text)
     user_prompt_rag = query_to_process.strip()
 
     # Get the JSON response from the RAG model
@@ -519,12 +614,13 @@ def api_ask(req: AskReq):
 
             # Check for low confidence or "Not stated"
             if confidence == "low" or "not stated in document" in plain_answer.lower():
-                # --- THIS IS THE CORRECTED LOG MESSAGE ---
                 print(f"--- [API Ask] RAG answer was '{plain_answer}' (Confidence: {confidence}). Proceeding to web search. ---")
                 
                 # --- Step 5: Perform Web Search ---
                 web_context = google_search(query_to_process)
                 
+                # Note: We don't typically pass history to the web search prompt yet, 
+                # but you could modify WEB_ANSWER_SYSTEM_PROMPT similarly if needed.
                 system_prompt_web = WEB_ANSWER_SYSTEM_PROMPT.format(web_context=web_context)
                 user_prompt_web = query_to_process
                 
@@ -552,27 +648,28 @@ def api_ask(req: AskReq):
     return {"success": True, "answer": final_answer_translated, "sources": sources}
 
 
+
 @app.post("/api/suggest-case-law")
 def api_suggest_case_law(req: CaseLawReq):
     print("\n--- SERVER CHECK: The /api/suggest-case-law endpoint was called. ---")
     try:
+        # --- THIS IS THE CHANGE ---
+        # OLD: result = suggest_case_law(req.user_id, req.thread_id, req.query_text)
         result = suggest_case_law(req.user_id, req.thread_id)
+        # --- END OF CHANGE ---
+
         if not result.get("success"):
             raise HTTPException(status_code=422, detail=result)
 
-        if req.output_language and req.output_language != 'en':
-            suggested_cases = result.get("suggested_cases", [])
-            for case in suggested_cases:
-                details = case.get("details", "")
-                if details:
-                    translated_details = translate_text(details, req.output_language)
-                    if translated_details:
-                        case["details"] = translated_details
-                outcome = case.get("outcome", "")
-                if outcome:
-                    translated_outcome = translate_text(outcome, req.output_language)
-                    if translated_outcome:
-                        case["outcome"] = translated_outcome
+        # Translation (if requested)
+        if req.output_language and req.output_language.lower() != "en":
+            for case in result.get("suggested_cases", []):
+                # --- NEW: Translate the "relevance" field ---
+                if "relevance" in case:
+                    case["relevance"] = translate_text(case["relevance"], req.output_language)
+                # --- END OF NEW ---
+                if "snippet" in case:
+                    case["snippet"] = translate_text(case["snippet"], req.output_language)
 
         return result
 
@@ -708,120 +805,129 @@ def api_ns_peek(user_id: Optional[str] = None, thread_id: str = Query(...), k: i
 
 # --- START: ADDED FOR FORM FILLING (API Endpoints) ---
 import pdfplumber
+# In api_server.py
+
+# In api_server.py
+
 @app.post("/api/forms/analyze", response_model=FormAnalyzeResponse)
 async def analyze_form(
     file: UploadFile = File(...),
     user_id: Optional[str] = Form(None),
-    thread_id: Optional[str] = Form(None) # Optional thread ID for context RAG
+    thread_id: Optional[str] = Form(None),
+    output_language: Optional[str] = Form("en")
 ):
     """
-    Uploads a form, performs OCR (if needed), detects fields, classifies them,
-    and returns initial suggestions.
+    Uploads a form, gets RAG context, detects fields, and returns 
+    Translated Descriptions + English Suggestions.
     """
-    print(f"--- [/api/forms/analyze] Received upload: {file.filename} ---")
-    
-    # ... (rest of file saving logic) ...
+    print(f"--- [/api/forms/analyze] Received upload: {file.filename} | Lang: {output_language} ---")
     
     temp_form_id = f"form_{user_id or 'anon'}_{thread_id or 'temp'}_{os.urandom(4).hex()}"
     temp_file_path = UPLOAD_DIR / f"{temp_form_id}_{file.filename}"
+    
     try:
         with temp_file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        print(f"--- [/api/forms/analyze] Saved temp file: {temp_file_path} ---")
 
-        # 1. Extract Text & Layout (OCR)
-        extraction = extract_text_with_diagnostics(str(temp_file_path))
-        full_text = extraction.get("text", "") 
-        if not full_text:
-             print("--- [Form Analyze] extract_text_with_diagnostics found no text. ---")
-
-        # --- NEW: Real Layout Extraction (using pdfplumber) ---
-        all_pages = []
+        # 1. OCR Extraction
         try:
             with pdfplumber.open(temp_file_path) as pdf:
-                if not pdf.pages:
-                    raise HTTPException(status_code=422, detail="PDF file has no pages.")
-                    
+                all_pages = []
+                if not pdf.pages: raise HTTPException(status_code=422, detail="PDF file has no pages.")
                 for i, page in enumerate(pdf.pages):
                     page_words = []
                     words = page.extract_words(x_tolerance=2, y_tolerance=2, keep_blank_chars=False)
-                    
                     for word in words:
-                        bbox = [
-                            int(word['x0']), 
-                            int(word['top']), 
-                            int(word['x1']), 
-                            int(word['bottom'])
-                        ]
+                        bbox = [int(word['x0']), int(word['top']), int(word['x1']), int(word['bottom'])]
                         page_words.append(OcrWord(text=word['text'], bbox=bbox))
-                    
-                    all_pages.append(OcrPage(
-                        page_number=i + 1,
-                        width=int(page.width),
-                        height=int(page.height),
-                        words=page_words
-                    ))
+                    all_pages.append(OcrPage(page_number=i + 1, width=int(page.width), height=int(page.height), words=page_words))
             
             detailed_ocr_result = DetailedOcrResult(pages=all_pages)
-            
-            if not any(p.words for p in detailed_ocr_result.pages):
-                 raise HTTPException(status_code=422, detail="Could not extract text layout. This may be a scanned (image) PDF.")
-
         except Exception as e:
-            print(f"--- [Form Analyze] pdfplumber failed: {e} ---")
-            raise HTTPException(status_code=422, detail=f"Failed to parse document layout: {e}")
-        # --- End New Block ---
+            print(f"--- [Form Analyze] OCR Failed: {e} ---")
+            raise HTTPException(status_code=422, detail=f"Layout parse failed: {e}")
 
-        # 2. Detect & Classify Fields (Pass the object with full text representation)
-        detected_fields_raw = detect_form_fields(detailed_ocr_result)
-        if not detected_fields_raw:
-             raise HTTPException(status_code=422, detail="Could not detect any fields in the document.")
-
-        # 3. (Optional) Get Context using RAG based on thread_id
-        context_summary = "General context." # Default
+        # 2. GET CONTEXT (RAG)
+        context_summary = ""
         if thread_id:
             try:
-                context_query = " ".join(w.text for p in detailed_ocr_result.pages for w in p.words[:20]) 
-                hits = retrieve_similar_chunks(context_query, user_id=user_id, thread_id=thread_id, top_k=3)
+                form_snippet = " ".join(w.text for w in detailed_ocr_result.pages[0].words[:50]) 
+                hits = retrieve_similar_chunks(form_snippet, user_id=user_id, thread_id=thread_id, top_k=4)
                 if hits:
-                    context_summary = " ".join([h.get("text", "") for h in hits])
-                    print(f"--- [/api/forms/analyze] Retrieved context for suggestions. ---")
+                    context_summary = "\n".join([h.get("text", "") for h in hits])
             except Exception as e:
-                print(f"--- [/api/forms/analyze] Failed to retrieve RAG context: {e} ---")
+                print(f"--- [Form Analyze] RAG Context Error: {e} ---")
 
-        # 4. Generate Initial Suggestions (only for non-sensitive)
+        # 3. DETECT FIELDS
+        detected_fields_raw = detect_form_fields(detailed_ocr_result, context_summary=context_summary)
+        
+        if not detected_fields_raw:
+             raise HTTPException(status_code=422, detail="Could not detect any fields.")
+
+        # 4. Generate Suggestions & Finalize
         final_fields = []
         for field_data in detected_fields_raw:
              suggestions = []
              if not field_data.get('is_sensitive', False):
                  suggestions = generate_field_suggestions(field_data, context_summary)
              
-             # --- *** THIS IS THE SECOND CHANGE *** ---
              field_obj = DetectedField(
                  id=field_data['id'],
                  label_text=field_data.get('label_text'),
                  bbox=field_data['bbox'], 
-                 page_number=field_data.get('page_number', 1), # <-- Read the page_number
+                 page_number=field_data.get('page_number', 1),
                  semantic_type=field_data['semantic_type'],
                  confidence=field_data['confidence'],
                  is_sensitive=field_data['is_sensitive'],
-                 description=field_data.get('description', 'Enter the required information.'),
+                 description=field_data.get('description', 'Enter required info.'),
                  suggestions=suggestions,
                  value=""
              )
              final_fields.append(field_obj)
 
-        return FormAnalyzeResponse(
-            success=True,
-            form_id=temp_form_id,
-            fields=final_fields
-        )
+        # 5. TRANSLATION LOGIC (UPDATED)
+        if output_language and output_language != 'en':
+            print(f"--- [Form Analyze] Translating descriptions ONLY to '{output_language}'... ---")
+            for field in final_fields:
+                # A. Translate Description (The "Why" - Keep this in local language)
+                if field.description:
+                    trans_desc = translate_text(field.description, output_language)
+                    if trans_desc: field.description = trans_desc
+                
+                # B. Translate Suggestions -> REMOVED
+                # We explicitly DO NOT translate field.suggestions anymore.
+                # They will remain in English (as generated by the LLM).
+
+        return FormAnalyzeResponse(success=True, form_id=temp_form_id, fields=final_fields)
 
     except HTTPException as httpe: raise httpe
     except Exception as e:
-         print(f"--- [/api/forms/analyze] Error: {e} ---")
-         raise HTTPException(status_code=500, detail=f"Failed to analyze form: {e}")
-    # Note: Temporary file is NOT deleted here, needed for export
+         print(f"--- [Form Analyze] Fatal Error: {e} ---")
+         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+# In api_server.py
+
+# In api_server.py
+
+@app.post("/api/speak")
+def api_speak(req: SpeakReq):
+    """
+    Generates audio and streams it directly to the frontend for immediate playback.
+    """
+    if not req.text:
+        raise HTTPException(status_code=400, detail="No text provided.")
+
+    # 1. Generate Audio
+    audio_bytes = generate_speech_audio(req.text, req.language)
+    
+    if not audio_bytes:
+        raise HTTPException(status_code=500, detail="TTS Generation failed.")
+
+    print(f"--- [API Speak] Generated {len(audio_bytes)} bytes. Sending to frontend... ---")
+
+    # 2. Return Raw Bytes (No 'attachment' header)
+    # This allows Javascript to capture it as a Blob and play it instantly.
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 @app.post("/api/forms/export")
 async def export_filled_form(req: FormExportRequest = Body(...)):
@@ -890,7 +996,11 @@ async def export_filled_form(req: FormExportRequest = Body(...)):
 # --- END: ADDED FOR FORM FILLING (API Endpoints) ---
 
 
-# [Add in api_server.py, in the Endpoints section, e.g., after /api/ask]
+# In api_server.py
+# (Replace your old api_general_ask function with this one)
+
+# In api_server.py
+# (Replace your old api_general_ask function with this one)
 
 @app.post("/api/general-ask")
 def api_general_ask(req: GeneralAskReq):
@@ -908,9 +1018,29 @@ def api_general_ask(req: GeneralAskReq):
                 if translated_query:
                     query_to_process = translated_query
                     print(f"--- [API GeneralAsk] Translated query to: {query_to_process}")
+        
+        # --- Step 2: NEW GREETING CHECK (Before RAG) ---
+        # We check for the greeting *before* running the search
+        greeting_triggers = ["hi", "hii", "hello", "how are you", "good morning", "good afternoon", "good evening"]
+        normalized_query = query_to_process.lower().strip(" ?.")
+        
+        if normalized_query in greeting_triggers:
+            print("--- [API GeneralAsk] Greeting detected. Bypassing RAG. ---")
+            
+            # This is the hardcoded greeting from your prompt's Rule 1
+            final_answer = "Hello, this is Legal SahAI. How may I help you?"
+            
+            # Translate the greeting *response* if needed
+            if req.output_language and req.output_language != 'en':
+                translated = translate_text(final_answer, target_language=req.output_language)
+                if translated:
+                    final_answer = translated
+            return {"success": True, "answer": final_answer}
+        # --- END OF NEW GREETING CHECK ---
 
-        # --- Step 2: Retrieve from GENERAL knowledge base ---
-        # Use our new retrieval function. We'll get 5 good candidates.
+        # --- Step 3: (Was Step 2) Retrieve from GENERAL knowledge base ---
+        # This part now only runs if the query is NOT a greeting
+        print(f"--- [API GeneralAsk] Non-greeting query received. Retrieving chunks... ---")
         hits = retrieve_general_legal_chunks(query_to_process, top_k=5)
         
         context_combined = ""
@@ -947,3 +1077,63 @@ def api_general_ask(req: GeneralAskReq):
     except Exception as e:
         print(f"--- [API GeneralAsk] Error: {e} ---")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/api/explain-clauses")
+def api_explain_clauses(req: ClauseReq):
+    """
+    Proactively finds and explains complex clauses in the document.
+    """
+    print("\n--- SERVER CHECK: The /api/explain-clauses endpoint was called. ---")
+    try:
+        result = generate_clause_explanations(req.user_id, req.thread_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+
+        # Translate the explanations if needed
+        if req.output_language and req.output_language != 'en':
+            for item in result.get("explanations", []):
+                if "explanation" in item:
+                    translated = translate_text(item["explanation"], req.output_language)
+                    if translated:
+                        item["explanation"] = translated
+        
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error explaining clauses: {e}")
+    
+# In api_server.py
+
+@app.post("/api/flowchart")
+def api_flowchart(req: FlowchartReq):
+    """
+    Returns only the Mermaid Mindmap code.
+    Output: { "success": true, "mindmap_code": "..." }
+    """
+    print("\n--- SERVER CHECK: The /api/flowchart endpoint was called. ---")
+    try:
+        result = generate_mindmap(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating mindmap: {e}")
+
+
+@app.post("/api/event-timeline")
+def api_event_timeline(req: FlowchartReq): # We can reuse FlowchartReq as it has user_id/thread_id
+    """
+    Returns the structured event list for custom UI rendering.
+    Output: { "success": true, "timeline": [{ "actor": "Court", "event": "..." }] }
+    """
+    print("\n--- SERVER CHECK: The /api/event-timeline endpoint was called. ---")
+    try:
+        result = generate_structured_timeline(req.user_id, req.thread_id)
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")

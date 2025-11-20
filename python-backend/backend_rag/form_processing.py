@@ -49,15 +49,14 @@ def _generate_field_description(field_label: str, field_type: str) -> str:
     
     # Simple prompt for description
     system_prompt = (
-        "You provide concise, helpful descriptions for form fields. "
-        "Based on the field label and type, provide a one-sentence description "
+        "You provide the description that must be meaningful and clear. It should be slightly long, providing context (1-2 sentences).\n"
+        "Based on the field label and type, provide its description \n"
         "explaining what the user should enter.\n"
         "Example Input: Label='Date of Birth', Type='date'\n"
         "Example Output: Enter the date you were born, usually in DD/MM/YYYY format.\n"
         "Example Input: Label='PAN No.', Type='pan'\n"
         "Example Output: Enter your 10-character Permanent Account Number (PAN).\n"
         "Rules:\n"
-        "- Keep it under 20 words.\n"
         "- Be user-friendly.\n"
         "- Output ONLY the description string."
     )
@@ -74,125 +73,83 @@ def _generate_field_description(field_label: str, field_type: str) -> str:
 
 import pdfplumber
 
-def _batch_generate_descriptions(fields_info: List[Dict]) -> Dict[str, str]:
-    """Generates descriptions for multiple fields in a single LLM call."""
-    if not fields_info:
-        return {}
-        
-    print(f"--- [Form Batch Desc] Generating descriptions for {len(fields_info)} fields... ---")
-    
-    # Prepare input for the LLM: list of labels and types
-    field_list_str = "\n".join([f"- Label: \"{f['label_text']}\", Type: \"{f['semantic_type']}\"" for f in fields_info])
-    
-    system_prompt = (
-        "You provide concise, helpful descriptions for form fields. "
-        "For each field in the provided list (Label, Type), provide a one-sentence description "
-        "explaining what the user should enter.\n"
-        "Return a valid JSON object where keys are the exact 'Label Text' strings from the input, "
-        "and values are the generated description strings.\n"
-        "Example Input List:\n- Label: \"Date of Birth\", Type: \"date\"\n- Label: \"PAN No.\", Type: \"pan\"\n"
-        "Example JSON Output:\n{\n  \"Date of Birth\": \"Enter the date you were born, usually in DD/MM/YYYY format.\",\n  \"PAN No.\": \"Enter your 10-character Permanent Account Number (PAN).\"\n}\n"
-        "Rules:\n"
-        "- Descriptions should be under 20 words and user-friendly.\n"
-        "- Output ONLY the JSON object."
-    )
-    user_prompt = f"Field List:\n{field_list_str}\n\nJSON Output:"
-    
-    descriptions = {}
-    try:
-        response = call_model_system_then_user(
-            system_prompt, user_prompt, temperature=0.1, model_instance=model
-        )
-        # --- DEBUG: Print raw response ---
-        print(f"--- [Form Batch Desc] Raw LLM Response:\n{response}\n---")
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if match:
-            descriptions = json.loads(match.group(0))
-            print(f"--- [Form Batch Desc] Generated {len(descriptions)} descriptions. ---")
-        else:
-            print("--- [Form Batch Desc] Failed: LLM did not return valid JSON object.")
-    except Exception as e:
-        print(f"--- [Form Batch Desc] Failed: {e} ---")
-        # Provide default descriptions on error
-        descriptions = {f['label_text']: "Enter the required information." for f in fields_info}
-        
-    return descriptions
+
 
 
 
 # In backend_rag/form_processing.py
-def _batch_generate_suggestions(fields_info: List[Dict], context: str) -> Dict[str, List[str]]:
-    """Generates suggestions for multiple non-sensitive fields in a single LLM call."""
+# In backend_rag/form_processing.py
+
+# In backend_rag/form_processing.py
+
+def _batch_generate_descriptions(fields_info: List[Dict], context: str) -> Dict[str, str]:
+    """
+    Generates DETAILED, SIMPLE explanations for form fields.
+    """
     if not fields_info:
         return {}
+        
+    print(f"--- [Form Batch Desc] Generating simple, detailed descriptions... ---")
+    
+    field_list_str = "\n".join([f"- Label: \"{f['label_text']}\", Type: \"{f['semantic_type']}\"" for f in fields_info])
+    safe_context = context[:4000] if context else "No specific document context provided."
 
-    print(f"--- [Form Batch Suggest] Generating suggestions for {len(fields_info)} fields... ---")
-
-    # Prepare input for the LLM: list of field IDs, labels, and types
-    field_list_str = "\n".join([f"- ID: \"{f['id']}\", Label: \"{f['label_text']}\", Type: \"{f['semantic_type']}\"" for f in fields_info])
-    safe_context = context[:1500] # Limit context
-
+    # --- UPDATED PROMPT FOR SIMPLICITY ---
     system_prompt = (
-        "You are a concise assistant that suggests potential values for multiple form fields based on context.\n"
-        "For each field in the provided list (ID, Label, Type), provide 1-3 likely candidate values appropriate for the field type.\n"
-        "Return a valid JSON object where keys are the exact 'ID' strings from the input list, "
-        "and values are lists of suggested string values `[]`.\n"
-        "Example Input List:\n- ID: \"field_0\", Label: \"Given Name\", Type: \"name\"\n- ID: \"field_5\", Label: \"City\", Type: \"city\"\n"
-        "Example JSON Output:\n{\n  \"field_0\": [\"John\", \"Jane\"],\n  \"field_5\": [\"New York\", \"London\"]\n}\n"
-        "Rules:\n"
-        "- Keep suggestions short and relevant.\n"
-        "- If no good suggestions exist for a field, provide an empty list `[]` for its ID.\n"
-        "- Output ONLY the JSON object."
+        "You are a helpful AI assistant explaining a legal form to a layperson. "
+        "Your goal is to explain **what to write** and **why it is needed** in extremely simple, plain language.\n\n"
+        
+        "**INSTRUCTIONS:**\n"
+        "1. **Simplify:** Use 5th-grade reading level English. No legal jargon.\n"
+        "2. **Explain:** For each field, explain what information is required and *why* the form needs it (based on the document context).\n"
+        "3. **Tone:** Be helpful and encouraging.\n"
+        "4. Return a valid JSON object: `{\"Label Text\": \"Description\"}`.\n\n"
+        
+        "**Examples:**\n"
+        "- Instead of 'Provide DOB for identification', say: 'Please enter your Date of Birth. This helps us confirm exactly who you are.'\n"
+        "- Instead of 'Enter Statute Limitation Date', say: 'Enter the date the incident happened. This is important to make sure the form is filed on time.'\n\n"
+        
+        "**Document Context:**\n"
+        f"{safe_context}\n\n"
+        
+        "**Field List:**\n"
+        f"{field_list_str}\n\n"
+        
+        "**JSON Output:**"
     )
-    user_prompt = (
-        f"Context Summary: \"{safe_context}\"\n\n"
-        f"Field List:\n{field_list_str}\n\n"
-        f"JSON Output (Suggestions by Field ID):"
-    )
-
-    suggestions_by_id = {}
+    
+    user_prompt = "Generate simple JSON descriptions."
+    
+    descriptions = {}
     try:
         response = call_model_system_then_user(
-            system_prompt, user_prompt, temperature=0.4, model_instance=model
+            system_prompt, user_prompt, temperature=0.3, model_instance=model
         )
-        # --- DEBUG: Print raw response ---
-        print(f"--- [Form Batch Suggest] Raw LLM Response:\n{response}\n---")
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if match:
-            raw_suggestions = json.loads(match.group(0))
-            # Validate: ensure keys exist in original request and values are lists of strings
-            for field_id, sugg_list in raw_suggestions.items():
-                if any(f['id'] == field_id for f in fields_info) and isinstance(sugg_list, list):
-                    suggestions_by_id[field_id] = [str(s) for s in sugg_list if isinstance(s, (str, int, float))][:3]
-            print(f"--- [Form Batch Suggest] Generated suggestions for {len(suggestions_by_id)} fields.")
+            descriptions = json.loads(match.group(0))
+            print(f"--- [Form Batch Desc] Generated {len(descriptions)} simple descriptions. ---")
         else:
-             print("--- [Form Batch Suggest] Failed: LLM did not return valid JSON object.")
+            print("--- [Form Batch Desc] Failed: LLM did not return valid JSON object.")
     except Exception as e:
-        print(f"--- [Form Batch Suggest] Failed: {e} ---")
-        # Return empty dict on error, fields will just have no suggestions
+        print(f"--- [Form Batch Desc] Failed: {e} ---")
+        descriptions = {f['label_text']: "Please write the required information here." for f in fields_info}
+        
+    return descriptions
 
-    return suggestions_by_id
 
-# [In form_processing.py]
-
-# [In backend_rag/form_processing.py]
-
-def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
+def detect_form_fields(ocr_result: DetailedOcrResult, context_summary: str = "") -> List[Dict]:
     """
-    V3: Detects fields via LLM using text + bbox data for spatial reasoning.
+    V3: Detects fields via LLM using layout data AND generates context-aware descriptions.
     """
-    print("--- [Form Processing V3] Detecting fields using spatial layout... ---")
+    print("--- [Form Processing V3] Detecting fields with context... ---")
     
-    # 1. Serialize OCR data for the LLM
+    # 1. Serialize OCR data (Same as before)
     page_data_for_llm = []
     word_count = 0
     for page in ocr_result.pages:
-        if word_count > 4000: 
-            print("--- [Form Processing V3] Word limit reached, truncating data for LLM.")
-            break
-        
+        if word_count > 4000: break
         words_list = [w.model_dump() for w in page.words]
-        
         page_data_for_llm.append({
             "page_number": page.page_number,
             "width": page.width,
@@ -201,30 +158,15 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
         })
         word_count += len(page.words)
     
-    if word_count == 0:
-        print("--- [Form Processing V3] No words found in OCR result.")
-        return []
+    if word_count == 0: return []
 
-    # 2. LLM Call to Identify Fields AND their blank bboxes
+    # 2. LLM Call to Identify Fields (Same structure as before)
     system_prompt_detect = (
-        "You are an expert form layout analyst. You will receive JSON data containing words and their exact bounding boxes `[xmin, ymin, xmax, ymax]` for a form.\n"
-        "Your task is to identify all fillable fields (like text inputs, checkboxes) and return a valid JSON list `[]`.\n"
-        "For each field, find the label (e.g., 'First Name') AND determine the bounding box of the **blank input area** next to or below it.\n\n"
-        "RULES:\n"
-        "- `label_text`: The text of the field's label.\n"
-        "- `semantic_type`: The data type (e.g., 'name', 'date', 'address', 'phone', 'checkbox', 'signature').\n"
-        "- `bbox`: The **coordinates of the blank input space** [xmin, ymin, xmax, ymax]. Estimate this from the layout.\n"
-        "- `page_number`: The page number where the field is located. **This is a required field.**\n"
-        "- Do NOT return coordinates for the label, only for the input area.\n"
-        "- Be precise. Estimate the blank space coordinates based on surrounding words.\n"
-        "- Output ONLY the JSON list."
+        "You are an expert form layout analyst. Identify all fillable fields in this form JSON.\n"
+        "For each field, find the `label_text` and the `bbox` of the BLANK input area.\n"
+        "Return a valid JSON list `[{'label_text':..., 'semantic_type':..., 'bbox':..., 'page_number':...}]`."
     )
-    
-    llm_input_json = json.dumps(page_data_for_llm, default=int)
-    
-    if len(llm_input_json) > 100000: 
-         llm_input_json = llm_input_json[:100000]
-         
+    llm_input_json = json.dumps(page_data_for_llm, default=int)[:100000]
     user_prompt_detect = f"Form OCR Data:\n---\n{llm_input_json}\n---\n\nIdentified Fields JSON List:"
 
     detected_fields_final = []
@@ -233,29 +175,18 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
             system_prompt_detect, user_prompt_detect, temperature=0.0, model_instance=model
         )
         
-        print(f"--- [Form Processing V3] Raw LLM Response:\n{response}\n---")
-        
         match = re.search(r'\[.*\]', response, re.DOTALL)
-        if not match:
-            print("--- [Form Processing V3] LLM did not return a valid JSON list.")
-            return []
+        if not match: return []
         
         llm_fields = json.loads(match.group(0))
-        print(f"--- [Form Processing V3] LLM identified {len(llm_fields)} fields.")
 
         # 3. Prepare list for batch description
         temp_field_list_for_desc = []
         parsed_fields_temp = {} 
         
         for i, field_data in enumerate(llm_fields):
-            if not isinstance(field_data.get('bbox'), list) or len(field_data['bbox']) != 4:
-                print(f"Skipping malformed field from LLM (bad bbox): {field_data}")
-                continue
-            
-            # --- *** ADDED VALIDATION *** ---
-            if 'page_number' not in field_data or not isinstance(field_data.get('page_number'), int):
-                print(f"Skipping malformed field from LLM (missing or invalid page_number): {field_data}")
-                continue # Skip fields that don't have a page number
+            if not isinstance(field_data.get('bbox'), list) or len(field_data['bbox']) != 4: continue
+            if 'page_number' not in field_data: continue
 
             field_id = f"field_{i}"
             label_text = field_data.get('label_text', 'Unknown')
@@ -264,23 +195,26 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
             temp_field_list_for_desc.append({"label_text": label_text, "semantic_type": semantic_type})
             parsed_fields_temp[field_id] = field_data 
 
-        # 4. Single LLM Call to Generate All Descriptions
-        field_descriptions = _batch_generate_descriptions(temp_field_list_for_desc)
+        # 4. Single LLM Call to Generate CONTEXT-AWARE Descriptions
+        # Pass the context_summary here!
+        field_descriptions = _batch_generate_descriptions(temp_field_list_for_desc, context_summary)
 
         # 5. Compile Final Field List
         for field_id, field_data in parsed_fields_temp.items():
             label_text = field_data['label_text']
             semantic_type = field_data['semantic_type']
-            page_number = field_data['page_number'] # <-- *** GET THE PAGE NUMBER ***
+            page_number = field_data['page_number']
             
             is_sensitive = semantic_type in ['pan', 'address', 'phone', 'email', 'amount']
+            
+            # Use the generated detailed description
             description = field_descriptions.get(label_text, "Enter the required information.") 
 
             field = {
                 'id': field_id,
                 'label_text': label_text,
                 'bbox': field_data['bbox'], 
-                'page_number': page_number, # <-- *** ADD IT TO THE DICTIONARY ***
+                'page_number': page_number,
                 'semantic_type': semantic_type,
                 'confidence': 'High', 
                 'is_sensitive': is_sensitive,
@@ -289,10 +223,8 @@ def detect_form_fields(ocr_result: DetailedOcrResult) -> List[Dict]:
             }
             detected_fields_final.append(field)
 
-        print(f"--- [Form Processing V3] Processed {len(detected_fields_final)} fields after descriptions.")
-
     except Exception as e:
-        print(f"--- [Form Processing V3] Error during field processing: {e} ---")
+        print(f"--- [Form Processing V3] Error: {e} ---")
 
     return detected_fields_final
         
