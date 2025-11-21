@@ -38,7 +38,15 @@ const Header = () => {
                       <div className="text-xs text-muted">{authUser.role === 'lawyer' ? 'Lawyer' : 'Helpseeker'}</div>
                   </div>
                   <motion.div whileHover={{ scale: 1.01 }} style={{ borderColor: 'rgba(0,0,0,0.06)' }}>
-                    <InitialAvatar name={authUser.name} className="w-10 h-10 rounded-full border" />
+                    {authUser?.profileImage?.gcsUrl || authUser?.picture ? (
+                      <img
+                        src={authUser?.profileImage?.gcsUrl || authUser.picture}
+                        alt={authUser.name}
+                        className="w-10 h-10 rounded-full border object-cover"
+                      />
+                    ) : (
+                      <InitialAvatar name={authUser.name} className="w-10 h-10 rounded-full border" />
+                    )}
                   </motion.div>
                 </div>
               ) : (

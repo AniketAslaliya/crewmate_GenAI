@@ -7,6 +7,7 @@ import Button from '../components/ui/Button';
 import { useToast } from '../components/ToastProvider';
 import { useGuestAccess } from '../hooks/useGuestAccess';
 import GuestAccessModal from '../components/GuestAccessModal';
+import { sanitizeTextInput, validateFile, checkRateLimit } from '../utils/inputSecurity';
 
 // Modern legal background with enhanced professional pattern
 const ModernBackground = () => (
@@ -125,6 +126,7 @@ const LegalDesk = () => {
   const [sortBy, setSortBy] = useState("newest");
   const [ingestionStatus, setIngestionStatus] = useState([]);
   const toast = useToast();
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState({ show: false, deskId: null, deskTitle: '' });
   
   // Guest access control
   const { isGuest, showGuestModal, blockedFeature, checkGuestAccess, closeGuestModal } = useGuestAccess();
@@ -169,15 +171,35 @@ const LegalDesk = () => {
       return;
     }
     
+    // Rate limiting check (max 5 uploads per minute)
+    const rateCheck = checkRateLimit('legal_desk_upload', 5, 60000);
+    if (!rateCheck.allowed) {
+      toast.error(`Too many upload attempts. Please wait before trying again.`);
+      return;
+    }
+    
     if (!file || !title.trim()) {
       toast.error("Please provide both a title and a file.");
+      return;
+    }
+
+    // Sanitize title input
+    const sanitizedTitle = sanitizeTextInput(title.trim());
+    if (!sanitizedTitle) {
+      toast.error("Invalid title. Please use only valid characters.");
+      return;
+    }
+
+    // Re-validate file before upload
+    const validation = validateFileWithSecurity(file);
+    if (!validation.isValid) {
       return;
     }
 
     setUploading(true);
 
     try {
-      const res1 = await api.post("/api/uploaddoc", { title });
+      const res1 = await api.post("/api/uploaddoc", { title: sanitizedTitle });
       if (!res1.data?.chat) throw new Error("Failed to create legal desk entry.");
 
       const newChat = res1.data.chat;
@@ -208,7 +230,7 @@ const LegalDesk = () => {
       const formData = new FormData();
       formData.append("user_id", userProfile.id || "");
       formData.append("thread_id", newChat._id);
-      formData.append("title", title);
+      formData.append("title", sanitizedTitle);
       formData.append("file", file);
 
       const ingestPromise = papi.post("/api/ingest", formData, {
@@ -233,15 +255,74 @@ const LegalDesk = () => {
   };
 
   const handleDelete = async (id) => {
-  if (window.confirm("Are you sure you want to delete this Legal Desk? This action cannot be undone.")) {
-      try {
-        await api.delete(`/api/delete/${id}`);
-        setChats(chats.filter((chat) => chat._id !== id));
-      } catch (err) {
-        const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to delete Legal Desk. Please try again.';
-        toast.error(errorMsg);
+    try {
+      await api.delete(`/api/delete/${id}`);
+      setChats(chats.filter((chat) => chat._id !== id));
+      setDeleteConfirmModal({ show: false, deskId: null, deskTitle: '' });
+      toast.success('Legal Desk deleted successfully');
+    } catch (err) {
+      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to delete Legal Desk. Please try again.';
+      toast.error(errorMsg);
+    }
+  };
+
+  const openDeleteConfirmation = (chat) => {
+    setDeleteConfirmModal({ show: true, deskId: chat._id, deskTitle: chat.title });
+  };
+
+  // Comprehensive file validation with security checks
+  const validateFileWithSecurity = (file) => {
+    const validation = validateFile(file, {
+      maxSizeMB: 100,
+      allowedExtensions: ['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'bmp'],
+      allowedMimeTypes: [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain',
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/bmp'
+      ]
+    });
+
+    if (!validation.isValid) {
+      validation.errors.forEach(error => toast.error(error));
+      return { isValid: false };
+    }
+
+    return { isValid: true, sanitizedFileName: validation.sanitizedFileName };
+  };
+
+  // Extract clean filename handling double extensions like .txt.pdf
+  const extractCleanFileName = (fileName) => {
+    // Remove all extensions (handles double extensions like .txt.pdf)
+    let cleanName = fileName;
+    const parts = fileName.split('.');
+    
+    // If there are multiple parts, keep only the base name
+    if (parts.length > 1) {
+      // Check if second-to-last part might be an extension (like .txt in .txt.pdf)
+      const secondExt = parts[parts.length - 2]?.toLowerCase();
+      const commonExts = ['txt', 'pdf', 'doc', 'docx'];
+      
+      if (parts.length > 2 && commonExts.includes(secondExt)) {
+        // Double extension detected, remove both
+        cleanName = parts.slice(0, -2).join('.');
+      } else {
+        // Single extension, remove it
+        cleanName = parts.slice(0, -1).join('.');
       }
     }
+    
+    // Truncate to 20 characters with ellipsis
+    if (cleanName.length > 20) {
+      cleanName = cleanName.substring(0, 20) + '...';
+    }
+    
+    return cleanName || fileName;
   };
 
   const handleDragOver = (e) => {
@@ -253,11 +334,50 @@ const LegalDesk = () => {
     e.preventDefault();
     e.stopPropagation();
     const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) setFile(files[0]);
+    if (files.length > 0) {
+      const selectedFile = files[0];
+      
+      // Comprehensive security validation
+      const validation = validateFileWithSecurity(selectedFile);
+      if (!validation.isValid) {
+        return;
+      }
+      
+      setFile(selectedFile);
+      // Auto-capture file name without extension (15-20 chars) with sanitization
+      if (!title.trim()) {
+        const fileName = extractCleanFileName(validation.sanitizedFileName || selectedFile.name);
+        const sanitizedFileName = sanitizeTextInput(fileName);
+        setTitle(sanitizedFileName);
+      }
+    }
   };
 
+  const handleFileSelect = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      // Comprehensive security validation
+      const validation = validateFileWithSecurity(selectedFile);
+      if (!validation.isValid) {
+        e.target.value = ''; // Reset input
+        return;
+      }
+      
+      setFile(selectedFile);
+      // Auto-capture file name without extension (15-20 chars) with sanitization
+      if (!title.trim()) {
+        const fileName = extractCleanFileName(validation.sanitizedFileName || selectedFile.name);
+        const sanitizedFileName = sanitizeTextInput(fileName);
+        setTitle(sanitizedFileName);
+      }
+    }
+  };
+
+  // Sanitize search query to prevent XSS
+  const sanitizedSearchQuery = sanitizeTextInput(searchQuery);
+  
   const filteredAndSortedChats = [...chats]
-    .filter((chat) => chat.title?.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((chat) => chat.title?.toLowerCase().includes(sanitizedSearchQuery.toLowerCase()))
     .sort((a, b) => {
       if (sortBy === "newest") return new Date(b.createdAt) - new Date(a.createdAt);
       if (sortBy === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
@@ -329,35 +449,63 @@ const LegalDesk = () => {
         {/* Stats Overview */}
         
 
-        {/* Main Grid */}
-        <motion.div 
-          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-        >
-          {/* Create New Card */}
-          <motion.div
-            onClick={() => setAdding(true)}
-            className="group cursor-pointer"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+        {/* No Legal Desks Message - Above Content */}
+        {filteredAndSortedChats.length === 0 && chats.length === 0 && (
+          <motion.div 
+            className="text-center py-12 mb-8 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-blue-100"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
           >
-            <div className="bg-gradient-to-br from-blue-50 to-indigo-100 border-2 border-dashed border-blue-300 rounded-3xl p-8 h-full flex flex-col items-center justify-center text-center transition-all duration-300 group-hover:border-blue-400 group-hover:from-blue-100 group-hover:to-indigo-200 min-h-[320px]">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 shadow-lg">
-                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">Create New Legal Desk</h3>
-              <p className="text-gray-600 leading-relaxed">
-                Start a new Legal Desk with secure document upload and AI-powered analysis
-              </p>
+            <div className="w-24 h-24 bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl flex items-center justify-center mx-auto mb-6">
+              <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
             </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-3">No Legal Desks Available</h3>
+            <p className="text-gray-600 max-w-md mx-auto mb-8">
+              Create your first Legal Desk to start securely managing and analyzing your legal documents with AI-powered insights.
+            </p>
+            <Button
+              variant="primary"
+              onClick={() => setAdding(true)}
+              className="px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all"
+            >
+              Create Your First Legal Desk
+            </Button>
           </motion.div>
+        )}
 
-          {/* Legal Desk Cards */}
-          {filteredAndSortedChats.map((chat, index) => (
+        {/* Main Grid - Only show if there are desks */}
+        {(filteredAndSortedChats.length > 0 || chats.length > 0) && (
+          <motion.div 
+            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3 }}
+          >
+            {/* Create New Card */}
+            <motion.div
+              onClick={() => setAdding(true)}
+              className="group cursor-pointer"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-100 border-2 border-dashed border-blue-300 rounded-3xl p-8 h-full flex flex-col items-center justify-center text-center transition-all duration-300 group-hover:border-blue-400 group-hover:from-blue-100 group-hover:to-indigo-200 min-h-[320px]">
+                <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 shadow-lg">
+                  <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">Create New Legal Desk</h3>
+                <p className="text-gray-600 leading-relaxed">
+                  Start a new Legal Desk with secure document upload and AI-powered analysis
+                </p>
+              </div>
+            </motion.div>
+
+            {/* Legal Desk Cards */}
+            {filteredAndSortedChats.map((chat, index) => (
             <motion.div
               key={chat._id}
               className="group"
@@ -382,8 +530,8 @@ const LegalDesk = () => {
                     </div>
                   </div>
 
-                  <h3 className="text-xl font-bold text-gray-900 mb-3 line-clamp-2 leading-tight">
-                    {chat.title}
+                  <h3 className="text-xl font-bold text-gray-900 mb-3 line-clamp-2 leading-tight" title={chat.title}>
+                    {chat.title && chat.title.length > 15 ? `${chat.title.substring(0, 15)}...` : chat.title}
                   </h3>
 
                   <div className="space-y-2">
@@ -425,7 +573,7 @@ const LegalDesk = () => {
                     </Button>
                     
                     <motion.button
-                      onClick={() => handleDelete(chat._id)}
+                      onClick={() => openDeleteConfirmation(chat)}
                       className="p-3 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-all duration-200"
                       title="Delete Legal Desk"
                       whileHover={{ scale: 1.1 }}
@@ -440,32 +588,6 @@ const LegalDesk = () => {
               </div>
             </motion.div>
           ))}
-        </motion.div>
-
-        {/* Empty State */}
-        {filteredAndSortedChats.length === 0 && chats.length === 0 && (
-          <motion.div 
-            className="text-center py-16"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-          >
-            <div className="w-32 h-32 bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl flex items-center justify-center mx-auto mb-6">
-              <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-3">No Legal Desks Yet</h3>
-            <p className="text-gray-600 max-w-md mx-auto mb-8">
-              Create your first Legal Desk to start securely managing and analyzing your legal documents with AI-powered insights.
-            </p>
-            <Button
-              variant="primary"
-              onClick={() => setAdding(true)}
-              className="px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all"
-            >
-              Create Your First Legal Desk
-            </Button>
           </motion.div>
         )}
       </div>
@@ -532,7 +654,11 @@ const LegalDesk = () => {
                       type="text"
                       placeholder="e.g., 'NDA Review - Project Alpha'"
                       value={title}
-                      onChange={(e) => setTitle(e.target.value)}
+                      onChange={(e) => {
+                        const sanitized = sanitizeTextInput(e.target.value);
+                        setTitle(sanitized);
+                      }}
+                      maxLength={100}
                       className="w-full px-4 py-4 rounded-xl border border-gray-200 bg-white text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
                   </div>
@@ -571,8 +697,9 @@ const LegalDesk = () => {
                       <input
                         id="file-upload"
                         type="file"
+                        accept=".pdf,.docx,.doc,.txt,.jpg,.jpeg,.png,.gif,.bmp,image/*"
                         className="hidden"
-                        onChange={(e) => setFile(e.target.files[0])}
+                        onChange={handleFileSelect}
                       />
                     </motion.div>
                   </div>
@@ -638,6 +765,81 @@ const LegalDesk = () => {
         )}
       </AnimatePresence>
       
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmModal.show && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setDeleteConfirmModal({ show: false, deskId: null, deskTitle: '' })}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            />
+
+            <motion.div
+              className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-auto border border-red-100"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            >
+              {/* Modal Header */}
+              <div className="p-6 border-b border-gray-100">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Delete Legal Desk?</h3>
+                    <p className="text-gray-600 text-sm">
+                      Are you sure you want to delete <span className="font-semibold text-gray-900">"{deleteConfirmModal.deskTitle}"</span>? This action cannot be undone.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6 bg-red-50/30">
+                <div className="flex items-start gap-3 text-sm text-gray-700">
+                  <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="leading-relaxed">
+                    All associated documents, chat history, and analysis will be permanently deleted.
+                  </p>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
+                <Button
+                  variant="secondary"
+                  onClick={() => setDeleteConfirmModal({ show: false, deskId: null, deskTitle: '' })}
+                  className="px-6 py-2.5 rounded-lg font-medium border border-gray-300 hover:border-gray-400 transition-all"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => handleDelete(deleteConfirmModal.deskId)}
+                  className="px-6 py-2.5 rounded-lg font-medium bg-red-600 hover:bg-red-700 text-white shadow-lg hover:shadow-xl transition-all"
+                >
+                  Delete Legal Desk
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Guest Access Modal */}
       <GuestAccessModal
         isOpen={showGuestModal}

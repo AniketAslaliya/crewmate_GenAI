@@ -228,7 +228,15 @@ const FindLawyer = () => {
             whileHover={{ scale: 1.1 }}
             transition={{ type: "spring", stiffness: 300 }}
           >
-            <InitialAvatar name={lawyer.name} className="w-16 h-16 rounded-2xl border-2 border-white shadow-lg" />
+            {lawyer.profileImage?.gcsUrl || lawyer.picture ? (
+              <img
+                src={lawyer.profileImage?.gcsUrl || lawyer.picture}
+                alt={lawyer.name}
+                className="w-16 h-16 rounded-2xl border-2 border-white shadow-lg object-cover"
+              />
+            ) : (
+              <InitialAvatar name={lawyer.name} className="w-16 h-16 rounded-2xl border-2 border-white shadow-lg" />
+            )}
             {lawyer.online && (
               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full" />
             )}
@@ -688,7 +696,15 @@ const FindLawyer = () => {
                             onClick={() => connection.chat ? navigate(`/chat/${connection.chat}`) : toast.info('Chat not available')}
                           >
                             <div className="flex items-center gap-4 min-w-0">
-                              <InitialAvatar name={lawyer.name} className="w-12 h-12 rounded-lg border border-white shadow-sm flex-shrink-0" />
+                              {lawyer.profileImage?.gcsUrl || lawyer.picture ? (
+                                <img
+                                  src={lawyer.profileImage?.gcsUrl || lawyer.picture}
+                                  alt={lawyer.name}
+                                  className="w-12 h-12 rounded-lg border border-white shadow-sm flex-shrink-0 object-cover"
+                                />
+                              ) : (
+                                <InitialAvatar name={lawyer.name} className="w-12 h-12 rounded-lg border border-white shadow-sm flex-shrink-0" />
+                              )}
                               <div className="min-w-0 flex-1">
                                 <h4 className="font-semibold text-gray-900 truncate">{lawyer.name || 'Unknown'}</h4>
                               </div>

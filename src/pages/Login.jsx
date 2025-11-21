@@ -208,62 +208,89 @@ const Login = () => {
             backgroundSize: '50px 50px'
           }} />
           
-          <div className="relative z-10">
+          <div className="relative z-10 flex flex-col justify-center h-full">
             {/* Brand Section */}
-            <div className="mb-10">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center border border-indigo-400/30">
-                  <svg className="w-6 h-6 text-indigo-300" viewBox="0 0 512 512" fill="currentColor">
-                    <path d="M504.5,247.522l-63.255-63.255c-4.862-4.862-11.519-7.633-18.435-7.633c-6.916,0-13.573,2.771-18.435,7.633 c-10.172,10.172-10.172,26.698,0,36.87l22.261,22.261H332.8c-5.12-39.822-39.066-70.4-79.644-70.4 c-44.433,0-80.533,36.1-80.533,80.533s36.1,80.533,80.533,80.533c40.578,0,74.524-30.578,79.644-70.4h93.867l-22.261,22.261 c-10.172,10.172-10.172,26.698,0,36.87c5.086,5.086,11.776,7.629,18.466,7.629s13.38-2.543,18.466-7.629l63.255-63.255 C514.672,274.219,514.672,257.693,504.5,247.522z M253.156,280.178c-14.811,0-26.844-12.033-26.844-26.844 s12.033-26.844,26.844-26.844s26.844,12.033,26.844,26.844S267.967,280.178,253.156,280.178z"/>
-                    <path d="M253.156,360.178c-54.044,0-98.133-43.255-99.911-96.711H58.311l22.261,22.261c10.172,10.172,10.172,26.698,0,36.87 c-5.086,5.086-11.776,7.629-18.466,7.629s-13.38-2.543-18.466-7.629L7.395,286.353c-10.172-10.172-10.172-26.698,0-36.87 l63.255-63.255c10.172-10.172,26.698-10.172,36.87,0c10.172,10.172,10.172,26.698,0,36.87l-22.261,22.261h94.933 c1.778-53.456,45.867-96.711,99.911-96.711c55.198,0,100.978,44.78,100.978,100.978S308.354,360.178,253.156,360.178z"/>
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-semibold text-white tracking-tight">Legal Sahai</h1>
-                  <p className="text-sm text-indigo-300">Modern Legal Solutions</p>
-                </div>
-              </div>
-              
-              <p className="text-indigo-100 text-[15px] leading-relaxed">
-                Navigate the legal landscape with confidence. We connect you with expert lawyers and provide intelligent tools to simplify your legal journey.
+            <div className="mb-8 text-center">
+              <h1 className="text-3xl font-bold text-white tracking-tight mb-2">Legal AI Support</h1>
+              <p className="text-indigo-200 text-sm">Intelligent Legal Assistance Platform</p>
+            </div>
+
+            {/* Legal AI Illustration */}
+            <div className="flex items-center justify-center mb-8">
+              <svg className="w-full max-w-md" viewBox="0 0 400 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+                {/* Document/Contract */}
+                <g opacity="0.9">
+                  {/* Main document */}
+                  <rect x="80" y="40" width="240" height="180" rx="8" fill="white" stroke="#6366F1" strokeWidth="2"/>
+                  
+                  {/* Document header */}
+                  <rect x="95" y="55" width="80" height="8" rx="4" fill="#818CF8"/>
+                  <rect x="95" y="70" width="120" height="6" rx="3" fill="#C7D2FE"/>
+                  
+                  {/* Document lines */}
+                  <rect x="95" y="90" width="210" height="4" rx="2" fill="#E0E7FF"/>
+                  <rect x="95" y="100" width="190" height="4" rx="2" fill="#E0E7FF"/>
+                  <rect x="95" y="110" width="200" height="4" rx="2" fill="#E0E7FF"/>
+                  <rect x="95" y="120" width="180" height="4" rx="2" fill="#E0E7FF"/>
+                  
+                  <rect x="95" y="135" width="210" height="4" rx="2" fill="#E0E7FF"/>
+                  <rect x="95" y="145" width="195" height="4" rx="2" fill="#E0E7FF"/>
+                  <rect x="95" y="155" width="185" height="4" rx="2" fill="#E0E7FF"/>
+                  
+                  {/* Signature area */}
+                  <path d="M 95 175 Q 115 170, 135 175" stroke="#818CF8" strokeWidth="2" fill="none"/>
+                  <rect x="95" y="185" width="60" height="2" fill="#C7D2FE"/>
+                </g>
+                
+                {/* Shield/Security Icon */}
+                <g opacity="0.95">
+                  <path d="M 200 100 L 220 90 L 240 100 L 240 130 Q 240 145, 220 155 Q 200 145, 200 130 Z" 
+                        fill="#4F46E5" stroke="#312E81" strokeWidth="2"/>
+                  <path d="M 215 110 L 220 120 L 230 105" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none"/>
+                </g>
+                
+                {/* AI Brain Icon */}
+                <g opacity="0.9">
+                  <circle cx="140" cy="160" r="25" fill="#6366F1" stroke="#312E81" strokeWidth="2"/>
+                  {/* Neural network lines */}
+                  <circle cx="130" cy="150" r="3" fill="white"/>
+                  <circle cx="140" cy="155" r="3" fill="white"/>
+                  <circle cx="150" cy="150" r="3" fill="white"/>
+                  <circle cx="135" cy="165" r="3" fill="white"/>
+                  <circle cx="145" cy="165" r="3" fill="white"/>
+                  <line x1="130" y1="150" x2="140" y2="155" stroke="white" strokeWidth="1"/>
+                  <line x1="150" y1="150" x2="140" y2="155" stroke="white" strokeWidth="1"/>
+                  <line x1="140" y1="155" x2="135" y2="165" stroke="white" strokeWidth="1"/>
+                  <line x1="140" y1="155" x2="145" y2="165" stroke="white" strokeWidth="1"/>
+                </g>
+                
+                {/* Chat/Support Icon */}
+                <g opacity="0.9">
+                  <rect x="260" y="140" width="50" height="40" rx="8" fill="#8B5CF6" stroke="#5B21B6" strokeWidth="2"/>
+                  <rect x="267" y="150" width="15" height="3" rx="1.5" fill="white"/>
+                  <rect x="267" y="157" width="25" height="3" rx="1.5" fill="white"/>
+                  <rect x="267" y="164" width="20" height="3" rx="1.5" fill="white"/>
+                  <path d="M 285 180 L 290 190 L 295 180" fill="#8B5CF6"/>
+                </g>
+                
+                {/* Decorative circles */}
+                <circle cx="70" cy="60" r="6" fill="#818CF8" opacity="0.3"/>
+                <circle cx="330" cy="70" r="8" fill="#A5B4FC" opacity="0.3"/>
+                <circle cx="60" cy="200" r="5" fill="#C7D2FE" opacity="0.3"/>
+                <circle cx="340" cy="210" r="7" fill="#818CF8" opacity="0.3"/>
+                
+                {/* Connection lines */}
+                <line x1="165" y1="160" x2="195" y2="120" stroke="#818CF8" strokeWidth="2" strokeDasharray="4,4" opacity="0.5"/>
+                <line x1="245" y1="120" x2="260" y2="160" stroke="#A5B4FC" strokeWidth="2" strokeDasharray="4,4" opacity="0.5"/>
+              </svg>
+            </div>
+
+            {/* Key Message */}
+            <div className="text-center px-4">
+              <p className="text-indigo-100 text-base leading-relaxed">
+                AI-powered legal assistance with secure document analysis and expert lawyer connections
               </p>
             </div>
-
-            {/* Key Benefits - Clean List */}
-            <div className="space-y-3 mb-10">
-              <div className="flex items-start space-x-3">
-                <div className="w-1 h-1 rounded-full bg-emerald-400 mt-2" />
-                <div>
-                  <p className="text-white font-medium text-sm">Smart Document Analysis</p>
-                  <p className="text-indigo-200 text-xs">AI extracts key info from your legal documents instantly</p>
-                </div>
-              </div>
-              
-              <div className="flex items-start space-x-3">
-                <div className="w-1 h-1 rounded-full bg-blue-400 mt-2" />
-                <div>
-                  <p className="text-white font-medium text-sm">Connect with Verified Lawyers</p>
-                  <p className="text-indigo-200 text-xs">Direct access to experienced legal professionals</p>
-                </div>
-              </div>
-              
-              <div className="flex items-start space-x-3">
-                <div className="w-1 h-1 rounded-full bg-violet-400 mt-2" />
-                <div>
-                  <p className="text-white font-medium text-sm">Secure & Confidential</p>
-                  <p className="text-indigo-200 text-xs">Your documents and conversations are encrypted</p>
-                </div>
-              </div>
-              
-              <div className="flex items-start space-x-3">
-                <div className="w-1 h-1 rounded-full bg-amber-400 mt-2" />
-                <div>
-                  <p className="text-white font-medium text-sm">24/7 Legal Guidance</p>
-                  <p className="text-indigo-200 text-xs">Get instant answers to your legal questions anytime</p>
-                </div>
-              </div>
-            </div>
-
           </div>
 
           {/* Mode Toggle */}

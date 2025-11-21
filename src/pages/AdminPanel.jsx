@@ -16,6 +16,12 @@ const AdminPanel = () => {
   const [showModal, setShowModal] = useState(false);
   const [notes, setNotes] = useState('');
   const [actionType, setActionType] = useState(''); // 'approve' or 'reject'
+  
+  // Support messages state
+  const [supportMessages, setSupportMessages] = useState([]);
+  const [selectedMessage, setSelectedMessage] = useState(null);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportStats, setSupportStats] = useState({ pending: 0, total: 0 });
 
   // Check admin access
   useEffect(() => {
@@ -60,8 +66,32 @@ const AdminPanel = () => {
         setLoading(false);
       }
     };
-    if (authUser?.role === 'admin') {
+    if (authUser?.role === 'admin' && activeTab !== 'support') {
       fetchLawyers();
+    }
+  }, [activeTab, authUser]);
+
+  // Fetch support messages when support tab is active
+  useEffect(() => {
+    const fetchSupportMessages = async () => {
+      setLoading(true);
+      try {
+        const res = await api.get('/api/support/all');
+        const messages = res.data.messages || [];
+        setSupportMessages(messages);
+        
+        const pending = messages.filter(m => m.status === 'pending').length;
+        setSupportStats({ pending, total: messages.length });
+      } catch (err) {
+        console.error('Failed to fetch support messages:', err);
+        alert('Failed to load support messages');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (authUser?.role === 'admin' && activeTab === 'support') {
+      fetchSupportMessages();
     }
   }, [activeTab, authUser]);
 
@@ -122,6 +152,47 @@ const AdminPanel = () => {
     setActionType('');
   };
 
+  // Support message handlers
+  const handleViewMessage = async (messageId) => {
+    try {
+      const res = await api.get(`/api/support/${messageId}`);
+      setSelectedMessage(res.data.message);
+      setShowSupportModal(true);
+    } catch (err) {
+      console.error('Failed to fetch message details:', err);
+      alert('Failed to load message details');
+    }
+  };
+
+  const handleUpdateMessageStatus = async (messageId, newStatus, priority, adminNotes) => {
+    try {
+      await api.put(`/api/support/${messageId}`, {
+        status: newStatus,
+        priority,
+        adminNotes
+      });
+      alert('Message updated successfully');
+      
+      // Refresh support messages
+      const res = await api.get('/api/support/all');
+      const messages = res.data.messages || [];
+      setSupportMessages(messages);
+      const pending = messages.filter(m => m.status === 'pending').length;
+      setSupportStats({ pending, total: messages.length });
+      
+      setShowSupportModal(false);
+      setSelectedMessage(null);
+    } catch (err) {
+      console.error('Failed to update message:', err);
+      alert('Failed to update message');
+    }
+  };
+
+  const handleImpersonateUser = (userId) => {
+    // Navigate to user's profile for admin to make changes
+    navigate(`/admin/user/${userId}`);
+  };
+
   if (!authUser || authUser.role !== 'admin') {
     return null;
   }
@@ -148,7 +219,7 @@ const AdminPanel = () => {
 
         {/* Tabs */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
-          <div className="flex border-b border-gray-200">
+          <div className="flex flex-wrap border-b border-gray-200">
             <TabButton
               active={activeTab === 'pending'}
               onClick={() => setActiveTab('pending')}
@@ -167,49 +238,65 @@ const AdminPanel = () => {
               label="Rejected"
               badge={stats?.rejectedLawyers}
             />
+            <TabButton
+              active={activeTab === 'support'}
+              onClick={() => setActiveTab('support')}
+              label="Support Messages"
+              badge={supportStats.pending}
+            />
           </div>
         </div>
 
-        {/* Lawyers List */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          {loading ? (
-            <div className="p-8 text-center">
-              <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="mt-4 text-gray-600">Loading lawyers...</p>
-            </div>
-          ) : lawyers.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              <p>No lawyers found in this category</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lawyer</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specialties</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Experience</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fee</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {lawyers.map((lawyer) => (
-                    <LawyerRow
-                      key={lawyer._id}
-                      lawyer={lawyer}
-                      activeTab={activeTab}
-                      onViewDetails={handleViewDetails}
-                      onApprove={handleApprove}
-                      onReject={handleReject}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        {/* Content Area */}
+        {activeTab === 'support' ? (
+          <SupportMessagesSection
+            loading={loading}
+            messages={supportMessages}
+            onViewMessage={handleViewMessage}
+            onUpdateStatus={handleUpdateMessageStatus}
+            onImpersonate={handleImpersonateUser}
+          />
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            {loading ? (
+              <div className="p-8 text-center">
+                <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="mt-4 text-gray-600">Loading lawyers...</p>
+              </div>
+            ) : lawyers.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                <p>No lawyers found in this category</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lawyer</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specialties</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Experience</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fee</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {lawyers.map((lawyer) => (
+                      <LawyerRow
+                        key={lawyer._id}
+                        lawyer={lawyer}
+                        activeTab={activeTab}
+                        onViewDetails={handleViewDetails}
+                        onApprove={handleApprove}
+                        onReject={handleReject}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal */}
@@ -222,6 +309,20 @@ const AdminPanel = () => {
             setNotes={setNotes}
             onSubmit={submitAction}
             onClose={closeModal}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Support Message Modal */}
+      <AnimatePresence>
+        {showSupportModal && selectedMessage && (
+          <SupportMessageModal
+            message={selectedMessage}
+            onUpdate={handleUpdateMessageStatus}
+            onClose={() => {
+              setShowSupportModal(false);
+              setSelectedMessage(null);
+            }}
           />
         )}
       </AnimatePresence>
@@ -509,5 +610,316 @@ const DetailItem = ({ label, value }) => (
     <p className="text-gray-900">{value}</p>
   </div>
 );
+
+// Support Messages Section Component
+const SupportMessagesSection = ({ loading, messages, onViewMessage, onUpdateStatus, onImpersonate }) => {
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterPriority, setFilterPriority] = useState('all');
+
+  const filteredMessages = messages.filter(msg => {
+    if (filterStatus !== 'all' && msg.status !== filterStatus) return false;
+    if (filterPriority !== 'all' && msg.priority !== filterPriority) return false;
+    return true;
+  });
+
+  const getStatusColor = (status) => {
+    const colors = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      'in-progress': 'bg-blue-100 text-blue-800',
+      resolved: 'bg-green-100 text-green-800',
+      closed: 'bg-gray-100 text-gray-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getPriorityColor = (priority) => {
+    const colors = {
+      low: 'bg-gray-100 text-gray-600',
+      medium: 'bg-blue-100 text-blue-700',
+      high: 'bg-orange-100 text-orange-700',
+      urgent: 'bg-red-100 text-red-700'
+    };
+    return colors[priority] || 'bg-gray-100 text-gray-600';
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+      {/* Filters */}
+      <div className="p-4 border-b border-gray-200">
+        <div className="flex flex-wrap gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+            <select
+              value={filterPriority}
+              onChange={(e) => setFilterPriority(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="all">All</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="p-8 text-center">
+          <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="mt-4 text-gray-600">Loading support messages...</p>
+        </div>
+      ) : filteredMessages.length === 0 ? (
+        <div className="p-8 text-center text-gray-500">
+          <p>No support messages found</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filteredMessages.map((msg) => (
+                <tr key={msg._id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center">
+                      {msg.user?.profileImage?.gcsUrl || msg.user?.picture ? (
+                        <img
+                          src={msg.user?.profileImage?.gcsUrl || msg.user?.picture}
+                          alt={msg.name}
+                          className="w-10 h-10 rounded-full object-cover mr-3"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-semibold mr-3">
+                          {msg.name?.charAt(0) || 'U'}
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-medium text-gray-900">{msg.name}</div>
+                        <div className="text-sm text-gray-500">{msg.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="max-w-xs">
+                      <div className="font-medium text-gray-900 truncate">{msg.subject}</div>
+                      <div className="text-sm text-gray-500 truncate">{msg.message}</div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(msg.status)}`}>
+                      {msg.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getPriorityColor(msg.priority)}`}>
+                      {msg.priority}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {new Date(msg.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button
+                      onClick={() => onViewMessage(msg._id)}
+                      className="text-blue-600 hover:text-blue-900 mr-3"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => onImpersonate(msg.user._id)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                      title="View user details"
+                    >
+                      User
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Support Message Modal Component
+const SupportMessageModal = ({ message, onUpdate, onClose }) => {
+  const [status, setStatus] = useState(message.status);
+  const [priority, setPriority] = useState(message.priority);
+  const [adminNotes, setAdminNotes] = useState(message.adminNotes || '');
+
+  const handleSubmit = () => {
+    onUpdate(message._id, status, priority, adminNotes);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+      >
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Support Message Details</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Submitted on {new Date(message.createdAt).toLocaleString()}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6">
+          {/* User Info */}
+          <div className="bg-gray-50 rounded-lg p-4">
+            <h3 className="font-semibold text-gray-900 mb-3">User Information</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-500">Name</p>
+                <p className="font-medium text-gray-900">{message.name}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Email</p>
+                <p className="font-medium text-gray-900">{message.email}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Role</p>
+                <p className="font-medium text-gray-900">{message.user?.role || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Phone</p>
+                <p className="font-medium text-gray-900">{message.user?.phone || 'N/A'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Message Content */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2">Subject</h3>
+            <p className="text-gray-700 mb-4">{message.subject}</p>
+            
+            <h3 className="font-semibold text-gray-900 mb-2">Message</h3>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <p className="text-gray-700 whitespace-pre-wrap">{message.message}</p>
+            </div>
+          </div>
+
+          {/* Status Management */}
+          <div className="border-t border-gray-200 pt-6">
+            <h3 className="font-semibold text-gray-900 mb-4">Manage Ticket</h3>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                <select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Admin Notes</label>
+              <textarea
+                value={adminNotes}
+                onChange={(e) => setAdminNotes(e.target.value)}
+                placeholder="Add internal notes about this support request..."
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
+          </div>
+
+          {/* Resolution Info */}
+          {message.resolvedAt && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <p className="text-sm text-green-800">
+                <strong>Resolved:</strong> {new Date(message.resolvedAt).toLocaleString()}
+                {message.resolvedBy && ` by ${message.resolvedBy.name}`}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          >
+            Update Ticket
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
 
 export default AdminPanel;

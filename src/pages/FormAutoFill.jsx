@@ -7,6 +7,10 @@ import { useLanguage } from '../context/LanguageContext';
 import SpeakerButton from '../components/SpeakerButton';
 import { useGuestAccess } from '../hooks/useGuestAccess';
 import GuestAccessModal from '../components/GuestAccessModal';
+import { validateFile } from '../utils/inputSecurity';
+import formAnalysisService from '../services/formAnalysisService';
+import formStorageService from '../services/formStorageService';
+import useAuthStore from '../context/AuthContext';
 
 // Helper functions (can stay as const, they are at the top level)
 const normalizeBbox = (bbox) => {
@@ -81,8 +85,44 @@ const FormAutoFill = () => {
   const dragRef = useRef({ mode: null, dir: null, startX: 0, startY: 0, origLeft: 0, origTop: 0, origW: 0, origH: 0 });
   const toast = useToast();
   const { language, setLanguage } = useLanguage();
-  const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState(null);
+  const [currentFormId, setCurrentFormId] = useState(null); // Track current form in Dropbox
+  const [savedForms, setSavedForms] = useState([]); // List of saved forms
+  const [showSavedForms, setShowSavedForms] = useState(false); // Show saved forms modal
+  const [loadingSavedForms, setLoadingSavedForms] = useState(false);
+  const [fieldImagePositions, setFieldImagePositions] = useState({}); // Store image positions {fieldId: {x: %, y: %, scale: 1}}
+  const [draggingImageFieldId, setDraggingImageFieldId] = useState(null);
+  const imageDragRef = useRef({ startX: 0, startY: 0, origX: 0, origY: 0 });
   const { checkGuestAccess, showGuestModal, closeGuestModal, blockedFeature } = useGuestAccess();
+
+  // Comprehensive file validation with security checks (same as LegalDesk)
+  const validateFileWithSecurity = (file) => {
+    const validation = validateFile(file, {
+      maxSizeMB: 100,
+      allowedExtensions: ['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'bmp'],
+      allowedMimeTypes: [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain',
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/bmp'
+      ]
+    });
+
+    if (!validation.isValid) {
+      validation.errors.forEach(error => toast.error(error));
+      return { isValid: false };
+    }
+
+    return { isValid: true, sanitizedFileName: validation.sanitizedFileName };
+  };
 
   const languages = [
     { code: 'en', name: 'English' },
@@ -116,6 +156,99 @@ const FormAutoFill = () => {
       } catch (e) {}
     };
   }, []);
+
+  // Load saved forms on mount to show in empty state
+  useEffect(() => {
+    loadSavedForms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Listen for analysis completion from the persistent service
+  useEffect(() => {
+    const removeListener = formAnalysisService.addListener((fileId, result) => {
+      // Only handle results for the current analysis
+      if (fileId !== currentAnalysisId) return;
+      
+      setLoading(false);
+      
+      if (result.success) {
+        // Process the fields
+        const returned = result.fields || [];
+        
+        const generateFallbackBbox = (idx, total) => {
+          const pageW = Math.max(800, naturalSize.w || 1000);
+          const pageH = Math.max(1000, naturalSize.h || 1400);
+          const margin = 40;
+          const availH = pageH - margin * 2;
+          const itemH = Math.max(24, Math.floor(availH / Math.max(1, total)) - 8);
+          const x = margin;
+          const y = margin + idx * (itemH + 8);
+          const w = pageW - margin * 2;
+          const h = itemH;
+          return { x, y, w, h };
+        };
+
+        const getFieldPage = (f) => {
+          if (!f) return 1;
+          const candidates = [f.page, f.page_number, f.pageNumber, f.page_num, f.pageNum, f.pageno, f.pageNo, f.pageIndex, f.p];
+          for (const c of candidates) {
+            if (c === undefined || c === null) continue;
+            const n = Number(c);
+            if (!Number.isNaN(n) && n >= 1) return Math.floor(n);
+          }
+          return 1;
+        };
+
+        const normalized = returned.map((f, i) => {
+          let bboxNorm = normalizeBbox(f.bbox);
+          if (bboxNorm && looksNormalizedFraction(bboxNorm)) {
+            const pageW = Math.max(800, naturalSize.w || 1000);
+            const pageH = Math.max(1000, naturalSize.h || 1400);
+            bboxNorm = {
+              x: Math.round(bboxNorm.x * pageW),
+              y: Math.round(bboxNorm.y * pageH),
+              w: Math.round(bboxNorm.w * pageW),
+              h: Math.round(bboxNorm.h * pageH),
+            };
+          }
+          if (!bboxNorm || ((bboxNorm.w === 0 || bboxNorm.h === 0) && Array.isArray(f.bbox) && f.bbox.every(v => v === 0))) {
+            bboxNorm = generateFallbackBbox(i, returned.length);
+          }
+          return { ...f, bboxNorm, page: getFieldPage(f) };
+        });
+        
+        setFields(normalized);
+        
+        if (isPdf && pdfArrayBuffer) {
+          resolveAllFieldLabels(normalized, pdfArrayBuffer).catch(err => console.warn('resolveAllFieldLabels failed', err));
+        }
+        
+        const initialValues = {};
+        normalized.forEach(f => { if (f.value) initialValues[f.id] = f.value });
+        if (Object.keys(initialValues).length) setFieldValues(prev => ({ ...prev, ...initialValues }));
+        initialValuesRef.current = { fieldValues: (Object.keys(initialValues).length ? { ...initialValues } : {}), simpleValues: {} };
+        setSelectedField(null);
+        
+        // Save analyzed fields to backend
+        if (currentFormId) {
+          formStorageService.saveAnalyzedFields(currentFormId, normalized)
+            .then(() => {
+              toast.success('✅ Analysis completed and saved! Start filling fields.');
+            })
+            .catch(err => {
+              console.warn('Failed to save fields:', err);
+              toast.success('✅ Analysis completed! Fields are now available.');
+            });
+        } else {
+          toast.success('✅ Analysis completed! Fields are now available.');
+        }
+      } else {
+        toast.error(result.error || 'Analysis failed');
+      }
+    });
+
+    return removeListener;
+  }, [currentAnalysisId, currentFormId, naturalSize, isPdf, pdfArrayBuffer, toast]);
   
   // --- FIX: All internal functions changed to `function` declarations ---
   // This ensures they are all hoisted and available to be called by
@@ -251,104 +384,7 @@ const FormAutoFill = () => {
     }
   };
 
-  // Save and restore UI state (file bytes, fields, values, page) to localStorage
-  const STORAGE_KEY = 'formAutofill:state:v1';
-
-  async function saveStateToStorage(opts = {}) {
-    try {
-      const payload = {
-        fileName: file ? file.name : null,
-        fileType: file ? file.type : null,
-        isPdf: !!isPdf,
-        currentPage: currentPage || 1,
-        totalPages: totalPages || 1,
-        fields: fields || [],
-        fieldValues: fieldValues || {},
-      };
-      // include file bytes as base64 when available (avoid repeating conversion)
-      if (file) {
-        // if we already have pdfArrayBuffer for PDFs, use it
-        if (isPdf && pdfArrayBuffer) {
-          const arr = new Uint8Array(pdfArrayBuffer);
-          // convert to base64
-          let binary = '';
-          for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-          payload.fileBase64 = btoa(binary);
-        } else if (!isPdf && imageUrl) {
-          // imageUrl might already be a data URL or object URL; try to capture the blob from the file
-          try {
-            const b64 = await blobToBase64(file);
-            payload.fileBase64 = b64;
-          } catch (e) {
-            // fallback: skip file bytes
-          }
-        } else {
-          // generic fallback: try to read file to base64
-          try {
-            const b64 = await blobToBase64(file);
-            payload.fileBase64 = b64;
-          } catch (e) {}
-        }
-      }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (err) {
-      console.warn('saveStateToStorage failed', err);
-    }
-  };
-
-  async function restoreStateFromStorage() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const obj = JSON.parse(raw);
-      if (!obj) return false;
-      setFieldValues(obj.fieldValues || {});
-      setFields(obj.fields || []);
-      setCurrentPage(obj.currentPage || 1);
-      setTotalPages(obj.totalPages || 1);
-      if (obj.fileBase64 && obj.fileName) {
-        const u8 = base64ToUint8(obj.fileBase64);
-        const blob = new Blob([u8], { type: obj.fileType || 'application/pdf' });
-        const f = new File([blob], obj.fileName, { type: obj.fileType || 'application/pdf' });
-        setFile(f);
-        const url = URL.createObjectURL(f);
-        setImageUrl(url); // --- REFACTOR --- For images, this URL will be the *original* image
-        setIsPdf(!!obj.isPdf);
-        if (obj.isPdf) {
-          try {
-            // keep pdfArrayBuffer for label resolution
-            setPdfArrayBuffer(u8.buffer);
-            // render requested page
-            await renderPdfToCanvas(f, obj.currentPage || 1);
-          } catch (e) {
-            console.warn('restore pdf render failed', e);
-          }
-        } else {
-          // --- REFACTOR --- No longer need to call repaintValuesOnCanvas
-          // The onImageLoad handler will set naturalSize, and the DOM overlays will render
-        }
-        // mark restored values as initial (not user-edited)
-        initialValuesRef.current = { fieldValues: obj.fieldValues || {}, simpleValues: {} };
-      }
-      return true;
-    } catch (err) {
-      console.warn('restoreStateFromStorage failed', err);
-      return false;
-    }
-  };
-
-  // restore on mount
-  useEffect(() => {
-    restoreStateFromStorage().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // save whenever key pieces of state change
-  useEffect(() => {
-    // fire-and-forget
-    saveStateToStorage().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, fields, fieldValues, currentPage, totalPages, isPdf]);
+  // Auto-save removed - values are only saved when "Done" is clicked
 
   // mark dirty when user-edited values differ from initial snapshot
   useEffect(() => {
@@ -364,30 +400,103 @@ const FormAutoFill = () => {
   }, [fieldValues, simpleValues]);
 
   function onFileChange(e) {
-    if (!checkGuestAccess('Upload Form')) return;
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    setFile(f);
-    const url = URL.createObjectURL(f);
+    
+    // Validate file with security checks
+    const validation = validateFileWithSecurity(f);
+    if (!validation.isValid) {
+      e.target.value = ''; // Reset input
+      return;
+    }
+    
+    setSelectedFile(f);
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      const file = files[0];
+      
+      // Validate file with security checks
+      const validation = validateFileWithSecurity(file);
+      if (!validation.isValid) {
+        return;
+      }
+      
+      setSelectedFile(file);
+    }
+  };
+
+  async function handleUploadAndAnalyze(selectedLang) {
+    if (!checkGuestAccess('Upload Form')) return;
+    if (!selectedFile) return;
+    
+    setFile(selectedFile);
+    const url = URL.createObjectURL(selectedFile);
     setImageUrl(url);
-    const pdfCheck = f.type === 'application/pdf' || (f.name && f.name.toLowerCase().endsWith('.pdf'));
+    const pdfCheck = selectedFile.type === 'application/pdf' || (selectedFile.name && selectedFile.name.toLowerCase().endsWith('.pdf'));
     setIsPdf(pdfCheck);
     setFields([]);
     setSelectedField(null);
     setFieldValues({});
+    
     if (pdfCheck) {
-      renderPdfToCanvas(f, 1);
+      await renderPdfToCanvas(selectedFile, 1);
       // store ArrayBuffer for pdf-js based label resolution
       try {
         const reader = new FileReader();
         reader.onload = (ev) => {
           setPdfArrayBuffer(ev.target.result);
         };
-        reader.readAsArrayBuffer(f);
+        reader.readAsArrayBuffer(selectedFile);
       } catch (e) {
         console.warn('Could not read pdf array buffer', e);
       }
     }
+    
+    // Close modal and start analysis
+    setShowUploadModal(false);
+    setLanguage(selectedLang);
+    
+    // Upload to cloud storage first
+    toast.info('📤 Uploading form to cloud storage...');
+    try {
+      const uploadedForm = await formStorageService.uploadForm(selectedFile, selectedLang);
+      setCurrentFormId(uploadedForm.formId);
+    } catch (error) {
+      console.error('Failed to upload to cloud storage:', error);
+      toast.error('Failed to save to cloud, but continuing with analysis...');
+    }
+    
+    // Start analysis using persistent service (continues even if component unmounts)
+    setLoading(true);
+    toast.info('⏳ Analysis started. This may take a few minutes. You can navigate to other pages while processing.');
+    
+    // Use the persistent service - it returns immediately but the request continues
+    const { id, isNew } = formAnalysisService.startAnalysis(selectedFile, selectedLang);
+    setCurrentAnalysisId(id);
+    setSelectedFile(null);
+    
+    // If this is a cached result, the listener will fire immediately
+    // Otherwise, the listener will fire when the HTTP request completes
   };
 
   // --- Simple AcroForm handlers (fillable PDF workflow) ---
@@ -659,83 +768,341 @@ const FormAutoFill = () => {
     }
   };
 
-  async function analyze() {
+  function analyze() {
     if (!checkGuestAccess('Analyze Form')) return;
     if (!file) { toast.error('Please upload a form image or PDF first.'); return; }
     setLoading(true);
+    toast.info('⏳ Analysis started. This may take a few minutes. You can navigate to other pages while processing.');
+    
+    // Use the persistent service - it returns immediately but the request continues
+    const { id, isNew } = formAnalysisService.startAnalysis(file, language);
+    setCurrentAnalysisId(id);
+    
+    // The listener in useEffect will handle the completion
+    console.log(`Analysis ${isNew ? 'started' : 'already running'} with ID:`, id);
+  };
+
+  // heuristic detection of rectangular light fields from the rendered canvas
+  async function detectFieldBoxes() {
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('output_language', language);
-      const res = await papi.post('/api/forms/analyze', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      // Expect res.data.fields = [{ id, label_text, suggestions: [], bbox: {...} }, ...]
-      const returned = res.data.fields || [];
-      // helper to generate fallback bboxes (stacked vertically across page)
-      const generateFallbackBbox = (idx, total) => {
-        const pageW = Math.max(800, naturalSize.w || 1000);
-        const pageH = Math.max(1000, naturalSize.h || 1400);
-        const margin = 40;
-        const availH = pageH - margin * 2;
-        const itemH = Math.max(24, Math.floor(availH / Math.max(1, total)) - 8);
-        const x = margin;
-        const y = margin + idx * (itemH + 8);
-        const w = pageW - margin * 2;
-        const h = itemH;
-        return { x, y, w, h };
-      };
-
-      // helper: normalize page key from various backends
-      const getFieldPage = (f) => {
-        if (!f) return 1;
-        // common page keys returned by various backends
-        const candidates = [f.page, f.page_number, f.pageNumber, f.page_num, f.pageNum, f.pageno, f.pageNo, f.pageIndex, f.p];
-        for (const c of candidates) {
-          if (c === undefined || c === null) continue;
-          const n = Number(c);
-          if (!Number.isNaN(n) && n >= 1) return Math.floor(n);
-        }
-        return 1;
-      };
-
-      const normalized = returned.map((f, i) => {
-        let bboxNorm = normalizeBbox(f.bbox);
-        // If bbox looks like normalized fractions (0..1), convert to pixel coords using naturalSize or page fallback
-        if (bboxNorm && looksNormalizedFraction(bboxNorm)) {
-          const pageW = Math.max(800, naturalSize.w || 1000);
-          const pageH = Math.max(1000, naturalSize.h || 1400);
-          bboxNorm = {
-            x: Math.round(bboxNorm.x * pageW),
-            y: Math.round(bboxNorm.y * pageH),
-            w: Math.round(bboxNorm.w * pageW),
-            h: Math.round(bboxNorm.h * pageH),
-          };
-        }
-        // if backend returned zeros or null bbox, create a fallback position
-        if (!bboxNorm || ((bboxNorm.w === 0 || bboxNorm.h === 0) && Array.isArray(f.bbox) && f.bbox.every(v => v === 0))) {
-          bboxNorm = generateFallbackBbox(i, returned.length);
-        }
-        return { ...f, bboxNorm, page: getFieldPage(f) };
-      });
-      setFields(normalized);
-      // If this is a PDF and we have the ArrayBuffer, try to resolve friendly labels and thumbnails
-      if (isPdf && pdfArrayBuffer) {
-        // resolve labels but don't block UI; fire-and-forget
-        resolveAllFieldLabels(normalized, pdfArrayBuffer).catch(err => console.warn('resolveAllFieldLabels failed', err));
+      // get source canvas: pdf canvas if PDF, otherwise draw image to offscreen canvas
+      let srcCanvas = null;
+      if (isPdf && pdfCanvasRef.current) {
+        srcCanvas = pdfCanvasRef.current;
+      } else if (!isPdf && imgRef.current) {
+        // draw image onto an offscreen canvas at its natural size
+        const img = imgRef.current;
+        const off = document.createElement('canvas');
+        off.width = naturalSize.w || img.naturalWidth || img.width;
+        off.height = naturalSize.h || img.naturalHeight || img.height;
+        const ctx = off.getContext('2d');
+        ctx.drawImage(img, 0, 0, off.width, off.height);
+        srcCanvas = off;
+      } else {
+        return [];
       }
-      // pick up any returned values from analysis
-      const initialValues = {};
-      normalized.forEach(f => { if (f.value) initialValues[f.id] = f.value });
-      if (Object.keys(initialValues).length) setFieldValues(prev => ({ ...prev, ...initialValues }));
-  // capture initial values snapshot so we can detect user edits
-  initialValuesRef.current = { fieldValues: (Object.keys(initialValues).length ? { ...initialValues } : {}), simpleValues: {} };
-      // clear previous selection
-      setSelectedField(null);
+
+      const cw = srcCanvas.width;
+      const ch = srcCanvas.height;
+      const ctx = srcCanvas.getContext('2d');
+      if (!ctx) return [];
+      const step = Math.max(4, Math.floor(Math.min(cw, ch) / 200)); // adaptive sampling
+      const gw = Math.floor(cw / step);
+      const gh = Math.floor(ch / step);
+      const imgData = ctx.getImageData(0, 0, cw, ch).data;
+      const grid = new Uint8Array(gw * gh);
+      // mark bright-ish cells as candidate (fields often have light backgrounds)
+      for (let gy = 0; gy < gh; gy++) {
+        for (let gx = 0; gx < gw; gx++) {
+          const px = Math.min(cw - 1, gx * step);
+          const py = Math.min(ch - 1, gy * step);
+          const i = (py * cw + px) * 4;
+          const r = imgData[i], g = imgData[i + 1], b = imgData[i + 2];
+          // luminance
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          // consider candidate if bright or yellowish (form fields are often pale)
+          const isYellow = (r > 200 && g > 180 && b < 180);
+          if (lum > 220 || isYellow) grid[gy * gw + gx] = 1;
+        }
+      }
+
+      // flood fill connected components on grid
+      const visited = new Uint8Array(gw * gh);
+      const boxes = [];
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+      for (let y = 0; y < gh; y++) {
+        for (let x = 0; x < gw; x++) {
+          const idx = y * gw + x;
+          if (visited[idx] || !grid[idx]) continue;
+          // BFS
+          const q = [idx];
+          visited[idx] = 1;
+          let minX = x, maxX = x, minY = y, maxY = y;
+          while (q.length) {
+            const cur = q.shift();
+            const cx = cur % gw; const cy = Math.floor(cur / gw);
+            for (const [dx,dy] of neigh) {
+              const nx = cx + dx; const ny = cy + dy;
+              if (nx < 0 || nx >= gw || ny < 0 || ny >= gh) continue;
+              const ni = ny * gw + nx;
+              if (visited[ni]) continue;
+              if (grid[ni]) {
+                visited[ni] = 1;
+                q.push(ni);
+                minX = Math.min(minX, nx); maxX = Math.max(maxX, nx);
+                minY = Math.min(minY, ny); maxY = Math.max(maxY, ny);
+              }
+            }
+          }
+          // convert grid bbox to pixel bbox
+          const px = Math.max(0, minX * step);
+          const py = Math.max(0, minY * step);
+          const pw = Math.min(cw, (maxX - minX + 1) * step);
+          const ph = Math.min(ch, (maxY - minY + 1) * step);
+          // filter small
+          if (pw > 40 && ph > 10) boxes.push({ x: px, y: py, w: pw, h: ph });
+        }
+      }
+
+      if (boxes.length === 0) return [];
+
+      // merge overlapping boxes
+      const merged = [];
+      const iou = (a,b) => {
+        const ix = Math.max(a.x, b.x);
+        const iy = Math.max(a.y, b.y);
+        const ax = Math.min(a.x + a.w, b.x + b.w);
+        const ay = Math.min(a.y + a.h, b.y + b.h);
+        const iw = Math.max(0, ax - ix);
+        const ih = Math.max(0, ay - iy);
+        const inter = iw * ih;
+        const uni = a.w * a.h + b.w * b.h - inter;
+        return uni <= 0 ? 0 : inter / uni;
+      };
+      const used = new Array(boxes.length).fill(false);
+      for (let i = 0; i < boxes.length; i++) {
+        if (used[i]) continue;
+        let base = { ...boxes[i] };
+        for (let j = i + 1; j < boxes.length; j++) {
+          if (used[j]) continue;
+          if (iou(base, boxes[j]) > 0.15) {
+            // merge
+            const nx = Math.min(base.x, boxes[j].x);
+            const ny = Math.min(base.y, boxes[j].y);
+            const ax = Math.max(base.x + base.w, boxes[j].x + boxes[j].w);
+            const ay = Math.max(base.y + base.h, boxes[j].y + boxes[j].h);
+            base = { x: nx, y: ny, w: ax - nx, h: ay - ny };
+            used[j] = true;
+          }
+        }
+        merged.push(base);
+      }
+
+      // sort top-to-bottom, left-to-right
+      merged.sort((a,b) => (a.y - b.y) || (a.x - b.x));
+
+      // convert to normalized bbox relative to naturalSize
+      const norm = merged.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+      return norm;
     } catch (err) {
-      console.error('Analyze failed', err);
-      const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to analyze form.';
-      toast.error(errorMsg);
+      console.error('detectFieldBoxes failed', err);
+      return [];
+    }
+  };
+
+  // Load saved forms from Dropbox
+  async function loadSavedForms() {
+    if (!checkGuestAccess('View Saved Forms')) return;
+    
+    setLoadingSavedForms(true);
+    try {
+      const result = await formStorageService.listForms({ limit: 100 });
+      setSavedForms(result.forms || []);
+    } catch (error) {
+      console.error('Failed to load saved forms:', error);
+      toast.error('Failed to load saved forms');
     } finally {
-      setLoading(false);
+      setLoadingSavedForms(false);
+    }
+  };
+
+  // Load a saved form
+  async function loadSavedForm(formData) {
+    try {
+      setLoading(true);
+      setShowSavedForms(false);
+      
+      toast.info('📥 Loading form...');
+      
+      // Get download link (backend proxy URL to avoid CORS)
+      const downloadUrl = await formStorageService.getDownloadLink(formData.formId);
+      
+      if (!downloadUrl) {
+        throw new Error('Failed to get download URL');
+      }
+      
+      console.log('Fetching from proxy URL:', downloadUrl);
+      
+      // Get auth token
+      const token = useAuthStore.getState().token;
+      
+      // Fetch the file through backend proxy (no CORS issues)
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        credentials: 'include', // Include auth cookies
+        headers: {
+          'Accept': '*/*',
+          'Authorization': token ? `Bearer ${token}` : ''
+        }
+      });
+      
+      if (!response.ok) {
+        console.error('Fetch failed:', response.status, response.statusText);
+        throw new Error(`Failed to fetch file: ${response.status} ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      
+      if (!blob || blob.size === 0) {
+        throw new Error('Downloaded file is empty');
+      }
+      
+      console.log('✅ Downloaded blob:', blob.size, 'bytes, type:', blob.type);
+      
+      // Ensure mime type is correct
+      const mimeType = formData.mimeType || blob.type || 'application/pdf';
+      
+      const fetchedFile = new File([blob], formData.originalFileName, { 
+        type: mimeType 
+      });
+      
+      console.log('✅ Created File object:', fetchedFile.name, fetchedFile.type, fetchedFile.size);
+      
+      // Load the file
+      setFile(fetchedFile);
+      const url = URL.createObjectURL(fetchedFile);
+      setImageUrl(url);
+      const pdfCheck = mimeType === 'application/pdf' || formData.originalFileName.toLowerCase().endsWith('.pdf');
+      setIsPdf(pdfCheck);
+      
+      console.log('Is PDF:', pdfCheck);
+      
+      if (pdfCheck) {
+        console.log('Rendering PDF to canvas...');
+        await renderPdfToCanvas(fetchedFile, 1);
+        console.log('✅ PDF rendered to canvas');
+        
+        try {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            setPdfArrayBuffer(ev.target.result);
+            console.log('✅ PDF array buffer loaded');
+          };
+          reader.readAsArrayBuffer(fetchedFile);
+        } catch (e) {
+          console.warn('Could not read pdf array buffer', e);
+        }
+      } else {
+        // For images, we need to wait for the image to load to get natural size
+        const img = new Image();
+        img.onload = () => {
+          setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+          console.log('✅ Image loaded, size:', img.naturalWidth, 'x', img.naturalHeight);
+        };
+        img.onerror = (err) => {
+          console.error('Failed to load image:', err);
+        };
+        img.src = url;
+      }
+      
+      // Load saved fields and values from backend
+      const hasFields = formData.fields && formData.fields.length > 0;
+      
+      if (hasFields) {
+        // Form already analyzed - load fields directly and start filling
+        setFields(formData.fields);
+        setFieldValues(formData.fieldValues || {});
+        setCurrentFormId(formData.formId);
+        setLanguage(formData.language || 'en');
+        
+        // Mark as initial values to avoid dirty flag
+        initialValuesRef.current = { 
+          fieldValues: formData.fieldValues || {}, 
+          simpleValues: {} 
+        };
+        
+        const statusMsg = formData.status === 'filled' || formData.status === 'completed' 
+          ? '✅ Form loaded! Continue filling or edit values.'
+          : '✅ Form loaded! Ready to fill.';
+        
+        toast.success(statusMsg);
+      } else {
+        // Form not analyzed yet - need to analyze
+        setCurrentFormId(formData.formId);
+        setLanguage(formData.language || 'en');
+        
+        toast.info('⏳ Form loaded. Click "Analyze" to detect fields, or start analysis will begin automatically...');
+        
+        // Auto-start analysis
+        setTimeout(() => {
+          toast.info('⏳ Starting analysis automatically...');
+          const { id } = formAnalysisService.startAnalysis(fetchedFile, formData.language || 'en');
+          setCurrentAnalysisId(id);
+          setLoading(true);
+        }, 1000);
+      }
+    } catch (error) {
+      console.error('Failed to load form:', error);
+      toast.error('Failed to load form: ' + (error.message || 'Unknown error'));
+    } finally {
+      if (formData.fields && formData.fields.length > 0) {
+        setLoading(false);
+      }
+    }
+  };
+
+  // Save current form progress and mark as done
+  async function saveFormProgress() {
+    if (!currentFormId) {
+      toast.error('No form loaded to save');
+      return;
+    }
+    
+    try {
+      await formStorageService.saveFilledValues(currentFormId, fieldValues);
+      toast.success('✅ Form completed and saved!');
+      setSelectedField(null); // Close the inspector
+      
+      // Refresh the saved forms list
+      if (savedForms.length > 0) {
+        await loadSavedForms();
+      }
+    } catch (error) {
+      console.error('Failed to save progress:', error);
+      toast.error('Failed to save progress');
+    }
+  };
+
+  // Delete a saved form
+  async function deleteSavedForm(formId) {
+    if (!window.confirm('Are you sure you want to delete this form?')) return;
+    
+    try {
+      await formStorageService.deleteForm(formId);
+      setSavedForms(prev => prev.filter(f => f.formId !== formId));
+      toast.success('Form deleted successfully');
+      
+      if (currentFormId === formId) {
+        // Clear current form if it was deleted
+        setCurrentFormId(null);
+        setFile(null);
+        setImageUrl(null);
+        setFields([]);
+        setFieldValues({});
+      }
+    } catch (error) {
+      console.error('Failed to delete form:', error);
+      toast.error('Failed to delete form');
     }
   };
 
@@ -746,7 +1113,7 @@ const FormAutoFill = () => {
     setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
   };
 
-  function scaleBbox(bbox) {
+  const scaleBbox = React.useCallback((bbox) => {
     if (!bbox) return null;
     const el = isPdf ? pdfCanvasRef.current : imgRef.current;
     if (!el) return null;
@@ -772,7 +1139,56 @@ const FormAutoFill = () => {
     }
 
     return { left, top, width, height };
-  };
+  }, [isPdf, naturalSize.w, naturalSize.h]);
+
+  // Image drag handlers
+  useEffect(() => {
+    if (!draggingImageFieldId) return;
+
+    const onImageMove = (ev) => {
+      const drag = imageDragRef.current;
+      if (!drag || !draggingImageFieldId) return;
+      
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      
+      // Get the field's position box to calculate relative movement
+      const field = fields.find(f => f.id === draggingImageFieldId);
+      if (!field) return;
+      
+      const pos = scaleBbox(field.bboxNorm);
+      if (!pos) return;
+      
+      // Convert pixel movement to percentage within the field
+      const deltaXPercent = (dx / pos.width) * 100;
+      const deltaYPercent = (dy / pos.height) * 100;
+      
+      const newX = Math.max(0, Math.min(100, drag.origX + deltaXPercent));
+      const newY = Math.max(0, Math.min(100, drag.origY + deltaYPercent));
+      
+      setFieldImagePositions(prev => ({
+        ...prev,
+        [draggingImageFieldId]: {
+          ...prev[draggingImageFieldId],
+          x: newX,
+          y: newY,
+          scale: prev[draggingImageFieldId]?.scale || 1
+        }
+      }));
+    };
+
+    const onImageUp = () => {
+      setDraggingImageFieldId(null);
+    };
+
+    document.addEventListener('mousemove', onImageMove);
+    document.addEventListener('mouseup', onImageUp);
+
+    return () => {
+      document.removeEventListener('mousemove', onImageMove);
+      document.removeEventListener('mouseup', onImageUp);
+    };
+  }, [draggingImageFieldId, fields, scaleBbox]);
 
   // --- pdf.js based label + thumbnail resolver ---
   async function resolveAllFieldLabels(fieldsList, pdfBuffer) {
@@ -985,52 +1401,99 @@ const FormAutoFill = () => {
 
   async function downloadFilled() {
     try {
+      if (!file) {
+        toast.error('No form loaded to download');
+        return;
+      }
+
+      if (fields.length === 0) {
+        toast.error('No fields detected. Please analyze the form first.');
+        return;
+      }
+
+      toast.info('📥 Preparing download...');
+
       // For PDFs: render each page to an offscreen canvas, draw only that page's values,
       // then assemble into a multi-page PDF. This avoids overlays from other pages
       // appearing on the wrong page (no overlap across pages).
       if (isPdf) {
-        if (!pdfRef.current) { toast.error('PDF not loaded'); return; }
-        const pdfDoc = pdfRef.current;
+        // Use existing PDF reference or array buffer
+        let pdfDoc = pdfRef.current;
+        
+        if (!pdfDoc && pdfArrayBuffer) {
+          // Try to reload from array buffer as fallback
+          try {
+            const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf');
+            
+            // Configure worker if not already set
+            if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+            }
+            
+            const loadingTask = pdfjsLib.getDocument({ 
+              data: pdfArrayBuffer,
+              useWorkerFetch: false,
+              isEvalSupported: false
+            });
+            pdfDoc = await loadingTask.promise;
+          } catch (error) {
+            console.error('Failed to load PDF:', error);
+            toast.error('Failed to load PDF for download');
+            return;
+          }
+        }
+        
+        if (!pdfDoc) {
+          toast.error('PDF not loaded. Please refresh and try again.');
+          return;
+        }
+
         const num = pdfDoc.numPages || totalPages || 1;
         const { jsPDF } = await import('jspdf');
 
         let pdfOut = null;
 
         for (let p = 1; p <= num; p++) {
-          // --- REFACTOR --- This loop correctly renders each page *fresh* from the original PDF
-          const page = await pdfDoc.getPage(p);
-          const viewport = page.getViewport({ scale: 1 });
-          const off = document.createElement('canvas');
-          off.width = Math.round(viewport.width);
-          off.height = Math.round(viewport.height);
-          const ctx = off.getContext('2d');
-          // 1. Render the clean PDF page
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          try {
+            // --- REFACTOR --- This loop correctly renders each page *fresh* from the original PDF
+            const page = await pdfDoc.getPage(p);
+            const viewport = page.getViewport({ scale: 1 });
+            const off = document.createElement('canvas');
+            off.width = Math.round(viewport.width);
+            off.height = Math.round(viewport.height);
+            const ctx = off.getContext('2d');
+            // 1. Render the clean PDF page
+            await page.render({ canvasContext: ctx, viewport }).promise;
 
-          // 2. Draw only values that belong to this page
-          fields.forEach(f => {
-            const fPage = f.page || 1;
-            if (fPage !== p) return;
-            const val = fieldValues[f.id];
-            if (val) drawTextOnCtx(ctx, f.bboxNorm, val);
-          });
+            // 2. Draw only values that belong to this page
+            fields.forEach(f => {
+              const fPage = f.page || 1;
+              if (fPage !== p) return;
+              const val = fieldValues[f.id];
+              if (val) drawTextOnCtx(ctx, f.bboxNorm, val);
+            });
 
-          const dataUrl = off.toDataURL('image/png');
+            const dataUrl = off.toDataURL('image/png');
 
-          if (!pdfOut) {
-            // initialize jsPDF with first page size
-            const orientation = off.width >= off.height ? 'l' : 'p';
-            pdfOut = new jsPDF({ orientation, unit: 'px', format: [off.width, off.height] });
-            pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
-          } else {
-            // add a new page with page-specific size
-            pdfOut.addPage([off.width, off.height], off.width >= off.height ? 'l' : 'p');
-            pdfOut.setPage(pdfOut.getNumberOfPages());
-            pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
+            if (!pdfOut) {
+              // initialize jsPDF with first page size
+              const orientation = off.width >= off.height ? 'l' : 'p';
+              pdfOut = new jsPDF({ orientation, unit: 'px', format: [off.width, off.height] });
+              pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
+            } else {
+              // add a new page with page-specific size
+              pdfOut.addPage([off.width, off.height], off.width >= off.height ? 'l' : 'p');
+              pdfOut.setPage(pdfOut.getNumberOfPages());
+              pdfOut.addImage(dataUrl, 'PNG', 0, 0, off.width, off.height);
+            }
+          } catch (pageError) {
+            console.error(`Error rendering page ${p}:`, pageError);
+            toast.error(`Failed to render page ${p}`);
           }
         }
 
   if (!pdfOut) { toast.error('No pages rendered'); return; }
+        
         const blob = pdfOut.output('blob');
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1040,6 +1503,8 @@ const FormAutoFill = () => {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
+        
+        toast.success('✅ Download complete!');
       } else {
         // image path: previous behavior (single page)
         // --- REFACTOR --- This now relies on `applyAllValuesToCanvas`
@@ -1060,6 +1525,8 @@ const FormAutoFill = () => {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
+        
+        toast.success('✅ Download complete!');
       }
 
       // mark as saved: update initial snapshot and clear dirty flag
@@ -1160,6 +1627,39 @@ const FormAutoFill = () => {
     setFieldValues(prev => ({ ...prev, [id]: value }));
   };
 
+  // Handle field image upload
+  async function handleFieldImageUpload(fieldId, file) {
+    if (!file || !currentFormId) return;
+    
+    try {
+      toast.info('📤 Uploading image...');
+      await formStorageService.uploadFieldImage(currentFormId, fieldId, file);
+      toast.success('✅ Image uploaded successfully!');
+      
+      // Refresh saved forms to get updated fieldImages
+      await loadSavedForms();
+    } catch (error) {
+      console.error('Failed to upload field image:', error);
+      toast.error('Failed to upload image: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  // Handle field image delete
+  async function handleDeleteFieldImage(fieldId) {
+    if (!currentFormId) return;
+    
+    try {
+      await formStorageService.deleteFieldImage(currentFormId, fieldId);
+      toast.success('✅ Image removed successfully!');
+      
+      // Refresh saved forms to get updated fieldImages
+      await loadSavedForms();
+    } catch (error) {
+      console.error('Failed to delete field image:', error);
+      toast.error('Failed to remove image: ' + (error.message || 'Unknown error'));
+    }
+  };
+
   async function exportValues() {
     const payload = Object.entries(fieldValues).map(([id, value]) => ({ id, value }));
     try {
@@ -1172,76 +1672,221 @@ const FormAutoFill = () => {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="mt-10 md:mt-0 text-2xl font-semibold">AutoFill Forms</h2>
-        {/* simulation mode removed - always uses backend APIs */}
-      </div>
-  <div className="mb-4 flex flex-wrap items-center gap-3">
-        <input type="file" accept="image/*,.pdf" onChange={onFileChange} />
-  <button onClick={() => setShowLanguageModal(true)} disabled={!file || loading} className="px-4 py-2 bg-blue-600 text-white rounded-md">{loading ? 'Analyzing...' : 'Analyze Form'}</button>
-      <button onClick={downloadFilled} disabled={!hasEdits} className={`px-4 py-2 rounded-md ${hasEdits ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>Download Filled</button>
-      <button onClick={createNewBox} disabled={!imageUrl && !isPdf} className="px-3 py-2 bg-indigo-600 text-white rounded">New Box</button>
-        {/* <button onClick={extractAcroFields} disabled={!file || loadingExtractSimple} className="px-4 py-2 bg-indigo-600 text-white rounded-md">{loadingExtractSimple ? 'Detecting fields...' : 'Detect AcroForm fields'}</button> */}
-        {/* Sample loader removed */}
-        {/* <button onClick={async () => {
-          const boxes = await detectFieldBoxes();
-          if (!boxes || boxes.length === 0) return alert('No candidate boxes detected');
-          // map detected boxes to current fields
-          setFields(prev => prev.map((f, i) => ({ ...f, bboxNorm: boxes[i] || f.bboxNorm })));
-        }} disabled={!imageUrl} className="px-3 py-2 bg-gray-200 rounded-md">Auto-detect boxes</button> */}
+    <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
+      {/* Header */}
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="mt-10 md:mt-0 text-xl sm:text-2xl font-semibold text-gray-900">AutoFill Forms</h2>
+          <p className="text-sm text-gray-600 mt-1">Upload, analyze, and fill forms automatically</p>
+        </div>
+        
+        {/* Navigation - View All Forms */}
+        {imageUrl && (
+          <button
+            onClick={async () => {
+              // Clear current form
+              setFile(null);
+              setImageUrl(null);
+              setFields([]);
+              setSelectedField(null);
+              setFieldValues({});
+              setCurrentFormId(null);
+              setIsPdf(false);
+              setPdfArrayBuffer(null);
+              if (pdfRef.current) {
+                try { await pdfRef.current.destroy(); } catch (e) {}
+                pdfRef.current = null;
+              }
+              // Show saved forms list
+              await loadSavedForms();
+              toast.info('Form closed. Select from saved forms below or upload a new one.');
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm shadow-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            View All Forms
+          </button>
+        )}
       </div>
 
-      {/* Language Selection Modal */}
-      {showLanguageModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
-            <h3 className="text-xl font-semibold mb-4">Select Language for Analysis</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Choose the language in which you want help with form filling and text-to-speech:
-            </p>
-            <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
-              {languages.map(lang => (
+      {/* Action Buttons */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
+        <button 
+          onClick={() => {
+            if (!checkGuestAccess('Upload Form')) return;
+            setShowUploadModal(true);
+          }} 
+          disabled={loading}
+          className="flex items-center gap-2 px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 text-sm sm:text-base shadow-sm"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          {loading ? 'Analyzing...' : 'Upload Form'}
+        </button>
+        <button 
+          onClick={downloadFilled} 
+          disabled={!hasEdits} 
+          className={`px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base shadow-sm ${
+            hasEdits ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          Download
+        </button>
+        <button 
+          onClick={createNewBox} 
+          disabled={!imageUrl && !isPdf} 
+          className="px-3 sm:px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base shadow-sm"
+        >
+          New Box
+        </button>
+      </div>
+
+      {/* Upload Form Modal - Compact */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900">Upload Form</h3>
                 <button
-                  key={lang.code}
                   onClick={() => {
-                    setLanguage(lang.code);
-                    setShowLanguageModal(false);
-                    analyze();
+                    setShowUploadModal(false);
+                    setSelectedFile(null);
                   }}
-                  className={`px-4 py-3 rounded-md border-2 text-left hover:bg-blue-50 transition-colors ${
-                    language === lang.code ? 'border-blue-600 bg-blue-50' : 'border-gray-200'
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                Upload and select language to analyze automatically
+              </p>
+            </div>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              {/* File Upload - Compact */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">
+                  Form Document *
+                </label>
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={onFileChange}
+                  className="hidden"
+                  id="form-file-input"
+                />
+                <label
+                  htmlFor="form-file-input"
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`flex items-center justify-center w-full px-3 py-4 border-2 border-dashed rounded-lg cursor-pointer transition-all ${
+                    isDragging 
+                      ? 'border-blue-500 bg-blue-100' 
+                      : 'border-gray-300 hover:border-blue-500 hover:bg-blue-50'
                   }`}
                 >
-                  <div className="font-medium">{lang.name}</div>
-                  <div className="text-xs text-gray-500">{lang.code.toUpperCase()}</div>
-                </button>
-              ))}
+                  <div className="text-center pointer-events-none">
+                    <svg className="w-8 h-8 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                    <p className="text-sm font-medium text-gray-900">
+                      {selectedFile ? selectedFile.name : 'Click or drag to upload'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      PDF, DOCX, PNG, JPG (Max 100MB)
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Language Selection - Compact Grid */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">
+                  Language *
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto p-1">
+                  {languages.map(lang => (
+                    <button
+                      key={lang.code}
+                      onClick={() => setLanguage(lang.code)}
+                      className={`px-2 py-2 rounded-lg border text-center hover:bg-blue-50 transition-colors ${
+                        language === lang.code ? 'border-blue-600 bg-blue-50 border-2' : 'border-gray-200'
+                      }`}
+                    >
+                      <div className="font-medium text-xs truncate">{lang.name}</div>
+                      <div className="text-[10px] text-gray-500">{lang.code.toUpperCase()}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <button
-              onClick={() => setShowLanguageModal(false)}
-              className="mt-4 w-full px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
-            >
-              Cancel
-            </button>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setSelectedFile(null);
+                }}
+                className="px-4 py-2 rounded-lg font-medium text-sm border border-gray-300 hover:border-gray-400 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleUploadAndAnalyze(language)}
+                disabled={!selectedFile}
+                className="px-4 py-2 rounded-lg font-medium text-sm bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Upload & Analyze
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row gap-6">
-        <div ref={containerRef} className="relative bg-gray-50 border rounded-md flex-1 max-w-full overflow-auto" style={{ maxHeight: 'calc(100vh - 150px)' }}>
-            {/* page navigation for multipage PDFs */}
+      <div className="flex flex-col lg:flex-row gap-3 sm:gap-4 md:gap-6">
+        {/* Form Preview */}
+        <div ref={containerRef} className="relative bg-white border border-gray-200 rounded-xl flex-1 max-w-full overflow-auto shadow-sm">
+            {/* Page navigation for multipage PDFs - Responsive */}
             {isPdf && totalPages > 1 && (
-              <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-white/80 p-1 rounded">
-                <button onClick={() => renderPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} className="px-2 py-1 bg-gray-100 rounded disabled:opacity-50">Prev</button>
-                <div className="text-sm px-2">Page {currentPage} / {totalPages}</div>
-                <button onClick={() => renderPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage >= totalPages} className="px-2 py-1 bg-gray-100 rounded disabled:opacity-50">Next</button>
-                <div className="flex items-center ml-2">
-                  <input type="number" min={1} max={totalPages} value={currentPage} onChange={(e) => {
+              <div className="sticky top-2 left-2 z-20 inline-flex items-center gap-1 sm:gap-2 bg-white/95 backdrop-blur-sm p-1.5 sm:p-2 rounded-lg shadow-md border border-gray-200">
+                <button 
+                  onClick={() => renderPage(Math.max(1, currentPage - 1))} 
+                  disabled={currentPage <= 1} 
+                  className="px-2 py-1 text-xs sm:text-sm bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Prev
+                </button>
+                <div className="text-xs sm:text-sm px-1 sm:px-2 font-medium">
+                  {currentPage} / {totalPages}
+                </div>
+                <button 
+                  onClick={() => renderPage(Math.min(totalPages, currentPage + 1))} 
+                  disabled={currentPage >= totalPages} 
+                  className="px-2 py-1 text-xs sm:text-sm bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+                <input 
+                  type="number" 
+                  min={1} 
+                  max={totalPages} 
+                  value={currentPage} 
+                  onChange={(e) => {
                     const v = Math.max(1, Math.min(totalPages, Number(e.target.value) || 1));
                     renderPage(v);
-                  }} className="w-16 px-2 py-1 border rounded text-sm" />
-                </div>
+                  }} 
+                  className="w-12 sm:w-14 px-1 sm:px-2 py-1 border rounded text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" 
+                />
               </div>
             )}
           {imageUrl ? (
@@ -1258,7 +1903,94 @@ const FormAutoFill = () => {
               <img ref={imgRef} src={imageUrl} alt="form" onLoad={onImageLoad} className="w-full h-auto block" />
             )
           ) : (
-            <div className="p-6 text-gray-400">Upload a form image or PDF to begin.</div>
+            <div className="p-6">
+              {/* Show saved forms in empty state */}
+              {!loadingSavedForms && savedForms.length > 0 ? (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900">My Saved Forms</h3>
+                    <button
+                      onClick={() => {
+                        if (!checkGuestAccess('Upload Form')) return;
+                        setShowUploadModal(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm shadow-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Upload New
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {savedForms.map((form) => (
+                      <div
+                        key={form.formId}
+                        className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-semibold text-gray-900 truncate" title={form.originalFileName}>
+                              {form.originalFileName}
+                            </h4>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {new Date(form.uploadedAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            form.status === 'completed' || form.status === 'filled'
+                              ? 'bg-green-100 text-green-800'
+                              : form.status === 'analyzed'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {form.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => loadSavedForm(form)}
+                            className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => deleteSavedForm(form.formId)}
+                            className="px-3 py-2 bg-red-50 text-red-600 text-sm rounded-lg hover:bg-red-100 transition-colors"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full py-12">
+                  <div className="text-center max-w-sm">
+                    <svg className="w-16 h-16 sm:w-20 sm:h-20 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <h3 className="text-base sm:text-lg font-semibold text-gray-700 mb-2">No Form Uploaded</h3>
+                    <p className="text-sm text-gray-500 mb-4">Upload a form to start analyzing and filling fields automatically</p>
+                    <button
+                      onClick={() => {
+                        if (!checkGuestAccess('Upload Form')) return;
+                        setShowUploadModal(true);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm shadow-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Upload Form
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* overlays */}
@@ -1271,9 +2003,31 @@ const FormAutoFill = () => {
             if (!bbox || !pos) return null;
             const displayLabel = f.label || f.label_text || f.id;
             
-            // --- REFACTOR --- Get the value from state to display in the overlay
+            // Get the value and image for this field
             const value = fieldValues[f.id];
+            const currentForm = savedForms.find(form => form.formId === currentFormId);
+            const fieldImage = currentForm?.fieldImages?.[f.id];
             const fontSize = Math.max(10, Math.min(18, Math.round(pos.height * 0.7))); // Auto-scale font
+            
+            // Get image position (default: centered at 50%, 50%)
+            const imgPos = fieldImagePositions[f.id] || { x: 50, y: 50, scale: 1 };
+            
+            // Use proxy URL for images to avoid CORS issues
+            const imageProxyUrl = fieldImage?.gcsUrl ? 
+              `/api/forms/${currentFormId}/field/${f.id}/image` : null;
+            
+            const startImageDrag = (e, fieldId) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setDraggingImageFieldId(fieldId);
+              const currentPos = fieldImagePositions[fieldId] || { x: 50, y: 50, scale: 1 };
+              imageDragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                origX: currentPos.x,
+                origY: currentPos.y
+              };
+            };
             
             return (
               <div 
@@ -1284,33 +2038,83 @@ const FormAutoFill = () => {
                   top: pos.top, 
                   width: pos.width, 
                   height: pos.height,
-                  // --- REFACTOR --- Highlight if selected
                   borderColor: (selectedField && selectedField.id === f.id) ? '#F59E0B' : '#60A5FA',
                   backgroundColor: (selectedField && selectedField.id === f.id) ? 'rgba(245, 158, 11, 0.1)' : 'rgba(96, 165, 250, 0.08)',
+                  overflow: 'visible', // Always allow overflow for images
+                  zIndex: imageProxyUrl ? 50 : 1 // Bring image fields to front
                 }} 
                 className="absolute border-2 text-xs hover:bg-blue-400/12 cursor-pointer rounded-sm" 
                 title={displayLabel}
               >
-                {/* --- REFACTOR --- show entered value as a DOM overlay */}
-                {value ? (
+                {/* Show uploaded image if exists */}
+                {imageProxyUrl ? (
+                  <div 
+                    className="absolute"
+                    onMouseDown={(e) => startImageDrag(e, f.id)}
+                    style={{ 
+                      cursor: draggingImageFieldId === f.id ? 'grabbing' : 'grab',
+                      left: `${imgPos.x - 50}%`,
+                      top: `${imgPos.y - 50}%`,
+                      minWidth: '150px',
+                      minHeight: '150px',
+                      width: 'auto',
+                      height: 'auto',
+                      maxWidth: 'none',
+                      maxHeight: 'none',
+                      transform: 'translate(-50%, -50%)',
+                      background: 'white',
+                      border: '3px solid #3B82F6',
+                      borderRadius: '8px',
+                      boxShadow: '0 8px 16px rgba(0, 0, 0, 0.2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      zIndex: 100
+                    }}
+                  >
+                    <img 
+                      src={imageProxyUrl}
+                      alt={displayLabel}
+                      draggable={false}
+                      onError={(e) => {
+                        console.error('Image load error for field:', f.id);
+                        e.target.parentElement.innerHTML = `<div style="color: red; font-size: 12px; text-align: center; padding: 10px;">❌<br/>Image Load Error</div>`;
+                      }}
+                      onLoad={(e) => {
+                        console.log('✓ Image loaded for field:', f.id);
+                      }}
+                      style={{ 
+                        minWidth: '140px',
+                        minHeight: '140px',
+                        maxWidth: '400px',
+                        maxHeight: '400px',
+                        width: 'auto',
+                        height: 'auto',
+                        objectFit: 'contain',
+                        pointerEvents: 'none',
+                        userSelect: 'none'
+                      }}
+                    />
+                  </div>
+                ) : value ? (
+                  /* Show entered text value as a DOM overlay */
                   <div 
                     className="pointer-events-none overflow-hidden text-left text-black" 
                     style={{ 
                       paddingLeft: '4px',
                       paddingRight: '4px',
-                      paddingTop: '2px', // Adjust padding for vertical centering
+                      paddingTop: '2px',
                       fontSize: fontSize, 
-                      lineHeight: 1.2, // Use line-height for better centering
+                      lineHeight: 1.2,
                       height: '100%',
                       display: 'flex',
-                      alignItems: 'center', // Vertical center
+                      alignItems: 'center',
                     }}
                   >
                     {String(value)}
                   </div>
                 ) : null}
-                {/* tiny label badge */}
-                {/* <div className="pointer-events-none absolute left-0 -top-5 bg-white/90 text-[0.5] text-gray-700 px-1 rounded">{displayLabel.length > 24 ? displayLabel.slice(0,24) + '…' : displayLabel}</div> */}
               </div>
              
             );
@@ -1349,8 +2153,9 @@ const FormAutoFill = () => {
           )}
         </div>
 
-  <div className="w-full md:w-1/3 bg-white border rounded-md p-4">
-          <h3 className="font-semibold mb-2">Field Inspector</h3>
+        {/* Field Inspector - Responsive */}
+        <div className="w-full lg:w-80 xl:w-96 bg-white border border-gray-200 rounded-xl p-3 sm:p-4 shadow-sm">
+          <h3 className="font-semibold text-base sm:text-lg mb-3 text-gray-900">Field Inspector</h3>
 
           {/* --- REFACTOR --- Cleaned up inspector logic --- */}
 
@@ -1481,6 +2286,37 @@ const FormAutoFill = () => {
                     </div>
                   </div>
 
+                  {/* Image Upload for Fields */}
+                  <div className="mb-3">
+                    <label className="text-xs text-gray-500 mb-2 block">Or Upload Image</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => handleFieldImageUpload(selectedField.id, e.target.files[0])}
+                        className="hidden"
+                        id={`field-image-${selectedField.id}`}
+                      />
+                      <label
+                        htmlFor={`field-image-${selectedField.id}`}
+                        className="flex-1 px-3 py-2 bg-indigo-50 border-2 border-dashed border-indigo-300 rounded-lg cursor-pointer hover:bg-indigo-100 transition-colors text-center text-sm text-indigo-700"
+                      >
+                        📷 Upload Image (e.g., Photo, Signature)
+                      </label>
+                    </div>
+                    {savedForms.find(f => f.formId === currentFormId)?.fieldImages?.[selectedField.id] && (
+                      <div className="mt-2 flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded">
+                        <span className="text-sm text-green-700">✓ Image uploaded</span>
+                        <button
+                          onClick={() => handleDeleteFieldImage(selectedField.id)}
+                          className="ml-auto px-2 py-1 bg-red-50 text-red-600 text-xs rounded hover:bg-red-100"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="mb-3">
                     
                     {suggestions && suggestions.length > 0 && (
@@ -1496,11 +2332,21 @@ const FormAutoFill = () => {
                   </div>
 
                   <div className="flex items-center justify-between">
-                    {/* --- REFACTOR --- "Done" button just closes the inspector */}
-                    <button onClick={() => setSelectedField(null)} className="px-3 py-2 bg-gray-100 rounded">Done</button>
+                    {/* Done button saves progress and marks form as completed */}
+                    <button 
+                      onClick={() => saveFormProgress()} 
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                    >
+                      ✓ Done
+                    </button>
                     <div className="flex items-center gap-2">
                       {/* <button onClick={() => exportValues()} className="px-3 py-2 bg-blue-600 text-white rounded">Export All</button> */}
-                      <button onClick={() => downloadFilled()} className="px-3 py-2 bg-green-700 text-white rounded">Download Filled</button>
+                      <button 
+                        onClick={() => downloadFilled()} 
+                        className="px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg font-medium transition-colors"
+                      >
+                        Download Filled
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1521,6 +2367,116 @@ const FormAutoFill = () => {
 
         </div>
       </div>
+
+      {/* Saved Forms Modal */}
+      {showSavedForms && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-4xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900">My Saved Forms</h3>
+                <button
+                  onClick={() => setShowSavedForms(false)}
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                All your forms are securely stored in the cloud
+              </p>
+            </div>
+
+            {/* Content */}
+            <div className="p-4">
+              {loadingSavedForms ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                </div>
+              ) : savedForms.length === 0 ? (
+                <div className="text-center py-12">
+                  <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h4 className="text-lg font-semibold text-gray-700 mb-2">No Forms Yet</h4>
+                  <p className="text-sm text-gray-500">Upload a form to get started</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {savedForms.map((form) => (
+                    <div key={form.formId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-semibold text-gray-900 truncate">{form.originalFileName}</h4>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Uploaded {new Date(form.uploadedAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          form.status === 'completed' ? 'bg-green-100 text-green-700' :
+                          form.status === 'filled' ? 'bg-blue-100 text-blue-700' :
+                          form.status === 'analyzed' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {form.status}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 text-xs text-gray-600 mb-3">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                        </svg>
+                        <span>{form.fields?.length || 0} fields</span>
+                        <span>•</span>
+                        <span>{(form.fileSize / 1024).toFixed(1)} KB</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => loadSavedForm(form)}
+                          className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
+                        >
+                          Load
+                        </button>
+                        {form.status === 'completed' && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const url = await formStorageService.getFilledDownloadLink(form.formId);
+                                await formStorageService.downloadFile(url, `filled_${form.originalFileName}`);
+                                toast.success('Download started');
+                              } catch (error) {
+                                console.error('Download failed:', error);
+                                toast.error('Download failed');
+                              }
+                            }}
+                            className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs font-medium"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteSavedForm(form.formId)}
+                          className="px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-xs font-medium"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <GuestAccessModal
         isOpen={showGuestModal}

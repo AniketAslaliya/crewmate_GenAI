@@ -47,12 +47,44 @@ const RecentActivity = ({ maxItems = 4 }) => {
 
         if (reqRes.status === 'fulfilled') {
           const rs = reqRes.value.data.requests || [];
-          rs.forEach(r => out.push({ key: `req-${r._id}`, title: r.from?.name ? `Request from ${r.from.name}` : 'Incoming request', desc: sanitize(r.message || ''), date: r.createdAt || r.updatedAt, route: isLawyer ? '/lawyer/requests' : '/find-lawyer' }));
+          rs.forEach(r => {
+            let title = 'Connection request';
+            if (isLawyer) {
+              // Lawyer receiving request from client
+              title = r.from?.name ? `Incoming request from ${r.from.name}` : 'Incoming client request';
+            } else {
+              // User viewing their own sent requests
+              title = r.to?.name ? `Your request to ${r.to.name}` : 'Your connection request';
+            }
+            out.push({ 
+              key: `req-${r._id}`, 
+              title, 
+              desc: sanitize(r.message || ''), 
+              date: r.createdAt || r.updatedAt, 
+              route: isLawyer ? '/lawyer/requests' : '/find-lawyer' 
+            });
+          });
         }
 
         if (connRes.status === 'fulfilled') {
           const cs = connRes.value.data.connections || [];
-          cs.forEach(c => out.push({ key: `conn-${c._id}`, title: c.from?.name ? (isLawyer ? `Connected with ${c.from.name}` : `Connection with ${c.to?.name || 'a lawyer'}`) : 'Connection', desc: sanitize(c.chat?.title || ''), date: c.updatedAt || c.createdAt, route: `/chats/${c.chat?._id || c._id}` }));
+          cs.forEach(c => {
+            let title = 'Connection';
+            if (isLawyer) {
+              // Lawyer viewing connection with client
+              title = c.from?.name ? `Connected with client ${c.from.name}` : 'Client connection';
+            } else {
+              // User viewing connection with lawyer
+              title = c.to?.name ? `Connected with lawyer ${c.to.name}` : 'Lawyer connection';
+            }
+            out.push({ 
+              key: `conn-${c._id}`, 
+              title, 
+              desc: sanitize(c.chat?.title || ''), 
+              date: c.updatedAt || c.createdAt, 
+              route: `/chats/${c.chat?._id || c._id}` 
+            });
+          });
         }
 
         if (chatsRes.status === 'fulfilled') {

@@ -1,18 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import useAuthStore from '../context/AuthContext';
 import api from '../Axios/axios';
 import { useToast } from '../components/ToastProvider';
-import { MdEdit, MdSave, MdCancel, MdPerson, MdEmail, MdPhone, MdLocationOn } from 'react-icons/md';
+import { MdEdit, MdSave, MdCancel, MdPerson, MdEmail, MdPhone, MdLocationOn, MdCameraAlt, MdDelete } from 'react-icons/md';
+import { uploadProfileImage, deleteProfileImage } from '../services/profileService';
 
 const Profile = () => {
   const authUser = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
   const toast = useToast();
+  const fileInputRef = useRef(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -228,6 +231,62 @@ const Profile = () => {
     setPasswordErrors({});
   };
 
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Please upload a valid image (JPEG, PNG, or GIF)');
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image size should be less than 5MB');
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      const response = await uploadProfileImage(file);
+      // Update user in auth store
+      setUser({ ...authUser, profileImage: response.profileImage });
+      toast.success('Profile image updated successfully!');
+    } catch (error) {
+      console.error('Image upload error:', error);
+      toast.error(error.message || 'Failed to upload image');
+    } finally {
+      setUploadingImage(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleImageDelete = async () => {
+    if (!authUser?.profileImage) return;
+    
+    if (!window.confirm('Are you sure you want to delete your profile image?')) {
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      await deleteProfileImage();
+      // Update user in auth store
+      setUser({ ...authUser, profileImage: null });
+      toast.success('Profile image deleted successfully!');
+    } catch (error) {
+      console.error('Image delete error:', error);
+      toast.error(error.message || 'Failed to delete image');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
@@ -274,10 +333,10 @@ const Profile = () => {
           <div className="p-6 space-y-6">
             {/* Profile Picture Section */}
             <div className="flex items-center gap-6 pb-6 border-b border-gray-200">
-              <div className="relative">
-                {authUser?.picture ? (
+              <div className="relative group">
+                {authUser?.profileImage?.gcsUrl || authUser?.picture ? (
                   <img
-                    src={authUser.picture}
+                    src={authUser?.profileImage?.gcsUrl || authUser.picture}
                     alt={authUser.name}
                     className="w-24 h-24 rounded-full object-cover border-4 border-blue-100"
                   />
@@ -286,10 +345,43 @@ const Profile = () => {
                     {authUser?.name?.charAt(0)?.toUpperCase() || 'U'}
                   </div>
                 )}
+                {/* Upload/Edit Overlay */}
+                <div className="absolute inset-0 rounded-full bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-all duration-200 flex items-center justify-center">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/gif"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    disabled={uploadingImage}
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingImage}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity bg-white text-blue-600 rounded-full p-2 hover:bg-blue-50 disabled:opacity-50"
+                    title="Change profile picture"
+                  >
+                    <MdCameraAlt className="text-xl" />
+                  </button>
+                </div>
+                {/* Delete button (only if custom image exists) */}
+                {authUser?.profileImage?.gcsUrl && (
+                  <button
+                    onClick={handleImageDelete}
+                    disabled={uploadingImage}
+                    className="absolute -bottom-1 -right-1 bg-red-500 text-white rounded-full p-1.5 hover:bg-red-600 transition-colors disabled:opacity-50"
+                    title="Delete profile picture"
+                  >
+                    <MdDelete className="text-sm" />
+                  </button>
+                )}
               </div>
               <div className="flex-1">
                 <h2 className="text-xl font-bold text-gray-800">{authUser?.name}</h2>
                 <p className="text-gray-600 text-sm mt-1">{authUser?.email}</p>
+                {uploadingImage && (
+                  <p className="text-blue-600 text-xs mt-1 animate-pulse">Uploading image...</p>
+                )}
                 <div className="flex items-center gap-2 mt-2">
                   <span className={`text-xs px-3 py-1 rounded-full font-medium ${
                     authUser?.role === 'admin' ? 'bg-purple-100 text-purple-700' :

@@ -264,6 +264,23 @@ const Home = () => {
                   <li>• Chat for quick legal clarifications before contacting a lawyer.</li>
                 </ul>
               </div>
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="text-sm font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                  Need Help?
+                </h4>
+                <p className="text-xs text-blue-800 mb-3">
+                  Check our comprehensive support center for guides, FAQs, and direct assistance.
+                </p>
+                <button
+                  onClick={() => navigate('/support')}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-3 rounded-lg transition-colors"
+                >
+                  Visit Support Center
+                </button>
+              </div>
             </aside>
           </div>
         </div>

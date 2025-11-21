@@ -332,7 +332,15 @@ const ChatView = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <InitialAvatar name={conn?.peer?.name} className="w-9 h-9 rounded-full border-2 border-blue-100 shadow-sm flex-shrink-0" />
+            {conn?.peer?.profileImage?.gcsUrl || conn?.peer?.picture ? (
+              <img
+                src={conn?.peer?.profileImage?.gcsUrl || conn?.peer?.picture}
+                alt={conn?.peer?.name}
+                className="w-9 h-9 rounded-full border-2 border-blue-100 shadow-sm flex-shrink-0 object-cover"
+              />
+            ) : (
+              <InitialAvatar name={conn?.peer?.name} className="w-9 h-9 rounded-full border-2 border-blue-100 shadow-sm flex-shrink-0" />
+            )}
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-gray-900 truncate">{conn?.peer?.name}</div>
               <div className="text-xs text-gray-500 truncate">{conn?.peer?.specialties || (isLawyer ? 'Client' : 'Lawyer')}</div>
@@ -471,7 +479,15 @@ const ChatView = () => {
       <div className="h-full flex flex-col bg-[var(--bg)] overflow-hidden">
         {/* Fixed Header */}
         <div className="flex-none p-4 border-b flex items-center gap-3 bg-gradient-to-r from-blue-50 to-indigo-50 z-10" style={{borderColor:'var(--border)'}}>
-          <InitialAvatar name={user?.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+          {user?.profileImage?.gcsUrl || user?.picture ? (
+            <img
+              src={user?.profileImage?.gcsUrl || user?.picture}
+              alt={user?.name}
+              className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0 object-cover"
+            />
+          ) : (
+            <InitialAvatar name={user?.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+          )}
           <div>
             <div className="font-semibold text-gray-900">{user?.name}</div>
             <div className="text-xs text-gray-600 font-medium">{isLawyer ? '⚖️ Lawyer' : '👤 Helpseeker'}</div>
@@ -541,7 +557,7 @@ const ChatView = () => {
               </p>
               {!isLawyer && (
                 <button
-                  onClick={() => navigate('/findlawyer')}
+                  onClick={() => navigate('/find-lawyer')}
                   className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg text-sm"
                 >
                   Find Lawyers
@@ -549,7 +565,7 @@ const ChatView = () => {
               )}
               {isLawyer && (
                 <button
-                  onClick={() => navigate('/lawyer-requests')}
+                  onClick={() => navigate('/lawyer/requests')}
                   className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg text-sm"
                 >
                   View Requests
@@ -563,7 +579,15 @@ const ChatView = () => {
                 onClick={()=>openChat(c.chat)} 
                 className="p-3 border-b hover:bg-gray-50 active:bg-gray-100 cursor-pointer flex items-center gap-3 transition-all"
               >
-                <InitialAvatar name={c.peer?.name} className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+                {c.peer?.profileImage?.gcsUrl || c.peer?.picture ? (
+                  <img
+                    src={c.peer?.profileImage?.gcsUrl || c.peer?.picture}
+                    alt={c.peer?.name}
+                    className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0 object-cover"
+                  />
+                ) : (
+                  <InitialAvatar name={c.peer?.name} className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+                )}
                 <div className="flex-1 min-w-0 flex items-center justify-between">
                   <h4 className="font-semibold text-gray-900 truncate">{c.peer?.name || 'Unknown'}</h4>
                   {c.unread > 0 && (
@@ -594,7 +618,15 @@ const ChatView = () => {
           {/* Conversations list (left) */}
           <div className="flex w-80 border-r flex-col min-h-0 h-full bg-[var(--panel)]" style={{borderColor:'var(--palette-3)'}}>
             <div className="p-4 border-b flex items-center gap-3 bg-gradient-to-r from-blue-50 to-indigo-50" style={{borderColor:'var(--border)'}}>
-      <InitialAvatar name={user?.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />
+      {user?.profileImage?.gcsUrl || user?.picture ? (
+        <img
+          src={user?.profileImage?.gcsUrl || user?.picture}
+          alt={user?.name}
+          className="w-10 h-10 rounded-full border-2 border-white shadow-sm object-cover"
+        />
+      ) : (
+        <InitialAvatar name={user?.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />
+      )}
           <div>
             <div className="font-semibold text-gray-900">{user?.name}</div>
             <div className="text-xs text-gray-600 font-medium">{isLawyer ? '⚖️ Lawyer' : '👤 Helpseeker'}</div>
@@ -660,7 +692,7 @@ const ChatView = () => {
               </p>
               {!isLawyer && (
                 <button
-                  onClick={() => navigate('/findlawyer')}
+                  onClick={() => navigate('/find-lawyer')}
                   className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
                 >
                   Find Lawyers
@@ -668,7 +700,7 @@ const ChatView = () => {
               )}
               {isLawyer && (
                 <button
-                  onClick={() => navigate('/lawyer-requests')}
+                  onClick={() => navigate('/lawyer/requests')}
                   className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
                 >
                   View Requests
@@ -684,7 +716,15 @@ const ChatView = () => {
                   c.chat===activeChat ? 'bg-[var(--palette-4)] border-l-4 border-l-blue-600' : 'border-l-4 border-l-transparent'
                 }`}
               >
-                <InitialAvatar name={c.peer?.name} className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+                {c.peer?.profileImage?.gcsUrl || c.peer?.picture ? (
+                  <img
+                    src={c.peer?.profileImage?.gcsUrl || c.peer?.picture}
+                    alt={c.peer?.name}
+                    className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0 object-cover"
+                  />
+                ) : (
+                  <InitialAvatar name={c.peer?.name} className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
+                )}
                 <div className="flex-1 min-w-0 flex items-center justify-between">
                   <h4 className="font-semibold text-[var(--text)] truncate">{c.peer?.name || 'Unknown'}</h4>
                   {c.unread > 0 && (
@@ -708,7 +748,15 @@ const ChatView = () => {
               const conn = connections.find(x=>x.chat===activeChat);
               return (
                   <>
-                  <InitialAvatar name={conn?.peer?.name} className="w-10 h-10 rounded-full border-2 border-blue-100 shadow-sm" />
+                  {conn?.peer?.profileImage?.gcsUrl || conn?.peer?.picture ? (
+                    <img
+                      src={conn?.peer?.profileImage?.gcsUrl || conn?.peer?.picture}
+                      alt={conn?.peer?.name}
+                      className="w-10 h-10 rounded-full border-2 border-blue-100 shadow-sm object-cover"
+                    />
+                  ) : (
+                    <InitialAvatar name={conn?.peer?.name} className="w-10 h-10 rounded-full border-2 border-blue-100 shadow-sm" />
+                  )}
                   <div>
                     <div className="font-semibold text-gray-900">{conn?.peer?.name}</div>
                     <div className="text-xs text-gray-500">{conn?.peer?.specialties || (isLawyer ? 'Client' : 'Lawyer')}</div>

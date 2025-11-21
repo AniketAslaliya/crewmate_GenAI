@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import useAuthStore from "../context/AuthContext";
 import { formatDisplayName } from '../utils/name';
 // icons: outline vs filled for selected state
-import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdSearch, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb, MdAdminPanelSettings, MdOutlineAdminPanelSettings } from 'react-icons/md';
+import { MdOutlineHome, MdHome, MdOutlineDescription, MdDescription, MdOutlinePerson, MdPerson, MdOutlineAddCircle, MdAddCircle, MdOutlineNotifications, MdNotifications, MdChevronLeft, MdChevronRight, MdLightbulb, MdOutlineLightbulb, MdAdminPanelSettings, MdOutlineAdminPanelSettings } from 'react-icons/md';
 import InitialAvatar from './InitialAvatar';
 import useIsMobile from '../hooks/useIsMobile';
 import { MdOutlineDocumentScanner } from "react-icons/md";
@@ -159,17 +159,25 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
             </div>
           )}
           
-          <div className="flex items-center gap-3">
-            <InitialAvatar name={authUser?.name} className="w-10 h-10 rounded-md" />
+          <div className={`flex items-center ${isOpen ? 'gap-3' : 'justify-center'}`}>
+            {authUser?.profileImage?.gcsUrl || authUser?.picture ? (
+              <img
+                src={authUser?.profileImage?.gcsUrl || authUser.picture}
+                alt={authUser.name}
+                className={`${isOpen ? 'w-10 h-10' : 'w-[50px] h-[30px]'} rounded-md object-cover flex-shrink-0`}
+              />
+            ) : (
+              <InitialAvatar name={authUser?.name} className={`${isOpen ? 'w-10 h-10' : 'w-[50px] h-[30px]'} rounded-md flex-shrink-0`} />
+            )}
             {isOpen && (
-              <div className="flex-1">
-                <div className="text-sm font-medium text-primary">{formatDisplayName(authUser?.name) || 'Guest'}</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-primary truncate">{formatDisplayName(authUser?.name) || 'Guest'}</div>
                 <div className="flex items-center gap-2">
-                  <div className="text-xs text-primary/60">
+                  <div className="text-xs text-primary/60 truncate">
                     {isGuest ? ' Guest' : authUser?.role === 'admin' ? 'Admin' : authUser?.role === 'lawyer' ? (isOnboarded ? 'Lawyer' : 'Lawyer') : (authUser?.role ? 'Helpseeker' : 'Guest')}
                   </div>
                   {authUser?.role === 'lawyer' && isOnboarded && authUser?.verificationStatus && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${
                       authUser.verificationStatus === 'pending' ? 'bg-yellow-100 text-yellow-700' :
                       authUser.verificationStatus === 'approved' ? 'bg-green-100 text-green-700' :
                       'bg-red-100 text-red-700'
@@ -184,17 +192,28 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
             )}
           </div>
           
-          {/* Profile Button - Hidden for guests */}
+          {/* Profile & Support Buttons - Hidden for guests */}
           {isOpen && !isGuest && (
-            <button
-              onClick={() => navigate('/profile')}
-              className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md transition-colors text-sm font-medium"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-              View Profile
-            </button>
+            <>
+              <button
+                onClick={() => navigate('/profile')}
+                className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md transition-colors text-sm font-medium"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+                View Profile
+              </button>
+              <button
+                onClick={() => navigate('/support')}
+                className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-600 rounded-md transition-colors text-sm font-medium"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+                Support
+              </button>
+            </>
           )}
         </div>
 

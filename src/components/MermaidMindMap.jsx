@@ -12,27 +12,56 @@ const MermaidMindMap = ({ chartCode }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
-    // 1. Initialize Mermaid with updated config
+    // 1. Initialize Mermaid with updated config - Custom color palette
     mermaid.initialize({
       startOnLoad: false,
       theme: 'default',
       securityLevel: 'loose',
       logLevel: 'debug',
       mindmap: {
-        padding: 50,
-        maxNodeWidth: 200,
-        useMaxWidth: false,
+        padding: 20,
+        maxNodeWidth: 150,
+        useMaxWidth: true,
       },
       themeVariables: {
-        primaryColor: '#3B82F6',
-        primaryTextColor: '#fff',
-        primaryBorderColor: '#2563EB',
-        lineColor: '#6366F1',
-        secondaryColor: '#10B981',
-        tertiaryColor: '#F59E0B',
+        // Root node - Deep purple (#3d315b) with white text
+        primaryColor: '#3d315b',
+        primaryTextColor: '#FFFFFF',
+        primaryBorderColor: '#2a2240',
+        
+        // Connecting lines - Medium purple-gray
+        lineColor: '#444b6e',
+        
+        // Level 1 nodes - Dark slate blue (#444b6e) with white text
+        secondaryColor: '#444b6e',
+        secondaryTextColor: '#FFFFFF',
+        secondaryBorderColor: '#363b56',
+        
+        // Level 2 nodes - Sage green (#708b75) with white text
+        tertiaryColor: '#708b75',
+        tertiaryTextColor: '#FFFFFF',
+        tertiaryBorderColor: '#5d7360',
+        
+        // Additional levels - Light green and yellow-green
+        node0Fill: '#9ab87a',
+        node0TextColor: '#1F2937',
+        node1Fill: '#3d315b',
+        node1TextColor: '#FFFFFF',
+        node2Fill: '#708b75',
+        node2TextColor: '#FFFFFF',
+        node3Fill: '#444b6e',
+        node3TextColor: '#FFFFFF',
+        
+        // Default node colors
+        nodeBorder: '#3d315b',
+        mainBkg: '#9ab87a',
+        textColor: '#1F2937',
+        
+        // Text and backgrounds
         noteTextColor: '#1F2937',
-        noteBkgColor: '#F3F4F6',
+        noteBkgColor: '#f8f991',
         fontSize: '16px',
+        fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
       },
     });
 
@@ -99,7 +128,32 @@ const MermaidMindMap = ({ chartCode }) => {
 
         // Render the sanitized code into SVG
         const { svg } = await mermaid.render(uniqueId, sanitizedCode);
-        setSvgContent(svg);
+        
+        // Process SVG to ensure it's responsive and fits container
+        const parser = new DOMParser();
+        const svgDoc = parser.parseFromString(svg, 'image/svg+xml');
+        const svgElement = svgDoc.querySelector('svg');
+        
+        if (svgElement) {
+          // Remove fixed width/height, use viewBox for responsiveness
+          const width = svgElement.getAttribute('width');
+          const height = svgElement.getAttribute('height');
+          
+          if (width && height) {
+            svgElement.setAttribute('viewBox', `0 0 ${width} ${height}`);
+          }
+          
+          svgElement.removeAttribute('width');
+          svgElement.removeAttribute('height');
+          svgElement.setAttribute('style', 'max-width: 100%; height: auto;');
+          
+          const serializer = new XMLSerializer();
+          const processedSvg = serializer.serializeToString(svgElement);
+          setSvgContent(processedSvg);
+        } else {
+          setSvgContent(svg);
+        }
+        
         setIsLoading(false);
         
       } catch (error) {
@@ -178,7 +232,7 @@ const MermaidMindMap = ({ chartCode }) => {
   }
 
   return (
-    <div className="w-full h-full max-w-full bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg shadow-sm border border-gray-200 relative overflow-hidden">
+    <div className="w-full h-full max-w-full bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 rounded-lg shadow-sm border border-gray-200 relative overflow-hidden">
       {/* Zoom Controls */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 bg-white rounded-lg shadow-lg p-2 border border-gray-300">
         <button
@@ -215,9 +269,9 @@ const MermaidMindMap = ({ chartCode }) => {
 
       {/* Mind Map Container */}
       <div 
-        className="w-full h-full max-w-full overflow-hidden flex items-center justify-center"
+        className="w-full h-full overflow-hidden flex items-center justify-center"
         style={{ 
-          minHeight: '600px',
+          minHeight: '500px',
           maxHeight: '600px',
           cursor: isDragging ? 'grabbing' : 'grab',
         }}
@@ -230,11 +284,16 @@ const MermaidMindMap = ({ chartCode }) => {
         <div 
           ref={containerRef}
           dangerouslySetInnerHTML={{ __html: svgContent }} 
-          className="mermaid-chart transition-transform duration-100 max-w-full"
+          className="mermaid-chart transition-transform duration-100"
           style={{ 
             transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
             transformOrigin: 'center center',
             userSelect: 'none',
+            maxWidth: '100%',
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
           }}
         />
       </div>

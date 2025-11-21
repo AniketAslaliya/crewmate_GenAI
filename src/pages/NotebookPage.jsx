@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import ReactMarkdown from 'react-markdown';
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
+import useNotebookStore from "../context/NotebookStore";
+import { sanitizeTextInput, checkRateLimit } from "../utils/inputSecurity";
 import Timeline from "../components/Timeline";
 import MermaidMindMap from "../components/MermaidMindMap";
 import PredictiveDisplay from '../components/PredictiveDisplay';
@@ -14,7 +17,7 @@ import { FaComments, FaFileAlt, FaQuestionCircle, FaHistory, FaMagic, FaArrowLef
 import renderBold from "../utils/renderBold";
 import { useToast } from "../components/ToastProvider";
 
-const synthesis = window.speechSynthesis;
+// Removed: const synthesis = window.speechSynthesis; (using API-based TTS instead)
 
 const DarkBackground = () => (
   <div className="absolute inset-0 -z-10 bg-[var(--panel)]">
@@ -146,19 +149,22 @@ const NotebookPage = (props) => {
   const [followUpQuestions, setFollowUpQuestions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const chatEndRef = useRef(null);
-  const featureAbortRef = useRef(null);
-  const [storedData, setStoredData] = useState({});
+  
+  // Zustand store for caching feature responses
+  const getCachedFeature = useNotebookStore((state) => state.getCachedFeature);
+  const setCachedFeature = useNotebookStore((state) => state.setCachedFeature);
   const [featureData, setFeatureData] = useState({
-    chat: { title: "Chat", icon: <FaComments />, content: null },
-    summary: { title: "Summary", icon: <FaFileAlt />, content: null },
-    questions: { title: "Questions", icon: <FaQuestionCircle />, content: null },
-    timeline: { title: "Timeline", icon: <FaHistory />, content: null },
-    predictive: { title: "Predictive", icon: <FaMagic />, content: null },
-    'case-law': { title: "Case Law", icon: <FaGavel />, content: null },
+    chat: { title: "Chat", icon: <FaComments />, content: null, tooltip: "Interactive Q&A with your legal document" },
+    summary: { title: "Summary", icon: <FaFileAlt />, content: null, tooltip: "Comprehensive summary and key insights" },
+    questions: { title: "Questions", icon: <FaQuestionCircle />, content: null, tooltip: "AI-generated questions to explore your document" },
+    timeline: { title: "Timeline", icon: <FaHistory />, content: null, tooltip: "Chronological events and important dates" },
+    predictive: { title: "Predictive", icon: <FaMagic />, content: null, tooltip: "Predicted outcomes based on document analysis" },
+    'case-law': { title: "Case Law", icon: <FaGavel />, content: null, tooltip: "Relevant case law and legal precedents" },
   });
   const [predictiveLang] = useState('en');
   const [timelineView, setTimelineView] = useState('date'); // 'date', 'event', 'mindmap'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // mobile feature panel
+  const currentRequestRef = useRef({}); // Track current request IDs to prevent race conditions
 
   const languages = [
     { label: 'English', code: 'en' },
@@ -243,27 +249,92 @@ const NotebookPage = (props) => {
     requestMicrophonePermission();
   }, [toast]);
 
-  const handleToggleSpeech = (msg) => {
+  const currentAudioRef = useRef(null);
+
+  // Helper function to strip markdown and get plain text for TTS
+  const stripMarkdown = (text) => {
+    if (!text) return '';
+    return text
+      .replace(/#{1,6}\s+/g, '') // Remove headers
+      .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
+      .replace(/\*(.+?)\*/g, '$1') // Remove italic
+      .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links, keep text
+      .replace(/`(.+?)`/g, '$1') // Remove inline code
+      .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+      .replace(/^>\s+/gm, '') // Remove blockquotes
+      .replace(/^[-*+]\s+/gm, '') // Remove list markers
+      .replace(/^\d+\.\s+/gm, '') // Remove numbered list markers
+      .trim();
+  };
+
+  const handleToggleSpeech = async (msg) => {
+    // If already speaking this message, stop it
     if (isSpeaking && speakingMessageId === msg._id) {
-      synthesis.cancel();
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      }
       setIsSpeaking(false);
       setSpeakingMessageId(null);
-    } else {
-      if (synthesis.speaking) {
-        synthesis.cancel();
-      }
-      const utterance = new SpeechSynthesisUtterance(msg.content);
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        setSpeakingMessageId(null);
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        setSpeakingMessageId(null);
-      };
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+    }
+
+    try {
       setSpeakingMessageId(msg._id);
       setIsSpeaking(true);
-      synthesis.speak(utterance);
+
+      // Strip markdown for TTS
+      const plainText = stripMarkdown(msg.content);
+
+      // Call the TTS API
+      const response = await papi.post('/api/speak', 
+        { text: plainText, language: selectedLang.slice(0, 2) },
+        { 
+          responseType: 'blob',
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+
+      if (!response.data) throw new Error("TTS failed");
+
+      // Create audio from blob
+      const audioBlob = response.data;
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      
+      currentAudioRef.current = audio;
+
+      audio.onended = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+        currentAudioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        setSpeakingMessageId(null);
+        URL.revokeObjectURL(audioUrl);
+        currentAudioRef.current = null;
+      };
+
+      audio.play();
+
+    } catch (error) {
+      console.error("Error playing audio:", error);
+      setIsSpeaking(false);
+      setSpeakingMessageId(null);
+      try {
+        toast.error("Failed to play audio. Please try again.");
+      } catch (e) {
+        console.error("Toast error:", e);
+      }
     }
   };
 
@@ -271,15 +342,34 @@ const NotebookPage = (props) => {
     if (content === null || content === undefined) return null;
     if (typeof content !== 'string') return String(content);
 
-    const parts = content.split(/(\*\*(?:[\s\S]*?)\*\*)/g);
+    // Remove <answer> tags from content
+    const cleanedContent = content.replace(/<\/?answer>/gi, '');
 
-    return parts.map((part, idx) => {
-      const m = part.match(/^\*\*(?:\s*)([\s\S]*?)(?:\s*)\*\*$/);
-      if (m) {
-        return <strong key={idx} className="font-semibold">{m[1]}</strong>;
-      }
-      return <span key={idx}>{part}</span>;
-    });
+    return (
+      <ReactMarkdown
+        components={{
+          p: ({ children }) => <p className="mb-2">{children}</p>,
+          strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+          em: ({ children }) => <em className="italic">{children}</em>,
+          code: ({ inline, children }) => 
+            inline ? (
+              <code className="px-1.5 py-0.5 bg-black/20 rounded text-sm font-mono">{children}</code>
+            ) : (
+              <code className="block p-2 bg-black/20 rounded text-sm font-mono my-2 overflow-x-auto">{children}</code>
+            ),
+          ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+          li: ({ children }) => <li className="ml-2">{children}</li>,
+          h1: ({ children }) => <h1 className="text-xl font-bold mb-2 mt-3">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-lg font-bold mb-2 mt-3">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-base font-bold mb-2 mt-2">{children}</h3>,
+          blockquote: ({ children }) => <blockquote className="border-l-4 border-white/30 pl-3 italic my-2">{children}</blockquote>,
+          a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-300 hover:underline">{children}</a>,
+        }}
+      >
+        {cleanedContent}
+      </ReactMarkdown>
+    );
   };
 
   // Voice recording functions (same as before)
@@ -418,15 +508,6 @@ const NotebookPage = (props) => {
     setLoadingFeature(true);
 
     try {
-      if (featureAbortRef.current) {
-        featureAbortRef.current.abort();
-      }
-    } catch (e) {}
-    
-    const controller = new AbortController();
-    featureAbortRef.current = controller;
-
-    try {
       const langToUse = featureKey === 'predictive' ? (langOverride || predictiveLang) : undefined;
       const currentTimelineView = timelineViewOverride || timelineView;
       let cacheKey = featureKey;
@@ -436,11 +517,20 @@ const NotebookPage = (props) => {
         cacheKey = `${featureKey}:${currentTimelineView}`;
       }
       
-      if (storedData[id]?.[cacheKey]) {
-        setFeatureData((prev) => ({
-          ...prev,
-          [featureKey]: { ...prev[featureKey], content: storedData[id][cacheKey] },
-        }));
+      // Generate unique request ID to prevent race conditions
+      const requestId = Date.now() + Math.random();
+      currentRequestRef.current[featureKey] = requestId;
+      
+      // Check Zustand cache first
+      const cachedContent = getCachedFeature(id, cacheKey);
+      if (cachedContent) {
+        // Still check if this request is current before updating
+        if (currentRequestRef.current[featureKey] === requestId) {
+          setFeatureData((prev) => ({
+            ...prev,
+            [featureKey]: { ...prev[featureKey], content: cachedContent },
+          }));
+        }
         setLoadingFeature(false);
         return;
       }
@@ -452,8 +542,8 @@ const NotebookPage = (props) => {
       if (featureKey === "summary") {
         // Call both APIs in parallel
         const [studyGuideRes, insightsRes] = await Promise.allSettled([
-          papi.post(`/api/study-guide`, payload, { signal: controller.signal }),
-          papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || selectedLang || 'en').slice(0,2) }, { signal: controller.signal })
+          papi.post(`/api/study-guide`, payload),
+          papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || selectedLang || 'en').slice(0,2) })
         ]);
         
         const studyGuide = studyGuideRes.status === 'fulfilled' ? studyGuideRes.value.data.study_guide : null;
@@ -626,7 +716,7 @@ const NotebookPage = (props) => {
           );
         }
       } else if (featureKey === "questions") {
-        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 }, { signal: controller.signal });
+        const res = await papi.post(`/api/faq`, { ...payload, num_questions: 5 });
         const faqMarkdown = res.data.faq_markdown;
         content = <FAQDisplay faq={faqMarkdown} />;
       } else if (featureKey === "timeline") {
@@ -641,7 +731,7 @@ const NotebookPage = (props) => {
           apiEndpoint = '/api/flowchart';
         }
         
-        const res = await papi.post(apiEndpoint, apiPayload, { signal: controller.signal });
+        const res = await papi.post(apiEndpoint, apiPayload);
         
         if (currentView === 'mindmap') {
           // Handle mindmap/flowchart response
@@ -696,7 +786,7 @@ const NotebookPage = (props) => {
         }
       } else if (featureKey === 'case-law') {
         try {
-          const res = await papi.post(`/api/suggest-case-law`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
+          const res = await papi.post(`/api/suggest-case-law`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) });
           const suggestion = res.data;
 
           const normalizeCase = (it) => {
@@ -758,29 +848,21 @@ const NotebookPage = (props) => {
             content = <CaseLawDisplay cases={casesData} />;
           }
         } catch (err) {
-          if (err.name === 'CanceledError' || err.name === 'AbortError') {
-            setLoadingFeature(false);
-            return;
-          }
           const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to fetch case law suggestions';
           content = <div className="text-sm text-red-400">{errorMsg}</div>;
         }
       } else if (featureKey === "predictive") {
         try {
-          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) }, { signal: controller.signal });
+          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) });
           const pred = res.data.prediction;
           content = <PredictiveDisplay prediction={pred} />;
         } catch (err) {
-          if (err.name === 'CanceledError' || err.name === 'AbortError') {
-            setLoadingFeature(false);
-            return;
-          }
           const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to fetch predictive output';
           content = <div className="text-sm text-red-400">{errorMsg}</div>;
         }
       } else if (featureKey === "insights") {
         try {
-          const res = await papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || selectedLang || 'en').slice(0,2) }, { signal: controller.signal });
+          const res = await papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || selectedLang || 'en').slice(0,2) });
           const data = res.data;
           
           // Handle the new format with explanations array
@@ -854,21 +936,19 @@ const NotebookPage = (props) => {
             }
           }
         } catch (err) {
-          if (err.name === 'CanceledError' || err.name === 'AbortError') {
-            setLoadingFeature(false);
-            return;
-          }
           const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to fetch insights';
           content = <div className="text-sm text-red-400">{errorMsg}</div>;
         }
       }
 
-      setStoredData((prev) => ({ ...prev, [id]: { ...prev[id], [cacheKey]: content } }));
-      setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
-    } catch (err) {
-      if (err.name === 'CanceledError' || err.name === 'AbortError') {
-        return;
+      // Always cache the response (even if user switched features)
+      setCachedFeature(id, cacheKey, content);
+      
+      // Only update UI if this request is still the current one (prevent race conditions)
+      if (currentRequestRef.current[featureKey] === requestId) {
+        setFeatureData((prev) => ({ ...prev, [featureKey]: { ...prev[featureKey], content } }));
       }
+    } catch (err) {
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to load feature';
       try {
         toast.error(errorMsg);
@@ -876,19 +956,13 @@ const NotebookPage = (props) => {
         console.error('Feature fetch error:', errorMsg);
       }
     } finally {
-      try {
-        if (featureAbortRef.current === controller) {
-          featureAbortRef.current = null;
-          setLoadingFeature(false);
-        }
-      } catch (e) {}
+      setLoadingFeature(false);
     }
   };
 
   const handleFeatureClick = (featureKey) => {
     if (activeFeature === featureKey) {
       setActiveFeature(null);
-      try { featureAbortRef.current?.abort(); } catch (e) { }
       return;
     }
 
@@ -903,11 +977,41 @@ const NotebookPage = (props) => {
 
   const handleSendMessage = async (e, question = null) => {
     e?.preventDefault();
-    const messageToSend = question || newMessage.trim();
-    if (!messageToSend || isAiThinking) return;
+    const rawMessage = question || newMessage.trim();
+    if (!rawMessage || isAiThinking) return;
+
+    // Sanitize message input to prevent XSS
+    const messageToSend = sanitizeTextInput(rawMessage);
+    if (!messageToSend) {
+      try {
+        toast.error("Invalid message content. Please use only valid characters.");
+      } catch (err) {
+        console.error('Invalid message');
+      }
+      return;
+    }
+
+    // Rate limiting (max 10 messages per minute)
+    const rateCheck = checkRateLimit(`notebook_chat_${id}`, 10, 60000);
+    if (!rateCheck.allowed) {
+      try {
+        toast.error(`Too many messages. Please wait before sending again.`);
+      } catch (err) {
+        console.error('Rate limit exceeded');
+      }
+      return;
+    }
 
     const tempId = `temp-${Date.now()}`;
     const userMessage = { _id: tempId, role: 'user', content: messageToSend, _temp: true };
+    
+    // Build conversation history for API (convert messages to history format)
+    // Only include previous messages, not the current one (query already contains current message)
+    const conversationHistory = messages.map(msg => ({
+      role: msg.role === 'response' ? 'assistant' : msg.role,
+      content: msg.content
+    }));
+    
     setMessages((prev) => [...prev, userMessage]);
     setNewMessage("");
     setFollowUpQuestions([]);
@@ -917,7 +1021,14 @@ const NotebookPage = (props) => {
 
     try {
       const saveUserPromise = api.post('/api/messages', { chatId: id, content: messageToSend, role: 'user' });
-      const askPromise = papi.post('/api/ask', { user_id: notebook.user, thread_id: id, query: messageToSend, top_k: 4, output_language: (selectedLang || 'en').slice(0,2) });
+      const askPromise = papi.post('/api/ask', { 
+        user_id: notebook.user, 
+        thread_id: id, 
+        query: messageToSend, 
+        history: conversationHistory, // Pass full conversation history (previous messages only)
+        top_k: 4, 
+        output_language: (selectedLang || 'en').slice(0,2) 
+      });
       const [saveRes, askRes] = await Promise.allSettled([saveUserPromise, askPromise]);
 
       if (saveRes.status === 'fulfilled' && saveRes.value?.data?.message) {
@@ -1046,10 +1157,11 @@ const NotebookPage = (props) => {
                 </button>
               </div>
               <nav className="p-4 space-y-2">
-                {Object.entries(featureData).map(([key, { icon, title }]) => (
+                {Object.entries(featureData).map(([key, { icon, title, tooltip }]) => (
                   <button
                     key={key}
                     onClick={() => handleFeatureClick(key)}
+                    title={tooltip}
                     className={`flex items-center gap-3 w-full text-left p-3 rounded-lg transition-all duration-200 ${
                       activeFeature === key 
                         ? 'bg-[var(--palette-1)] text-white shadow-sm' 
@@ -1069,7 +1181,7 @@ const NotebookPage = (props) => {
       {/* Main Content Area - Three-part flex layout */}
   <div className="relative z-10 flex-1 panel rounded-none bg-[var(--bg)] flex flex-col w-full h-full overflow-hidden">
         {/* Fixed Header - Always visible */}
-        <header className="flex-none p-3 md:p-6 border-b border-[var(--border)] flex items-center justify-between bg-[var(--bg)] z-30">
+        <header className="mt-10 md:mt-0 flex-none p-3 md:p-6 border-b border-[var(--border)] flex items-center justify-between bg-[var(--bg)] z-30">
           {/* Left cluster: Back */}
           <div className="flex items-center gap-2">
             {!inline && id && (
@@ -1103,14 +1215,14 @@ const NotebookPage = (props) => {
           {/* Desktop: Horizontal feature navbar - single line */}
           <div className="hidden lg:flex flex-1">
             <nav className="flex items-center gap-1 xl:gap-2" role="tablist" aria-label="Notebook features">
-              {Object.entries(featureData).map(([key, { icon, title }]) => (
+              {Object.entries(featureData).map(([key, { icon, title, tooltip }]) => (
                 <button
                   key={key}
                   onClick={() => handleFeatureClick(key)}
                   role="tab"
                   aria-selected={activeFeature === key}
                   tabIndex={0}
-                  className={`flex items-center gap-1.5 whitespace-nowrap py-2 px-2 xl:px-3 text-sm font-medium transition-all duration-150 ${
+                  className={`flex items-center gap-1.5 whitespace-nowrap py-2 px-2 xl:px-3 text-sm font-medium transition-all duration-150 relative group ${
                     activeFeature === key ? 'border-b-2 font-semibold' : 'opacity-95 hover:opacity-100'
                   }`}
                   style={{
@@ -1120,6 +1232,11 @@ const NotebookPage = (props) => {
                 >
                   <span className="text-lg">{icon}</span>
                   <span>{title}</span>
+                  {/* Tooltip below button */}
+                  <span className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 whitespace-normal w-48 text-center shadow-lg z-50 pointer-events-none">
+                    {tooltip}
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 -mb-1 border-4 border-transparent border-b-gray-900"></span>
+                  </span>
                 </button>
               ))}
             </nav>
@@ -1324,8 +1441,13 @@ const NotebookPage = (props) => {
                 type="text" 
                 placeholder={isAiThinking ? 'Generating response...' : 'Ask anything...'} 
                 value={newMessage} 
-                onChange={(e) => setNewMessage(e.target.value)} 
+                onChange={(e) => {
+                  // Don't trim during typing - allow spaces
+                  const sanitized = sanitizeTextInput(e.target.value).replace(/^\s+/, ''); // Only remove leading spaces
+                  setNewMessage(sanitized);
+                }} 
                 disabled={isAiThinking}
+                maxLength={500}
                 className="min-w-0 flex-1 px-3 py-2 md:px-4 md:py-2 border rounded-md bg-[var(--panel)] text-[var(--text)] placeholder-[var(--muted)] text-sm"
                 style={{ borderColor: 'var(--palette-3)' }}
               />

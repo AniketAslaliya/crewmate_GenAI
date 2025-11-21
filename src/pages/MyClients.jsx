@@ -67,7 +67,15 @@ const MyClients = () => {
 
               return (
               <div key={c._id} onClick={()=>openChat(c.chat)} className={`p-3 border-b hover:bg-surface cursor-pointer flex items-center gap-3 ${c.chat===activeChat? 'bg-surface' : ''}`}>
-                <InitialAvatar name={(c.from||{}).name} className="w-12 h-12 rounded-full" />
+                {c.from?.profileImage?.gcsUrl || c.from?.picture ? (
+                  <img
+                    src={c.from?.profileImage?.gcsUrl || c.from?.picture}
+                    alt={c.from?.name}
+                    className="w-12 h-12 rounded-full object-cover"
+                  />
+                ) : (
+                  <InitialAvatar name={(c.from||{}).name} className="w-12 h-12 rounded-full" />
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <div className="font-semibold truncate">{(c.from||{}).name}</div>

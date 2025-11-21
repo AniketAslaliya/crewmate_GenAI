@@ -1,6 +1,7 @@
 import "./App.css";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import Landing from "./pages/Landing";
 import Home from "./pages/Home";
 import LegalDesk from "./pages/LegalDesk";
 import Login from "./pages/Login";
@@ -13,6 +14,7 @@ import ChatView from "./pages/ChatView";
 import MyClients from "./pages/MyClients";
 import CompleteRegistration from './pages/CompleteRegistration';
 import ProtectedRoute from "./components/ProtectedRoute";
+import ErrorBoundary from "./components/ErrorBoundary";
 import Sidebar from "./components/Sidebar";
 import api from "./Axios/axios";
 import { MdMenu } from 'react-icons/md';
@@ -21,6 +23,7 @@ import AuthCallback from "./pages/AuthCallback";
 import FormAutoFill from './pages/FormAutoFill';
 import AdminPanel from './pages/AdminPanel';
 import Profile from './pages/Profile';
+import Support from './pages/Support';
 import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import { applyPalette, defaultPalette } from './utils/palette';
@@ -32,6 +35,8 @@ function App() {
   const [theme] = useState("light");
   // Sidebar overlay open state for small screens
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop sidebar collapse state
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
 
   // On larger screens the sidebar is always visible via CSS (md:block),
   // so we only need overlay state for small screens.
@@ -61,7 +66,8 @@ function App() {
       <div className="app-root min-h-screen w-full overflow-x-hidden">
         <main className="w-full px-0 py-0 flex-1 overflow-x-hidden">
           <Routes>
-            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={user ? <Navigate to="/home" /> : <Login />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
@@ -74,7 +80,7 @@ function App() {
                   {/* Persistent sidebar on md+ */}
                   {user?.role ? (
                     <div className="hidden md:block">
-                      <Sidebar isOpen toggleSidebar={() => setSidebarOpen(false)} />
+                      <Sidebar isOpen={desktopSidebarOpen} toggleSidebar={() => setDesktopSidebarOpen(!desktopSidebarOpen)} />
                     </div>
                   ) : null}
 
@@ -208,6 +214,14 @@ function App() {
                             </ProtectedRoute>
                           }
                         />
+                        <Route
+                          path="/support"
+                          element={
+                            <ProtectedRoute>
+                              <Support />
+                            </ProtectedRoute>
+                          }
+                        />
                         <Route 
                           path="/chat/:id" 
                           element={
@@ -246,4 +260,10 @@ function App() {
   );
 }
 
-export default App;
+export default function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
