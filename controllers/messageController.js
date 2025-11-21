@@ -1,7 +1,7 @@
 import { Message } from "../models/Message.js";
 import crypto from "crypto";
 import mongoose from 'mongoose';
-import { uploadToDropbox } from "../utils/dropbox.js";
+import { uploadToGCS } from "../utils/gcs.js";
 
 const ALGORITHM = "aes-256-cbc";
 const IV_LENGTH = 16; // AES requires 16-byte IV
@@ -77,14 +77,15 @@ export const sendMessage = async (req, res) => {
     // Encrypt the message content if provided
     const encryptedContent = content ? encrypt(content) : '';
 
-    // Handle file upload to Dropbox if file exists
+    // Handle file upload to GCS if file exists
     let attachmentData = null;
     if (file) {
       try {
-        const uploadResult = await uploadToDropbox(
+        const uploadResult = await uploadToGCS(
           file.buffer,
           file.originalname,
-          `/chat-files/${chatId}`
+          'chat-files',
+          chatId
         );
         attachmentData = {
           url: uploadResult.url,

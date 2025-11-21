@@ -20,6 +20,11 @@ const UserSchema = new mongoose.Schema(
     picture: {
       type: String,
     },
+    profileImage: {
+      gcsPath: { type: String },
+      gcsUrl: { type: String },
+      uploadedAt: { type: Date }
+    },
     role: {
         type: String,
         enum: ["helpseeker", "lawyer", "admin"],
@@ -80,6 +85,30 @@ const UserSchema = new mongoose.Schema(
     filename: { type: String },
     uploadedAt: { type: Date }
   },
+  // Form storage for AutoFill feature
+  formStorage: [{
+    formId: { type: String, required: true, unique: true },
+    originalFileName: { type: String, required: true },
+    gcsPath: { type: String, required: true },
+    gcsUrl: { type: String },
+    language: { type: String, default: 'en' },
+    uploadedAt: { type: Date, default: Date.now },
+    fileSize: { type: Number },
+    mimeType: { type: String },
+    fields: { type: mongoose.Schema.Types.Mixed, default: [] }, // Analyzed fields
+    fieldValues: { type: mongoose.Schema.Types.Mixed, default: {} }, // Filled values (text or image data)
+    fieldImages: { type: mongoose.Schema.Types.Mixed, default: {} }, // Field images stored in GCS {fieldId: {gcsPath, gcsUrl}}
+    status: { 
+      type: String, 
+      enum: ['uploaded', 'analyzed', 'filled', 'completed'], 
+      default: 'uploaded' 
+    },
+    analyzedAt: { type: Date },
+    lastModified: { type: Date },
+    completedAt: { type: Date },
+    filledFormPath: { type: String }, // Path to filled form in GCS
+    filledFormUrl: { type: String }
+  }]
   },
   { timestamps: true }
 );
