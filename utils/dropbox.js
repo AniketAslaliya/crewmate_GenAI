@@ -14,6 +14,7 @@ const dbx = new Dropbox({
  */
 export const uploadToDropbox = async (fileBuffer, filename, folder = '/lawyer-docs') => {
   try {
+    const dbx = await getDropboxClient();
     const path = `${folder}/${Date.now()}_${filename}`;
     
     // Upload file
@@ -67,6 +68,7 @@ export const uploadToDropbox = async (fileBuffer, filename, folder = '/lawyer-do
  */
 export const deleteFromDropbox = async (path) => {
   try {
+    const dbx = await getDropboxClient();
     await dbx.filesDeleteV2({ path });
   } catch (error) {
     console.error('Dropbox delete error:', error);
@@ -84,6 +86,7 @@ export const deleteFromDropbox = async (path) => {
  */
 export const getTemporaryLink = async (path) => {
   try {
+    const dbx = await getDropboxClient();
     const response = await dbx.filesGetTemporaryLink({ path });
     return response.result.link;
   } catch (error) {

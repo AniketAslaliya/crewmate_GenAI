@@ -5,12 +5,16 @@ const { sign, verify } = pkg;
 import { User } from "../models/User.js";
 import { VerificationCode } from "../models/VerificationCode.js";
 import bcrypt from "bcryptjs";
+import multer from "multer";
 import { uploadDocument, deleteChat, getUserChats} from "../controllers/chatController.js";
 import authMiddleware from "../middlewares/auth.js";
 import lawyersRouter from "./lawyers.js";
 import formsRouter from './forms.js';
 import { sendVerificationCode, sendPasswordResetCode } from "../utils/emailService.js";
+import { uploadProfileImage, deleteProfileImage } from "../controllers/profileController.js";
 import crypto from "crypto";
+
+const upload = multer(); // memory storage
 const router = Router();
 
 const signJwt = (payload) =>
@@ -530,6 +534,10 @@ router.put('/profile/update', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Profile image routes
+router.post('/profile/upload-image', authMiddleware, upload.single('image'), uploadProfileImage);
+router.delete('/profile/delete-image', authMiddleware, deleteProfileImage);
 
 // mount lawyer-related routes
 router.use('/api/lawyers', lawyersRouter);

@@ -1,7 +1,7 @@
 import { User } from "../models/User.js";
 import { ConnectionRequest } from "../models/ConnectionRequest.js";
 import { Chat } from "../models/Chat.js";
-import { uploadToDropbox, deleteFromDropbox } from "../utils/dropbox.js";
+import { uploadToGCS, deleteFromGCS } from "../utils/gcs.js";
 
 // List accepted incoming connections for a lawyer (return requests with status accepted and populate from)
 export const listAcceptedForLawyer = async (req, res) => {
@@ -244,10 +244,11 @@ export const onboardLawyer = async (req, res) => {
     try {
       // Upload proof document
       const proofFile = req.files.proofDocument[0];
-      const proofUpload = await uploadToDropbox(
+      const proofUpload = await uploadToGCS(
         proofFile.buffer,
         proofFile.originalname,
-        `/lawyer-documents/${userId}/proof`
+        'lawyer-documents/proof',
+        userId
       );
       proofDocData = {
         url: proofUpload.url,
@@ -257,10 +258,11 @@ export const onboardLawyer = async (req, res) => {
 
       // Upload degree certificate
       const degreeFile = req.files.degreeCertificate[0];
-      const degreeUpload = await uploadToDropbox(
+      const degreeUpload = await uploadToGCS(
         degreeFile.buffer,
         degreeFile.originalname,
-        `/lawyer-documents/${userId}/degree`
+        'lawyer-documents/degree',
+        userId
       );
       degreeCertData = {
         url: degreeUpload.url,

@@ -13,6 +13,7 @@ import messageRoutes from "./routes/messageroutes.js";
 import lawyersRouter from "./routes/lawyers.js";
 import formsRouter from "./routes/forms.js";
 import adminRouter from "./routes/admin.js";
+import supportRouter from "./routes/support.js";
 import http from "http";
 import { Server } from "socket.io";
 import crypto from "crypto";
@@ -39,6 +40,7 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/lawyers", lawyersRouter);
 app.use("/api/forms", formsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/support", supportRouter);
 app.get("/", (req, res) => res.json({ ok: true }));
 
 // Message encryption helper (same logic as messageController)
@@ -75,11 +77,9 @@ connectDB().then(() => {
   app.set('io', io);
 
   io.on("connection", (socket) => {
-    console.log("socket connected:", socket.id);
 
-    socket.on("join", (chatId) => {
+    socket.on("join-chat", (chatId) => {
       socket.join(chatId);
-      console.log(`socket ${socket.id} joined ${chatId}`);
     });
 
     socket.on("leave", (chatId) => {
@@ -113,11 +113,10 @@ connectDB().then(() => {
     });
 
     socket.on("disconnect", () => {
-      console.log("socket disconnected", socket.id);
     });
   });
 
   server.listen(process.env.PORT, () => {
-    console.log(`http://localhost:${process.env.PORT}`);
+    console.log(`Server running on port ${process.env.PORT}`);
   });
 });

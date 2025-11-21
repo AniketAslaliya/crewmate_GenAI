@@ -151,13 +151,18 @@ export const getAdminStats = async (req, res) => {
     const rejectedCount = await User.countDocuments({ role: "lawyer", verificationStatus: "rejected" });
     const totalUsers = await User.countDocuments({ role: "helpseeker" });
     
+    // Import SupportMessage model dynamically to avoid circular dependency
+    const SupportMessage = (await import('../models/SupportMessage.js')).default;
+    const pendingSupportMessages = await SupportMessage.countDocuments({ status: 'pending' });
+    
     res.json({
       stats: {
         totalLawyers,
         pendingVerifications: pendingCount,
         approvedLawyers: approvedCount,
         rejectedLawyers: rejectedCount,
-        totalUsers
+        totalUsers,
+        pendingSupportMessages
       }
     });
   } catch (err) {

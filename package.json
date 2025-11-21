@@ -12,11 +12,11 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/storage": "^7.17.3",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
-    "dropbox": "^10.34.0",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
@@ -33,6 +33,7 @@
     "socket-io": "^1.0.0",
     "socket.io": "^4.8.1",
     "streamifier": "^0.1.1",
-    "textract": "^2.5.0"
+    "textract": "^2.5.0",
+    "uuid": "^11.1.0"
   }
 }
