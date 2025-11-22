@@ -1,3 +1,24 @@
+// Update summary for a chat (desk)
+export const updateChatSummary = async (req, res) => {
+  try {
+    if (req.user.id === 'guest' || req.user.role === 'guest') {
+      return res.status(403).json({ error: 'Guest users cannot update chats.' });
+    }
+    const { id } = req.params;
+    const { summary } = req.body;
+    const chat = await Chat.findOneAndUpdate(
+      { _id: id, user: req.user.id },
+      { summary },
+      { new: true }
+    );
+    if (!chat) {
+      return res.status(404).json({ error: "Chat not found or not authorized" });
+    }
+    res.json({ message: "Summary updated", chat });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update summary" });
+  }
+};
 import { Chat } from "../models/Chat.js";
 
 // Upload & process ANY document → create chat

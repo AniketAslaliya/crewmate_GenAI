@@ -20,6 +20,10 @@ const ChatSchema = new mongoose.Schema(
       enum: ['legal_desk', 'private', 'general_ask'],
       default: 'legal_desk',
     },
+    summary: {
+      type: String,
+      default: '',
+    },
   },
   { timestamps: true }
 );
