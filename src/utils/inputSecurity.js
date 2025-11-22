@@ -48,18 +48,28 @@ export const validateFileName = (fileName) => {
 
   // Remove potentially dangerous characters
   const sanitized = fileName.replace(/[<>:"|?*\x00-\x1f]/g, '');
-  
-  // Check for executable extensions (security risk)
+
+  // Check for dangerous or repeated extensions (security risk)
   const dangerousExtensions = [
-    '.exe', '.bat', '.cmd', '.com', '.pif', '.scr', '.vbs', '.js', '.jar',
-    '.msi', '.app', '.deb', '.rpm', '.dmg', '.pkg', '.sh', '.ps1', '.psm1'
+    'exe', 'bat', 'cmd', 'com', 'pif', 'scr', 'vbs', 'js', 'jar',
+    'msi', 'app', 'deb', 'rpm', 'dmg', 'pkg', 'sh', 'ps1', 'psm1'
   ];
-  
+  const allowedExtensions = [
+    'pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'bmp'
+  ];
   const lowerFileName = fileName.toLowerCase();
-  const hasDangerousExtension = dangerousExtensions.some(ext => lowerFileName.endsWith(ext));
-  
-  if (hasDangerousExtension) {
-    return { isValid: false, sanitized: '', error: 'Executable files are not allowed' };
+  const extParts = lowerFileName.split('.').slice(1); // skip base name
+  if (extParts.length === 0) {
+    return { isValid: false, sanitized: '', error: 'File must have an extension' };
+  }
+  // Block if any extension is dangerous or not allowed
+  for (const ext of extParts) {
+    if (dangerousExtensions.includes(ext)) {
+      return { isValid: false, sanitized: '', error: 'Executable files are not allowed' };
+    }
+    if (!allowedExtensions.includes(ext)) {
+      return { isValid: false, sanitized: '', error: `File extension .${ext} is not allowed` };
+    }
   }
 
   // Check for null bytes

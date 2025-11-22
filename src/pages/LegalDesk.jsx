@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import useAuthStore from '../context/AuthContext';
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
@@ -8,7 +9,7 @@ import { useToast } from '../components/ToastProvider';
 import { useGuestAccess } from '../hooks/useGuestAccess';
 import GuestAccessModal from '../components/GuestAccessModal';
 import { sanitizeTextInput, validateFile, checkRateLimit } from '../utils/inputSecurity';
-
+// Removed problematic pdfjs-dist/web/pdf_viewer.css import; using canvas-based PDF rendering as in forms
 // Modern legal background with enhanced professional pattern
 const ModernBackground = () => (
   <div className="absolute inset-0 -z-10 bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
@@ -121,7 +122,7 @@ const LegalDesk = () => {
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
-  const [userProfile, setUserProfile] = useState({ name: null, photo: "", id: null });
+  // Remove local userProfile state, use zustand
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [ingestionStatus, setIngestionStatus] = useState([]);
@@ -131,20 +132,6 @@ const LegalDesk = () => {
   // Guest access control
   const { isGuest, showGuestModal, blockedFeature, checkGuestAccess, closeGuestModal } = useGuestAccess();
 
-  const fetchUserProfile = async () => {
-    try {
-      const res = await api.get("/auth/me");
-      if (res.data && res.data.user) {
-        setUserProfile({
-          id: res.data.user._id,
-          name: res.data.user.name,
-          photo: res.data.user.picture || `https://avatar.vercel.sh/${res.data.user.id}.png`,
-        });
-      }
-    } catch (err) {
-      setUserProfile({ name: "Guest User", photo: "https://avatar.vercel.sh/guest.png" });
-    }
-  };
 
   const fetchChats = useCallback(async () => {
     try {
@@ -157,12 +144,14 @@ const LegalDesk = () => {
     }
   }, [toast]);
 
+  // Get user from zustand
+  const user = useAuthStore(state => state.user);
   useEffect(() => {
     // Don't fetch past chats for guests
     if (!isGuest) {
       fetchChats();
     }
-    fetchUserProfile();
+    // No need to fetch user profile here, zustand handles it
   }, [isGuest, fetchChats]);
 
   const handleAddlegaldesk = async () => {
@@ -199,11 +188,12 @@ const LegalDesk = () => {
     setUploading(true);
 
     try {
+      // 1. Create legal desk entry
       const res1 = await api.post("/api/uploaddoc", { title: sanitizedTitle });
       if (!res1.data?.chat) throw new Error("Failed to create legal desk entry.");
 
       const newChat = res1.data.chat;
-      setChats(prev => [newChat, ...prev]);
+      setChats(prev => [{ ...newChat, summary: 'Generating summary...' }, ...prev]);
       setAdding(false);
       setIsLoading(true);
 
@@ -213,10 +203,10 @@ const LegalDesk = () => {
         { id: 3, text: "Generating legal knowledge embeddings...", status: 'pending' },
         { id: 4, text: "Encrypting with security...", status: 'pending' },
         { id: 5, text: "Indexing for rapid legal search...", status: 'pending' },
-  { id: 6, text: "Finalizing your Legal Desk...", status: 'pending' }
+        { id: 6, text: "Finalizing your Legal Desk...", status: 'pending' }
       ];
       setIngestionStatus(steps);
-      
+
       const updateProgress = async () => {
         for (let i = 0; i < steps.length; i++) {
           await new Promise(resolve => setTimeout(resolve, 800));
@@ -227,20 +217,53 @@ const LegalDesk = () => {
         }
       };
 
+      // 2. Ingest document (must succeed before next steps)
       const formData = new FormData();
-      formData.append("user_id", userProfile.id || "");
+      formData.append("user_id", user?._id || "");
       formData.append("thread_id", newChat._id);
       formData.append("title", sanitizedTitle);
       formData.append("file", file);
 
-      const ingestPromise = papi.post("/api/ingest", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await Promise.all([
+        papi.post("/api/ingest", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        }),
+        updateProgress()
+      ]);
 
-      await Promise.all([ingestPromise, updateProgress()]);
-      
+      // 3. After ingest, call summary only
+      let summaryText = '';
+      try {
+        const summaryRes = await papi.post(
+          '/api/short-summary',
+          {
+            user_id: user?._id || '',
+            thread_id: newChat._id,
+            output_language: 'en'
+          }
+        );
+        summaryText = summaryRes.data?.summary || '';
+      } catch (e) {
+        summaryText = '';
+      }
+
+      // Save summary to desk (chat) in DB
+      if (summaryText) {
+        try {
+          await api.patch(`/api/chats/${newChat._id}/summary`, { summary: summaryText });
+        } catch (e) {
+          // Optionally handle error
+        }
+      }
+
       setIngestionStatus(prev => prev.map(step => ({ ...step, status: 'completed' })));
       await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Handle summary response in UI
+      setChats(prev => prev.map(desk =>
+        desk._id === newChat._id ? { ...desk, summary: summaryText } : desk
+      ));
+      // Optionally: handle/display risk analysis result here if needed
 
     } catch (err) {
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Error creating legal desk. Please try again.';
@@ -287,6 +310,19 @@ const LegalDesk = () => {
         'image/bmp'
       ]
     });
+
+    // Extra: block files with multiple extensions if any are not allowed
+    const fileName = file.name || '';
+    const extParts = fileName.toLowerCase().split('.').slice(1);
+    const allowedExtensions = ['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'bmp'];
+    if (extParts.length > 1) {
+      for (const ext of extParts) {
+        if (!allowedExtensions.includes(ext)) {
+          toast.error(`File extension .${ext} is not allowed`);
+          return { isValid: false };
+        }
+      }
+    }
 
     if (!validation.isValid) {
       validation.errors.forEach(error => toast.error(error));
@@ -392,6 +428,8 @@ const LegalDesk = () => {
       <AnimatePresence>
         {isLoading && <IngestionLoader steps={ingestionStatus} />}
       </AnimatePresence>
+
+
 
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header Section */}
@@ -534,27 +572,9 @@ const LegalDesk = () => {
                     {chat.title && chat.title.length > 15 ? `${chat.title.substring(0, 15)}...` : chat.title}
                   </h3>
 
-                  <div className="space-y-2">
-                    <div className="flex items-center text-sm text-gray-600">
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      {new Date(chat.createdAt).toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
-                      })}
-                    </div>
-                    
-                    <div className="flex items-center text-sm text-gray-600">
-                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {new Date(chat.createdAt).toLocaleTimeString('en-US', { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                    </div>
+                  {/* Show summary if available, else fallback */}
+                  <div className="text-sm text-gray-700 bg-gray-50 rounded-xl p-3 min-h-[48px] mt-2">
+                    {chat.summary ? chat.summary : 'No summary available.'}
                   </div>
                 </div>
 

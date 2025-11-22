@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import useAuthStore from '../context/AuthContext';
 import { FaMicrophone } from 'react-icons/fa';
 import api from '../Axios/axios';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -14,6 +15,7 @@ import GuestAccessModal from '../components/GuestAccessModal';
 const makeId = () => `gch-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
 
 const GeneralAsk = () => {
+  const { user } = useAuthStore();
   // using server-authenticated axios instance `api`
   const [chats, setChats] = useState([]); // { id, title, messages: [{role:'user'|'assistant', text, createdAt}], updated }
   const [activeChatId, setActiveChatId] = useState(null);
@@ -402,9 +404,20 @@ const GeneralAsk = () => {
       setActive(chatId);
   setIsAiThinking(true);
 
+        // Build history from chat messages (excluding optimistic message)
+        let history = [];
+        if (chatObj && Array.isArray(chatObj.messages)) {
+          history = chatObj.messages.map(m => ({ role: m.role, text: m.text }));
+        }
+        // Add the current user message to the end of history
+        history = [...history, { role: 'user', text: txt }];
+        // Get user_id if available
+        const user_id = user && user._id ? user._id : undefined;
+        
         // call the AI backend (papi) to get an answer, then persist to storage backend (api)
-      const payload = { query: txt, output_language: 'en', chatId };
-      const papiRes = await papi.post('/api/general-ask', payload);
+        const payload = { query: txt, output_language: 'en', chatId, history };
+        if (user_id) payload.user_id = user_id;
+        const papiRes = await papi.post('/api/general-ask', payload);
       console.log('papi response', papiRes && papiRes.data ? papiRes.data : papiRes);
       // extract answer from common response shapes (res.data.answer OR res.data.data.answer)
       let answerText = '';

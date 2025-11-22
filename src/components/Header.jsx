@@ -43,10 +43,12 @@ const Header = () => {
                         src={authUser?.profileImage?.gcsUrl || authUser.picture}
                         alt={authUser.name}
                         className="w-10 h-10 rounded-full border object-cover"
+                        onError={e => { e.target.style.display = 'none'; e.target.parentNode.querySelector('.header-fallback-avatar').style.display = 'block'; }}
                       />
-                    ) : (
+                    ) : null}
+                    <span className="header-fallback-avatar" style={{display: (!authUser?.profileImage?.gcsUrl && !authUser?.picture) ? 'block' : 'none'}}>
                       <InitialAvatar name={authUser.name} className="w-10 h-10 rounded-full border" />
-                    )}
+                    </span>
                   </motion.div>
                 </div>
               ) : (

@@ -337,10 +337,12 @@ const ChatView = () => {
                 src={conn?.peer?.profileImage?.gcsUrl || conn?.peer?.picture}
                 alt={conn?.peer?.name}
                 className="w-9 h-9 rounded-full border-2 border-blue-100 shadow-sm flex-shrink-0 object-cover"
+                onError={e => { e.target.style.display = 'none'; e.target.parentNode.querySelector('.chatview-fallback-avatar').style.display = 'block'; }}
               />
-            ) : (
+            ) : null}
+            <span className="chatview-fallback-avatar" style={{display: (!conn?.peer?.profileImage?.gcsUrl && !conn?.peer?.picture) ? 'block' : 'none'}}>
               <InitialAvatar name={conn?.peer?.name} className="w-9 h-9 rounded-full border-2 border-blue-100 shadow-sm flex-shrink-0" />
-            )}
+            </span>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-gray-900 truncate">{conn?.peer?.name}</div>
               <div className="text-xs text-gray-500 truncate">{conn?.peer?.specialties || (isLawyer ? 'Client' : 'Lawyer')}</div>
@@ -484,10 +486,12 @@ const ChatView = () => {
               src={user?.profileImage?.gcsUrl || user?.picture}
               alt={user?.name}
               className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0 object-cover"
+              onError={e => { e.target.style.display = 'none'; e.target.parentNode.querySelector('.chatview-user-fallback-avatar').style.display = 'block'; }}
             />
-          ) : (
+          ) : null}
+          <span className="chatview-user-fallback-avatar" style={{display: (!user?.profileImage?.gcsUrl && !user?.picture) ? 'block' : 'none'}}>
             <InitialAvatar name={user?.name} className="w-10 h-10 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
-          )}
+          </span>
           <div>
             <div className="font-semibold text-gray-900">{user?.name}</div>
             <div className="text-xs text-gray-600 font-medium">{isLawyer ? '⚖️ Lawyer' : '👤 Helpseeker'}</div>
@@ -584,10 +588,12 @@ const ChatView = () => {
                     src={c.peer?.profileImage?.gcsUrl || c.peer?.picture}
                     alt={c.peer?.name}
                     className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0 object-cover"
+                    onError={e => { e.target.style.display = 'none'; e.target.parentNode.querySelector('.chatview-conn-fallback-avatar').style.display = 'block'; }}
                   />
-                ) : (
+                ) : null}
+                <span className="chatview-conn-fallback-avatar" style={{display: (!c.peer?.profileImage?.gcsUrl && !c.peer?.picture) ? 'block' : 'none'}}>
                   <InitialAvatar name={c.peer?.name} className="w-12 h-12 rounded-full border-2 border-white shadow-sm flex-shrink-0" />
-                )}
+                </span>
                 <div className="flex-1 min-w-0 flex items-center justify-between">
                   <h4 className="font-semibold text-gray-900 truncate">{c.peer?.name || 'Unknown'}</h4>
                   {c.unread > 0 && (
