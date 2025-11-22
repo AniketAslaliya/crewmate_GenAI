@@ -98,6 +98,14 @@ const FormAutoFill = () => {
   const imageDragRef = useRef({ startX: 0, startY: 0, origX: 0, origY: 0 });
   const { checkGuestAccess, showGuestModal, closeGuestModal, blockedFeature } = useGuestAccess();
 
+  // Voice recording refs/state for form voice input
+  const recorderRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [spokenLang, setSpokenLang] = useState('hi-IN');
+
   // Comprehensive file validation with security checks (same as LegalDesk)
   const validateFileWithSecurity = (file) => {
     const validation = validateFile(file, {
@@ -156,6 +164,20 @@ const FormAutoFill = () => {
       } catch (e) {}
     };
   }, []);
+
+  // keyboard navigation for pages: left/right arrows
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!isPdf || totalPages <= 1) return;
+      if (e.key === 'ArrowRight') {
+        renderPage(Math.min(totalPages, currentPage + 1));
+      } else if (e.key === 'ArrowLeft') {
+        renderPage(Math.max(1, currentPage - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isPdf, currentPage, totalPages]);
 
   // Load saved forms on mount to show in empty state
   useEffect(() => {
@@ -1671,6 +1693,127 @@ const FormAutoFill = () => {
     }
   };
 
+  // --- Voice recording helpers for form voice input ---
+  // Map UI language codes (e.g. 'hi','en') to Speech API locale tags
+  const mapUiLangToSpeechLang = (uiCode) => {
+    const map = {
+      en: 'en-IN',
+      hi: 'hi-IN',
+      gu: 'gu-IN',
+      mr: 'mr-IN',
+      ta: 'ta-IN',
+      te: 'te-IN',
+      bn: 'bn-IN',
+      kn: 'kn-IN',
+      ml: 'ml-IN',
+      pa: 'pa-IN'
+    };
+    return map[uiCode] || uiCode || 'hi-IN';
+  };
+
+  // Keep spokenLang in sync with UI language by default
+  useEffect(() => {
+    try {
+      setSpokenLang(mapUiLangToSpeechLang(language));
+    } catch (e) {}
+  }, [language]);
+
+  async function startRecordingForField(targetFieldId, spokenLang) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast.error('Audio recording is not supported in this browser');
+      return;
+    }
+    if (isRecording) {
+      toast.info('Already recording');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      audioChunksRef.current = [];
+      const options = { mimeType: 'audio/webm;codecs=opus' };
+      const mr = new MediaRecorder(stream, options);
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size) audioChunksRef.current.push(e.data);
+      };
+      mr.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        try {
+          await handleAudioBlob(blob, targetFieldId, spokenLang || mapUiLangToSpeechLang(language));
+        } finally {
+          // stop tracks
+          try { mediaStreamRef.current && mediaStreamRef.current.getTracks().forEach(t => t.stop()); } catch (e) {}
+          mediaStreamRef.current = null;
+          recorderRef.current = null;
+          setIsRecording(false);
+        }
+      };
+      recorderRef.current = mr;
+      setIsRecording(true);
+      mr.start();
+      toast.info('Recording... Speak now');
+    } catch (err) {
+      console.error('startRecording failed', err);
+      toast.error('Could not start microphone. Check permissions.');
+    }
+  }
+
+  function stopRecording() {
+    try {
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.stop();
+      }
+    } catch (err) {
+      console.warn('stopRecording failed', err);
+    }
+  }
+
+  async function handleAudioBlob(blob, targetFieldId, spokenLang) {
+    setIsTranscribing(true);
+    try {
+      const fd = new FormData();
+      // Some browsers produce webm; backend handles common audio types
+      fd.append('file', blob, 'recording.webm');
+      if (spokenLang) fd.append('language', spokenLang);
+      const res = await api.post('/api/transcribe-hindi', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const transcript = res.data?.combinedTranscript || res.data?.transcript || (res.data?.transcripts && res.data?.transcripts[0]) || '';
+      const usedLanguage = res.data?.usedLanguage || res.data?.language || null;
+      const incomingLang = res.data?.incomingLang || null;
+      console.log('Transcription response', { transcript, usedLanguage, incomingLang, raw: res.data });
+      // show which language the server used
+      if (usedLanguage && incomingLang) {
+        if (usedLanguage !== incomingLang) {
+          toast.info(`Server used ${usedLanguage} (requested ${incomingLang})`);
+        } else {
+          toast.info(`Server used ${usedLanguage}`);
+        }
+      }
+      if (!transcript) {
+        toast.error('No transcript returned');
+        return;
+      }
+      // If targeting a simple field
+      if (typeof targetFieldId === 'string' && targetFieldId.startsWith('simple:')) {
+        const name = targetFieldId.replace('simple:', '');
+        setSimpleValues(prev => ({ ...prev, [name]: transcript }));
+        toast.success('Transcription applied to field');
+        return;
+      }
+      // Otherwise apply to a detected field id
+      if (targetFieldId) {
+        handleValueChange(targetFieldId, transcript);
+        toast.success('Transcription applied');
+      } else {
+        toast.info('Transcription: ' + transcript);
+      }
+    } catch (err) {
+      console.error('Transcription failed', err);
+      toast.error('Transcription failed');
+    } finally {
+      setIsTranscribing(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
       {/* Header */}
@@ -2167,7 +2310,32 @@ const FormAutoFill = () => {
                 {simpleFields.map(name => (
                   <div key={name} className="flex gap-2 items-center">
                     <label className="w-36 text-sm text-gray-700">{name}</label>
-                    <input value={simpleValues[name] || ''} onChange={(e) => handleSimpleValueChange(name, e.target.value)} className="flex-1 border rounded px-2 py-1" />
+                      <div className="flex items-center gap-2 flex-1">
+                        <input value={simpleValues[name] || ''} onChange={(e) => handleSimpleValueChange(name, e.target.value)} className="flex-1 border rounded px-2 py-1" />
+                        <select
+                          value={spokenLang}
+                          onChange={(e) => setSpokenLang(e.target.value)}
+                          className="ml-2 px-2 py-1 border rounded text-xs"
+                          title="Spoken language for recording"
+                        >
+                          {languages.map(l => (
+                            <option key={l.code} value={mapUiLangToSpeechLang(l.code)}>{l.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => isRecording ? stopRecording() : startRecordingForField(`simple:${name}`, spokenLang)}
+                          title="Record voice for this field"
+                          className={`ml-1 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors ${isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
+                            <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
+                            <path d="M12 17v4" />
+                            <path d="M8 21h8" />
+                          </svg>
+                        </button>
+                      </div>
                   </div>
                 ))}
               </div>
@@ -2280,43 +2448,36 @@ const FormAutoFill = () => {
                     <label className="text-xs text-gray-500">Value</label>
                     <div className="flex items-center gap-2">
                       <input value={fieldValues[selectedField.id] || ''} onChange={(e) => handleValueChange(selectedField.id, e.target.value)} className="flex-1 mt-1 border rounded px-3 py-2" />
-                      <div className="mt-1">
-                        <SpeakerButton text={fieldValues[selectedField.id] || ''} language={language} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Image Upload for Fields */}
-                  <div className="mb-3">
-                    <label className="text-xs text-gray-500 mb-2 block">Or Upload Image</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleFieldImageUpload(selectedField.id, e.target.files[0])}
-                        className="hidden"
-                        id={`field-image-${selectedField.id}`}
-                      />
-                      <label
-                        htmlFor={`field-image-${selectedField.id}`}
-                        className="flex-1 px-3 py-2 bg-indigo-50 border-2 border-dashed border-indigo-300 rounded-lg cursor-pointer hover:bg-indigo-100 transition-colors text-center text-sm text-indigo-700"
-                      >
-                        📷 Upload Image (e.g., Photo, Signature)
-                      </label>
-                    </div>
-                    {savedForms.find(f => f.formId === currentFormId)?.fieldImages?.[selectedField.id] && (
-                      <div className="mt-2 flex items-center gap-2 p-2 bg-green-50 border border-green-200 rounded">
-                        <span className="text-sm text-green-700">✓ Image uploaded</span>
-                        <button
-                          onClick={() => handleDeleteFieldImage(selectedField.id)}
-                          className="ml-auto px-2 py-1 bg-red-50 text-red-600 text-xs rounded hover:bg-red-100"
+                      <div className="flex items-center gap-2 mt-1">
+                        <select
+                          value={spokenLang}
+                          onChange={(e) => setSpokenLang(e.target.value)}
+                          className="px-2 py-1 border rounded text-xs"
+                          title="Spoken language for recording"
                         >
-                          Remove
+                          {languages.map(l => (
+                            <option key={l.code} value={mapUiLangToSpeechLang(l.code)}>{l.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => isRecording ? stopRecording() : startRecordingForField(selectedField.id, spokenLang)}
+                          title="Record voice for this field"
+                          className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors ${isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
+                            <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
+                            <path d="M12 17v4" />
+                            <path d="M8 21h8" />
+                          </svg>
                         </button>
+                        
                       </div>
-                    )}
+                    </div>
                   </div>
 
+                  
                   <div className="mb-3">
                     
                     {suggestions && suggestions.length > 0 && (

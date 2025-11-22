@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import api from "../Axios/axios";
 import papi from "../Axios/paxios";
+import RiskViewer from '../components/RiskViewer';
 import Button from '../components/ui/Button';
 import { useToast } from '../components/ToastProvider';
 import { useGuestAccess } from '../hooks/useGuestAccess';
@@ -128,9 +129,48 @@ const LegalDesk = () => {
   const [ingestionStatus, setIngestionStatus] = useState([]);
   const toast = useToast();
   const [deleteConfirmModal, setDeleteConfirmModal] = useState({ show: false, deskId: null, deskTitle: '' });
+  const [riskModal, setRiskModal] = useState({ open: false, chat: null });
+  // Supported output languages for AI features (matches upload UI)
+  const languages = [
+    { code: 'en', label: 'English', short: 'EN' },
+    { code: 'hi', label: 'हिन्दी', short: 'HI' },
+    { code: 'gu', label: 'ગુજરાતી', short: 'GU' },
+    { code: 'mr', label: 'मराठी', short: 'MR' },
+    { code: 'ta', label: 'தமிழ்', short: 'TA' },
+    { code: 'te', label: 'తెలుగు', short: 'TE' },
+    { code: 'bn', label: 'বাংলা', short: 'BN' },
+    { code: 'kn', label: 'ಕನ್ನಡ', short: 'KN' },
+    { code: 'ml', label: 'മലയാളം', short: 'ML' },
+    { code: 'pa', label: 'ਪੰਜਾਬੀ', short: 'PA' },
+  ];
+  const [selectedOutputLang, setSelectedOutputLang] = useState('en');
+  // UI: maximum characters to show for short summary in card views
+  const SUMMARY_DISPLAY_MAX_CHARS = 200;
+  const formatSummaryForDisplay = (s) => {
+    if (!s) return 'No summary available.';
+    if (s.length > SUMMARY_DISPLAY_MAX_CHARS) return s.slice(0, SUMMARY_DISPLAY_MAX_CHARS).trimEnd() + '…';
+    return s;
+  };
   
   // Guest access control
   const { isGuest, showGuestModal, blockedFeature, checkGuestAccess, closeGuestModal } = useGuestAccess();
+  // Per-chat loading states for buttons
+  const [loadingOpenIds, setLoadingOpenIds] = useState([]); // ids for "Open Legal Desk"
+  const [loadingRiskIds, setLoadingRiskIds] = useState([]); // ids for "View Risk"
+
+  const setOpenLoading = (id, loading) => {
+    setLoadingOpenIds(prev => {
+      if (loading) return Array.from(new Set([...prev, id]));
+      return prev.filter(x => x !== id);
+    });
+  };
+
+  const setRiskLoading = (id, loading) => {
+    setLoadingRiskIds(prev => {
+      if (loading) return Array.from(new Set([...prev, id]));
+      return prev.filter(x => x !== id);
+    });
+  };
 
 
   const fetchChats = useCallback(async () => {
@@ -189,11 +229,18 @@ const LegalDesk = () => {
 
     try {
       // 1. Create legal desk entry
-      const res1 = await api.post("/api/uploaddoc", { title: sanitizedTitle });
+      // Persist chat and upload file to our backend (stores to GCS)
+      const createForm = new FormData();
+      createForm.append('title', sanitizedTitle);
+      createForm.append('file', file);
+      // Persist preferred AI output language with the upload
+      createForm.append('output_language', selectedOutputLang);
+      const res1 = await api.post("/api/uploaddoc", createForm, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (!res1.data?.chat) throw new Error("Failed to create legal desk entry.");
 
       const newChat = res1.data.chat;
-      setChats(prev => [{ ...newChat, summary: 'Generating summary...' }, ...prev]);
+      // show a temporary preview while backend signs URL
+      setChats(prev => [{ ...newChat, summary: 'Generating summary...', previewUrl: file ? URL.createObjectURL(file) : undefined }, ...prev]);
       setAdding(false);
       setIsLoading(true);
 
@@ -223,6 +270,24 @@ const LegalDesk = () => {
       formData.append("thread_id", newChat._id);
       formData.append("title", sanitizedTitle);
       formData.append("file", file);
+      // Inform ingestion service of the desired output language
+      formData.append('output_language', selectedOutputLang);
+
+      // Start risk upload in parallel to ingestion. We do not depend on its result
+      // for the summary flow, but we will update the UI once it completes.
+      // Start external ingestion + risk calls via papi (external service)
+      let riskPromise = null;
+      try {
+        const riskForm = new FormData();
+        riskForm.append('user_id', user?._id || '');
+        riskForm.append('thread_id', newChat._id);
+        riskForm.append('file', file);
+        riskForm.append('output_language', selectedOutputLang);
+        // Call external risk endpoint via papi
+        riskPromise = papi.post('/api/upload-risk-doc', riskForm, { headers: { 'Content-Type': 'multipart/form-data' } });
+      } catch (e) {
+        console.warn('Failed to start risk upload', e);
+      }
 
       await Promise.all([
         papi.post("/api/ingest", formData, {
@@ -233,13 +298,14 @@ const LegalDesk = () => {
 
       // 3. After ingest, call summary only
       let summaryText = '';
+      const SUMMARY_UNREADABLE_FALLBACK = "The provided document excerpts are encrypted and unreadable. Therefore, I cannot summarize their core content or describe what the document is or does.";
       try {
         const summaryRes = await papi.post(
           '/api/short-summary',
           {
             user_id: user?._id || '',
             thread_id: newChat._id,
-            output_language: 'en'
+            output_language: selectedOutputLang
           }
         );
         summaryText = summaryRes.data?.summary || '';
@@ -247,13 +313,22 @@ const LegalDesk = () => {
         summaryText = '';
       }
 
-      // Save summary to desk (chat) in DB
-      if (summaryText) {
+      // If summary is empty or not useful, replace with user-requested fallback sentence
+      if (!summaryText || !summaryText.trim()) {
+        summaryText = SUMMARY_UNREADABLE_FALLBACK;
+      }
+
+      // Save summary to desk (chat) in DB (persist fallback as well so UI shows consistent message)
+      try {
+        await api.patch(`/api/chats/${newChat._id}/summary`, { summary: summaryText });
+        // Also persist the chosen output language on the chat record if backend supports it
         try {
-          await api.patch(`/api/chats/${newChat._id}/summary`, { summary: summaryText });
+          await api.patch(`/api/chats/${newChat._id}`, { output_language: selectedOutputLang });
         } catch (e) {
-          // Optionally handle error
+          // ignore - optional backend support
         }
+      } catch (e) {
+        // Optionally handle error
       }
 
       setIngestionStatus(prev => prev.map(step => ({ ...step, status: 'completed' })));
@@ -261,9 +336,30 @@ const LegalDesk = () => {
 
       // Handle summary response in UI
       setChats(prev => prev.map(desk =>
-        desk._id === newChat._id ? { ...desk, summary: summaryText } : desk
+        desk._id === newChat._id ? { ...desk, summary: summaryText, output_language: selectedOutputLang } : desk
       ));
       // Optionally: handle/display risk analysis result here if needed
+      // Wait for risk result if it was started and update UI with returned JSON
+      if (riskPromise) {
+        try {
+          const riskRes = await riskPromise;
+          const riskJson = riskRes.data;
+          // persist risk JSON into our backend so it remains available
+          try {
+            await api.post(`/api/chats/${newChat._id}/risk`, { result: riskJson });
+          } catch (e) {
+            console.warn('Failed to persist risk to backend', e);
+          }
+          // update UI with risk result
+          setChats(prev => prev.map(desk => desk._id === newChat._id ? ({ ...desk, riskAnalyses: [ ...(desk.riskAnalyses || []), { createdAt: new Date().toISOString(), result: riskJson } ] }) : desk));
+        } catch (e) {
+          console.warn('Risk upload failed', e);
+        }
+      }
+
+      // Use backend proxy download endpoint (same-origin) to avoid CORS issues with signed URLs
+      // This endpoint will stream the file through our backend: /api/chats/:id/download?proxy=1
+      setChats(prev => prev.map(desk => desk._id === newChat._id ? ({ ...desk, previewUrl: `/api/chats/${newChat._id}/download?proxy=1` }) : desk));
 
     } catch (err) {
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Error creating legal desk. Please try again.';
@@ -286,6 +382,24 @@ const LegalDesk = () => {
     } catch (err) {
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to delete Legal Desk. Please try again.';
       toast.error(errorMsg);
+    }
+  };
+
+  // Open Risk viewer: fetch file via our backend (with auth) as arraybuffer and pass Blob to RiskViewer
+  const handleOpenRisk = async (chat) => {
+    if (!checkGuestAccess('Legal Desk Access')) return;
+    setRiskLoading(chat._id, true);
+    try {
+      // Try to fetch proxied file from backend using axios client (sends auth headers/cookies)
+      const resp = await api.get(`/api/chats/${chat._id}/download?proxy=1`, { responseType: 'arraybuffer' });
+      const blob = new Blob([resp.data], { type: chat.fileMimeType || 'application/pdf' });
+      setRiskModal({ open: true, chat: { ...chat, fileBlob: blob } });
+    } catch (err) {
+      console.error('Failed to fetch preview via proxy, falling back to previewUrl', err);
+      toast.error('Failed to load document preview. Trying fallback.');
+      setRiskModal({ open: true, chat });
+    } finally {
+      setRiskLoading(chat._id, false);
     }
   };
 
@@ -562,10 +676,17 @@ const LegalDesk = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse" />
-                      <span className="text-xs font-semibold text-emerald-600">SECURE</span>
-                    </div>
+                    <motion.button
+                        onClick={() => openDeleteConfirmation(chat)}
+                        className="p-3 text-red-500 hover:text-red-600 rounded-xl hover:bg-red-50 transition-all duration-200 border border-red-100 hover:border-red-200 focus:outline-none focus:ring-2 focus:ring-red-200"
+                        title="Delete Legal Desk"
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path  strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </motion.button>
                   </div>
 
                   <h3 className="text-xl font-bold text-gray-900 mb-3 line-clamp-2 leading-tight" title={chat.title}>
@@ -573,8 +694,8 @@ const LegalDesk = () => {
                   </h3>
 
                   {/* Show summary if available, else fallback */}
-                  <div className="text-sm text-gray-700 bg-gray-50 rounded-xl p-3 min-h-[48px] mt-2">
-                    {chat.summary ? chat.summary : 'No summary available.'}
+                  <div className="text-sm text-gray-700 bg-gray-50 rounded-xl p-3 min-h-[48px] mt-2" title={chat.summary || ''}>
+                    {formatSummaryForDisplay(chat.summary)}
                   </div>
                 </div>
 
@@ -585,24 +706,66 @@ const LegalDesk = () => {
                       variant="primary"
                       onClick={() => {
                         if (!checkGuestAccess('Legal Desk Access')) return;
-                        navigate(`/legal-desk/${chat._id}`);
+                        setOpenLoading(chat._id, true);
+                        try {
+                          navigate(`/legal-desk/${chat._id}`);
+                        } finally {
+                          // Clear the loading state shortly after navigate in case component doesn't unmount immediately
+                          setTimeout(() => setOpenLoading(chat._id, false), 600);
+                        }
                       }}
-                      className="flex-1 mr-3 py-3 rounded-xl font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 transition-all"
+                      disabled={loadingOpenIds.includes(chat._id)}
+                      aria-label="Open Legal Desk"
+                      title="Open Legal Desk"
+                      className={`flex-1 mr-3 inline-flex items-center justify-center gap-3 py-3 rounded-xl font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 ${loadingOpenIds.includes(chat._id) ? 'bg-gray-300 text-gray-700 cursor-wait' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700'}`}
                     >
-                      Open Legal Desk
+                      {loadingOpenIds.includes(chat._id) ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                          </svg>
+                          <span>Opening...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-4" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 4h6v6" />
+                          </svg>
+                          <span className="text-white">Open</span>
+                        </>
+                      )}
                     </Button>
                     
-                    <motion.button
-                      onClick={() => openDeleteConfirmation(chat)}
-                      className="p-3 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50 transition-all duration-200"
-                      title="Delete Legal Desk"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </motion.button>
+                    <div className="flex items-center gap-2">
+                      {((chat.riskAnalyses && chat.riskAnalyses.length > 0) || chat.previewUrl) && (
+                        <button
+                          onClick={() => handleOpenRisk(chat)}
+                          disabled={loadingRiskIds.includes(chat._id)}
+                          aria-label="View Risk Analysis"
+                          title="View Risk Analysis"
+                          className={`inline-flex items-center gap-2 px-4 py-3 text-sm rounded-xl font-semibold mr-0 transition-colors focus:outline-none focus:ring-2 focus:ring-red-300 ${loadingRiskIds.includes(chat._id) ? 'bg-red-200 text-red-800 cursor-wait' : 'bg-white text-red-700 border border-red-100 hover:bg-red-50'}`}
+                        >
+                          {loadingRiskIds.includes(chat._id) ? (
+                            <div className="flex items-center gap-2">
+                              <svg className="animate-spin h-4 w-4 text-red-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                              </svg>
+                              <span>Loading...</span>
+                            </div>
+                          ) : (
+                            <>
+                              
+                              <span className="text-sm font-semibold">View Risk</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      
+                    </div>
                   </div>
                 </div>
               </div>
@@ -752,6 +915,20 @@ const LegalDesk = () => {
                 </div>
 
                 {/* Action Buttons */}
+                {/* Output language selector for AI features */}
+                <div className="mt-4">
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">AI Output Language</label>
+                  <select
+                    value={selectedOutputLang}
+                    onChange={(e) => setSelectedOutputLang(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  >
+                    {languages.map(lang => (
+                      <option key={lang.code} value={lang.code}>{lang.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-2">Select preferred language for AI-generated summaries and analyses.</p>
+                </div>
                 <div className="flex gap-4 justify-end mt-3 pt-6 border-t border-gray-100">
                   <Button
                     variant="secondary"
@@ -850,7 +1027,7 @@ const LegalDesk = () => {
                 <Button
                   variant="primary"
                   onClick={() => handleDelete(deleteConfirmModal.deskId)}
-                  className="px-6 py-2.5 rounded-lg font-medium bg-red-600 hover:bg-red-700 text-white shadow-lg hover:shadow-xl transition-all"
+                  className="px-6 py-2.5 rounded-lg font-medium bg-red-600 hover:bg-red-700 text-white shadow-lg hover:shadow-xl transition-all border-2 border-red-600 focus:outline-none focus:ring-4 focus:ring-red-200"
                 >
                   Delete Legal Desk
                 </Button>
@@ -861,6 +1038,16 @@ const LegalDesk = () => {
       </AnimatePresence>
 
       {/* Guest Access Modal */}
+      {/* Risk Viewer Modal */}
+      {riskModal.open && (
+        <RiskViewer
+          fileUrl={riskModal.chat?.previewUrl}
+          fileBlob={riskModal.chat?.fileBlob || null}
+          riskData={(riskModal.chat && riskModal.chat.riskAnalyses && riskModal.chat.riskAnalyses.length) ? riskModal.chat.riskAnalyses[riskModal.chat.riskAnalyses.length - 1].result : (riskModal.chat && riskModal.chat.riskAnalyses) || null}
+          onClose={() => setRiskModal({ open: false, chat: null })}
+        />
+      )}
+
       <GuestAccessModal
         isOpen={showGuestModal}
         onClose={closeGuestModal}

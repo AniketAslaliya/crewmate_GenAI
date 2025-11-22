@@ -164,12 +164,12 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
               <img
                 src={authUser?.profileImage?.gcsUrl || authUser.picture}
                 alt={authUser.name}
-                className={`${isOpen ? 'w-10 h-10' : 'w-[50px] h-[30px]'} rounded-md object-cover flex-shrink-0`}
+                className={`${isOpen ? 'w-10 h-10' : 'w-fill h-fill'} rounded-md object-cover flex-shrink-0`}
                 onError={e => { e.target.style.display = 'none'; e.target.parentNode.querySelector('.sidebar-fallback-avatar').style.display = 'block'; }}
               />
             ) : null}
             <span className="sidebar-fallback-avatar" style={{display: (!authUser?.profileImage?.gcsUrl && !authUser?.picture) ? 'block' : 'none'}}>
-              <InitialAvatar name={authUser?.name} className={`${isOpen ? 'w-10 h-10' : 'w-[50px] h-[30px]'} rounded-md flex-shrink-0`} />
+              <InitialAvatar name={authUser?.name} className={`${isOpen ? 'w-10 h-10' : 'w-fill h-fill'} rounded-md flex-shrink-0`} />
             </span>
             {isOpen && (
               <div className="flex-1 min-w-0">

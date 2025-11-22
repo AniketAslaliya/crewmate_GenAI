@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import useAuthStore from '../context/AuthContext';
 import { FaMicrophone } from 'react-icons/fa';
 import api from '../Axios/axios';
+import ReactMarkdown from 'react-markdown';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '../components/ToastProvider';
 // papi is the AI backend axios instance (used for model answers)
@@ -404,20 +405,27 @@ const GeneralAsk = () => {
       setActive(chatId);
   setIsAiThinking(true);
 
-        // Build history from chat messages (excluding optimistic message)
+        // Build history from chat messages (exclude optimistic message)
+        // The papi backend expects each history entry to have a `content` field.
         let history = [];
         if (chatObj && Array.isArray(chatObj.messages)) {
-          history = chatObj.messages.map(m => ({ role: m.role, text: m.text }));
+          history = chatObj.messages.map(m => ({ role: m.role, content: m.text }));
         }
         // Add the current user message to the end of history
-        history = [...history, { role: 'user', text: txt }];
+        history = [...history, { role: 'user', content: txt }];
         // Get user_id if available
         const user_id = user && user._id ? user._id : undefined;
         
         // call the AI backend (papi) to get an answer, then persist to storage backend (api)
-        const payload = { query: txt, output_language: 'en', chatId, history };
-        if (user_id) payload.user_id = user_id;
-        const papiRes = await papi.post('/api/general-ask', payload);
+        // Use the expected papi request shape: { user_id, thread_id, query, history, output_language }
+        const papiPayload = {
+          query: txt,
+          history,
+          output_language: 'en',
+          thread_id: chatId,
+        };
+        if (user_id) papiPayload.user_id = user_id;
+        const papiRes = await papi.post('/api/general-ask', papiPayload);
       console.log('papi response', papiRes && papiRes.data ? papiRes.data : papiRes);
       // extract answer from common response shapes (res.data.answer OR res.data.data.answer)
       let answerText = '';
@@ -599,9 +607,24 @@ const GeneralAsk = () => {
           {activeChat ? (
             displayMessages.map((m, idx) => (
               <div key={m._id || idx} className={`mb-3 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`${m.role === 'user' ? 'bg-[var(--palette-1)] text-white rounded-tl-lg rounded-br-lg rounded-bl-lg' : 'bg-[var(--panel)] text-[var(--text)] rounded-tr-lg rounded-br-lg rounded-bl-lg'} max-w-[70%] px-3 py-2`}>
-                  <div className="break-words whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatMessageToHtml(m.text) }} />
-                </div>
+                        <div className={`${m.role === 'user' ? 'bg-[var(--palette-1)] text-white rounded-tl-lg rounded-br-lg rounded-bl-lg' : 'bg-[var(--panel)] text-[var(--text)] rounded-tr-lg rounded-br-lg rounded-bl-lg'} max-w-[70%] px-3 py-2`}>
+                          <div className="break-words whitespace-pre-wrap">
+                            <ReactMarkdown
+                              skipHtml={true}
+                              components={{
+                                p: ({ children }) => <p className="mb-2">{children}</p>,
+                                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                                em: ({ children }) => <em className="italic">{children}</em>,
+                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{children}</a>,
+                                h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
+                                h2: ({ children }) => <h2 className="text-base font-bold mb-2">{children}</h2>,
+                                h3: ({ children }) => <h3 className="text-sm font-semibold mb-2">{children}</h3>,
+                              }}
+                            >
+                              {String(m.text || '')}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
               </div>
             ))
           ) : null}

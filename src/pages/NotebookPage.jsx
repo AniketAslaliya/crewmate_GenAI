@@ -153,6 +153,7 @@ const NotebookPage = (props) => {
   // Zustand store for caching feature responses
   const getCachedFeature = useNotebookStore((state) => state.getCachedFeature);
   const setCachedFeature = useNotebookStore((state) => state.setCachedFeature);
+  const clearNotebookCache = useNotebookStore((state) => state.clearNotebookCache);
   const [featureData, setFeatureData] = useState({
     chat: { title: "Chat", icon: <FaComments />, content: null, tooltip: "Interactive Q&A with your legal document" },
     summary: { title: "Summary", icon: <FaFileAlt />, content: null, tooltip: "Comprehensive summary and key insights" },
@@ -168,13 +169,15 @@ const NotebookPage = (props) => {
 
   const languages = [
     { label: 'English', code: 'en' },
-    { label: 'Hindi', code: 'hi' },
-    { label: 'Spanish', code: 'es' },
-    { label: 'French', code: 'fr' },
-    { label: 'Malayalam', code: 'ml' },
-    { label: 'Tamil', code: 'ta' },
-    { label: 'Marathi', code: 'mr' },
-    { label: 'Gujarati', code: 'gu' },
+    { label: 'हिन्दी', code: 'hi' },
+    { label: 'ગુજરાતી', code: 'gu' },
+    { label: 'मराठी', code: 'mr' },
+    { label: 'தமிழ்', code: 'ta' },
+    { label: 'తెలుగు', code: 'te' },
+    { label: 'বাংলা', code: 'bn' },
+    { label: 'ಕನ್ನಡ', code: 'kn' },
+    { label: 'മലയാളം', code: 'ml' },
+    { label: 'ਪੰਜਾਬੀ', code: 'pa' },
   ];
   const [selectedLang, setSelectedLang] = useState('en');
   const toast = useToast();
@@ -222,6 +225,11 @@ const NotebookPage = (props) => {
           api.get(`/api/messages/${id}`),
         ]);
         setNotebook(notebookRes.data.chat);
+        // Default UI language to the chat's persisted output_language (if present)
+        try {
+          const persistedLang = notebookRes.data.chat?.output_language;
+          if (persistedLang) setSelectedLang(String(persistedLang).slice(0,2));
+        } catch (e) {}
         setMessages(messagesRes.data.messages);
       } catch (err) {
         // Error handling
@@ -338,7 +346,7 @@ const NotebookPage = (props) => {
     }
   };
 
-  const renderMessageContent = (content) => {
+ const renderMessageContent = (content) => {
     if (content === null || content === undefined) return null;
     if (typeof content !== 'string') return String(content);
 
@@ -349,7 +357,7 @@ const NotebookPage = (props) => {
       <ReactMarkdown
         components={{
           p: ({ children }) => <p className="mb-2">{children}</p>,
-          strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
           em: ({ children }) => <em className="italic">{children}</em>,
           code: ({ inline, children }) => 
             inline ? (
@@ -371,6 +379,7 @@ const NotebookPage = (props) => {
       </ReactMarkdown>
     );
   };
+
 
   // Voice recording functions (same as before)
   const encodeWAV = (samples, sampleRate) => {
@@ -536,6 +545,8 @@ const NotebookPage = (props) => {
       }
 
       const payload = { user_id: notebook?.user, thread_id: id };
+      // Ensure output_language is always provided (feature-level override allowed)
+      payload.output_language = (langOverride || selectedLang || 'en').slice(0,2);
       let content;
 
       // ... (rest of your fetchFeatureData function remains exactly the same)
@@ -543,7 +554,7 @@ const NotebookPage = (props) => {
         // Call both APIs in parallel
         const [studyGuideRes, insightsRes] = await Promise.allSettled([
           papi.post(`/api/study-guide`, payload),
-          papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || selectedLang || 'en').slice(0,2) })
+          papi.post(`/api/explain-clauses`, { ...payload, output_language: (langToUse || payload.output_language || 'en').slice(0,2) })
         ]);
         
         const studyGuide = studyGuideRes.status === 'fulfilled' ? studyGuideRes.value.data.study_guide : null;
@@ -555,7 +566,7 @@ const NotebookPage = (props) => {
         }
 
         if (!studyGuide) {
-          content = <div className="text-sm text-gray-400">No study guide available.</div>;
+          content = <div className="text-sm text-gray-400">The provided document excerpts are encrypted and unreadable. Therefore, I cannot summarize their core content or describe what the document is or does.</div>;
         } else if (typeof studyGuide === 'object' && studyGuide.document_type) {
           // New structured format
           content = (
@@ -1198,19 +1209,50 @@ const NotebookPage = (props) => {
           </div>
           {/* Center title */}
           <div className="flex-1 px-2 md:px-4">
-            <h1 className="text-sm md:text-base font-semibold text-[var(--text)] text-center truncate">
+            <h1 className="text-sm md:text-base font-semibold text-[var(--text)] text-center md:hidden">
+              {(notebook?.title || 'Notebook').length > 6 ? (notebook?.title || 'Notebook').slice(0,6) + '...' : (notebook?.title || 'Notebook')}
+            </h1>
+            <h1 className="hidden md:block text-sm md:text-base font-semibold text-[var(--text)] text-center truncate">
               {notebook?.title || 'Notebook'}
             </h1>
           </div>
           {/* Mobile feature panel toggle */}
-          <button
-            onClick={() => setMobileMenuOpen(true)}
-            className="flex lg:hidden items-center gap-1 pl-2 pr-3 py-2 text-[var(--text)] hover:bg-[var(--border)] rounded-lg flex-shrink-0"
-            aria-label="Open features panel"
-          >
-            <FaChevronLeft className="text-lg" />
-            <span className="text-xs font-medium">Features</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Mobile: small language selector placed before Features button */}
+            <select
+              aria-label="Mobile notebook language"
+              value={selectedLang}
+              onChange={async (e) => {
+                const newLang = e.target.value;
+                setSelectedLang(newLang);
+                try {
+                  await api.patch(`/api/chats/${id}`, { output_language: newLang });
+                  setNotebook(prev => prev ? { ...prev, output_language: newLang } : prev);
+                } catch (err) {
+                  console.warn('Failed to persist chat language', err);
+                }
+                try { clearNotebookCache(id); } catch (err) { console.warn('clearNotebookCache failed', err); }
+                if (activeFeature && activeFeature !== 'chat') {
+                  fetchFeatureData(activeFeature, newLang);
+                }
+              }}
+              className="md:hidden px-2 py-2 rounded-md bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] text-xs"
+            >
+              {languages.map((lng) => (
+                <option key={lng.code} value={lng.code}>{lng.label}</option>
+              ))}
+            </select>
+
+            {/* Mobile features button */}
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="flex lg:hidden items-center gap-1 pl-2 pr-3 py-2 text-[var(--text)] hover:bg-[var(--border)] rounded-lg flex-shrink-0"
+              aria-label="Open features panel"
+            >
+              <FaChevronLeft className="text-lg" />
+              <span className="text-xs font-medium">Features</span>
+            </button>
+          </div>
 
           {/* Desktop: Horizontal feature navbar - single line */}
           <div className="hidden lg:flex flex-1">
@@ -1240,6 +1282,34 @@ const NotebookPage = (props) => {
                 </button>
               ))}
             </nav>
+          </div>
+          {/* Desktop: Output language selector placed to the right of features */}
+          <div className="hidden md:flex items-center ml-4">
+            <select
+              aria-label="Notebook output language"
+              value={selectedLang}
+              onChange={async (e) => {
+                const newLang = e.target.value;
+                setSelectedLang(newLang);
+                try {
+                  await api.patch(`/api/chats/${id}`, { output_language: newLang });
+                  setNotebook(prev => prev ? { ...prev, output_language: newLang } : prev);
+                } catch (err) {
+                  console.warn('Failed to persist chat language', err);
+                }
+
+                // Clear cached features and re-render current feature in new language
+                try { clearNotebookCache(id); } catch (err) { console.warn('clearNotebookCache failed', err); }
+                if (activeFeature && activeFeature !== 'chat') {
+                  fetchFeatureData(activeFeature, newLang);
+                }
+              }}
+              className="px-3 py-2 rounded-md bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] text-sm"
+            >
+              {languages.map((lng) => (
+                <option key={lng.code} value={lng.code}>{lng.label}</option>
+              ))}
+            </select>
           </div>
         </header>
 
@@ -1451,20 +1521,7 @@ const NotebookPage = (props) => {
                 className="min-w-0 flex-1 px-3 py-2 md:px-4 md:py-2 border rounded-md bg-[var(--panel)] text-[var(--text)] placeholder-[var(--muted)] text-sm"
                 style={{ borderColor: 'var(--palette-3)' }}
               />
-
-              {/* Language Selector - Compact on mobile */}
-              <select 
-                aria-label="Select language" 
-                value={selectedLang} 
-                onChange={(e) => setSelectedLang(e.target.value)}
-                className="flex-shrink-0 px-2 py-2 rounded-md bg-[var(--panel)] text-[var(--text)] border border-[var(--border)] text-xs w-20 md:w-24"
-              >
-                {languages.map((lng) => (
-                  <option key={lng.code} value={lng.code}>
-                    {lng.label}
-                  </option>
-                ))}
-              </select>
+              {/* Mobile language selector removed from chat input - use header selector instead */}
 
               {/* Send Button */}
               <motion.button 
