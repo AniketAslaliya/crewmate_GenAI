@@ -60,7 +60,7 @@ public/uploads/
 *.docx
 
 # Local generated Google service account file (if GCP_CREDENTIALS stored in .env)
-gcloud-sa-fromenv.json
+gcloud-sa.json
 *.xlsx
 
 # Database files
