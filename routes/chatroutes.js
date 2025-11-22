@@ -1,9 +1,11 @@
 import { Router } from "express";
 
-import { uploadDocument, deleteChat, getUserChats,getChatbyId} from "../controllers/chatController.js";
+import { uploadDocument, deleteChat, getUserChats, getChatbyId, updateChatSummary } from "../controllers/chatController.js";
 import { createGeneralChat, askGeneral, saveGeneralChat } from "../controllers/generalAskController.js";
 import authMiddleware from "../middlewares/auth.js";
 const router = Router();
+
+router.patch("/chats/:id/summary", authMiddleware, updateChatSummary);
 
 
   router.post("/uploaddoc", authMiddleware, uploadDocument);

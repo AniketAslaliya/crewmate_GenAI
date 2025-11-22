@@ -4,22 +4,65 @@
 param(
     [Parameter(Mandatory=$false)]
     [string]$ProjectId = "",
-    
     [Parameter(Mandatory=$false)]
     [string]$Region = "us-central1",
-    
     [Parameter(Mandatory=$false)]
-    [string]$ServiceName = "legal-sahai-backend",
-    
+    [string]$ServiceName = "",
     [Parameter(Mandatory=$false)]
     [int]$MinInstances = 1,
-    
     [Parameter(Mandatory=$false)]
     [int]$MaxInstances = 10,
-    
     [Parameter(Mandatory=$false)]
     [switch]$AutoMigrateTraffic = $false
 )
+
+# --- Auto-fetch ProjectId and ServiceName if not provided ---
+# Try .env for GCP_PROJECT_ID
+if ([string]::IsNullOrEmpty($ProjectId)) {
+    $envFile = Join-Path $PSScriptRoot ".env"
+    if (Test-Path $envFile) {
+        $lines = Get-Content $envFile
+        foreach ($line in $lines) {
+            if ($line -match "^GCP_PROJECT_ID\s*=\s*(.+)$") {
+                $ProjectId = $Matches[1].Trim()
+                break
+            }
+        }
+    }
+}
+# Fallback to gcloud config
+if ([string]::IsNullOrEmpty($ProjectId)) {
+    $ProjectId = gcloud config get-value project 2>$null
+    if ([string]::IsNullOrEmpty($ProjectId)) {
+        Write-Error "Error: No GCP project ID specified and no default project set"
+        Write-Info "Please run: gcloud config set project YOUR_PROJECT_ID"
+        exit 1
+    }
+}
+
+# Try to get ServiceName from cloudbuild.yaml
+if ([string]::IsNullOrEmpty($ServiceName)) {
+    $cbFile = Join-Path $PSScriptRoot "cloudbuild.yaml"
+    if (Test-Path $cbFile) {
+        $lines = Get-Content $cbFile
+        foreach ($line in $lines) {
+            if ($line -match "^\s*- 'run'\s*$") {
+                $nextIdx = [Array]::IndexOf($lines, $line) + 1
+                for ($i = $nextIdx; $i -lt $lines.Count; $i++) {
+                    if ($lines[$i] -match "^\s*- '([a-zA-Z0-9\-]+)'\s*$") {
+                        $ServiceName = $Matches[1].Trim()
+                        break
+                    }
+                }
+                if ($ServiceName) { break }
+            }
+        }
+    }
+}
+# Fallback to folder name
+if ([string]::IsNullOrEmpty($ServiceName)) {
+    $ServiceName = Split-Path -Leaf (Get-Location)
+}
 
 # Color output functions
 function Write-Success { param($Message) Write-Host $Message -ForegroundColor Green }
