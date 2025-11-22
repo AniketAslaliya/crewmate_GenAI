@@ -102,6 +102,21 @@ export const getSignedUrl = async (path, expiresInHours = 1) => {
 };
 
 /**
+ * Return a readable stream for a file in GCS
+ * @param {string} path - File path in GCS
+ * @returns {Readable}
+ */
+export const getReadStream = (path) => {
+  try {
+    const file = bucket.file(path);
+    return file.createReadStream();
+  } catch (error) {
+    console.error('❌ GCS createReadStream error:', error);
+    throw new Error('Failed to create read stream for file');
+  }
+};
+
+/**
  * Share file between users (lawyer and client)
  * @param {string} path - File path in GCS
  * @param {string[]} userIds - Array of user IDs to share with
@@ -227,6 +242,7 @@ export default {
   uploadToGCS,
   deleteFromGCS,
   getSignedUrl,
+  getReadStream,
   shareFile,
   listFiles,
   getFileMetadata,

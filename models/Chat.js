@@ -24,6 +24,28 @@ const ChatSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    riskAnalyses: {
+      type: Array,
+      default: []
+    },
+    // persisted file storage info (GCS)
+    fileGcsPath: {
+      type: String,
+      default: ''
+    },
+    originalFileName: {
+      type: String,
+      default: ''
+    },
+    fileMimeType: {
+      type: String,
+      default: ''
+    },
+    // Preferred output language for AI-generated content for this chat/desk
+    output_language: {
+      type: String,
+      default: 'en'
+    },
   },
   { timestamps: true }
 );
