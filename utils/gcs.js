@@ -1,12 +1,43 @@
 import { Storage } from '@google-cloud/storage';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'node:crypto';
+
+// Parse credentials from env (safe) and normalize private_key newlines
+let credentialsObject;
+let credentialFingerprint = null;
+try {
+  if (process.env.GCP_CREDENTIALS) {
+    credentialsObject = JSON.parse(process.env.GCP_CREDENTIALS);
+
+    // If private_key contains escaped newlines (literal "\\n"), convert them to real newlines
+    if (typeof credentialsObject.private_key === 'string') {
+      const raw = credentialsObject.private_key;
+      const containsEscaped = raw.includes('\\n');
+      const normalized = containsEscaped ? raw.replace(/\\n/g, '\n') : raw;
+      credentialsObject.private_key = normalized.trim();
+
+      // Compute short SHA-256 fingerprint of the private_key (safe — doesn't reveal key)
+      credentialFingerprint = crypto.createHash('sha256')
+        .update(credentialsObject.private_key)
+        .digest('hex')
+        .slice(0, 16);
+
+      console.info('GCS credentials loaded from env:', {
+        projectId: credentialsObject.project_id,
+        private_key_len: credentialsObject.private_key.length,
+        private_key_contains_escaped_newlines: containsEscaped,
+        private_key_fingerprint: credentialFingerprint
+      });
+    }
+  }
+} catch (err) {
+  console.warn('Could not parse GCP_CREDENTIALS from env. Falling back to ADC if available.', err?.message || err);
+}
 
 // Initialize Google Cloud Storage
 const storage = new Storage({
-  projectId: process.env.GCP_PROJECT_ID,
-  credentials: process.env.GCP_CREDENTIALS 
-    ? JSON.parse(process.env.GCP_CREDENTIALS)
-    : undefined
+  projectId: process.env.GCP_PROJECT_ID || (credentialsObject && credentialsObject.project_id),
+  credentials: credentialsObject
 });
 
 const bucketName = process.env.GCS_BUCKET_NAME || 'legal-ai-forms';
@@ -58,7 +89,19 @@ export const uploadToGCS = async (fileBuffer, filename, folder = 'forms', userId
       publicUrl: `https://storage.googleapis.com/${bucketName}/${path}`
     };
   } catch (error) {
-    console.error('❌ GCS upload error:', error);
+    // Log safe diagnostic info
+    console.error('❌ GCS upload error:', {
+      message: error.message,
+      status: error.status || error.code,
+      responseData: error?.response?.data ? error.response.data : undefined,
+      credential_fingerprint: credentialFingerprint
+    });
+
+    // If Google returned structured error info, include it
+    if (error?.response?.data && error.response.data.error_description) {
+      throw new Error(`Failed to upload file to Google Cloud Storage: ${error.response.data.error}: ${error.response.data.error_description}`);
+    }
+
     throw new Error(`Failed to upload file to Google Cloud Storage: ${error.message}`);
   }
 };
@@ -98,21 +141,6 @@ export const getSignedUrl = async (path, expiresInHours = 1) => {
   } catch (error) {
     console.error('❌ GCS get signed URL error:', error);
     throw new Error('Failed to get download link');
-  }
-};
-
-/**
- * Return a readable stream for a file in GCS
- * @param {string} path - File path in GCS
- * @returns {Readable}
- */
-export const getReadStream = (path) => {
-  try {
-    const file = bucket.file(path);
-    return file.createReadStream();
-  } catch (error) {
-    console.error('❌ GCS createReadStream error:', error);
-    throw new Error('Failed to create read stream for file');
   }
 };
 
@@ -214,6 +242,21 @@ export const copyFile = async (sourcePath, destPath) => {
   } catch (error) {
     console.error('❌ GCS copy error:', error);
     throw new Error('Failed to copy file');
+  }
+};
+
+/**
+ * Get a readable stream for a file in GCS
+ * @param {string} path - File path in GCS
+ * @returns {ReadableStream}
+ */
+export const getReadStream = (path) => {
+  try {
+    const file = bucket.file(path);
+    return file.createReadStream();
+  } catch (error) {
+    console.error('❌ GCS createReadStream error:', error);
+    throw new Error('Failed to create read stream from GCS');
   }
 };
 

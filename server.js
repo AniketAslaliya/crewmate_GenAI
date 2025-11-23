@@ -16,7 +16,6 @@ import adminRouter from "./routes/admin.js";
 import supportRouter from "./routes/support.js";
 import riskFileRouter from "./routes/riskFile.js";
 import multer from 'multer';
-import { transcribeHindi } from './controllers/speechController.js';
 import http from "http";
 import { Server } from "socket.io";
 import crypto from "crypto";
@@ -45,9 +44,7 @@ app.use("/api/forms", formsRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/support", supportRouter);
 app.use("/api/risk-file", riskFileRouter);
-// Register speech transcription endpoint at expected path
-const uploadMiddleware = multer();
-app.post('/api/transcribe-hindi', uploadMiddleware.single('file'), transcribeHindi);
+// Speech transcription endpoint removed — using legacy .env GCP_CREDENTIALS flow for uploads
 app.get("/", (req, res) => res.json({ ok: true }));
 
 // Message encryption helper (same logic as messageController)

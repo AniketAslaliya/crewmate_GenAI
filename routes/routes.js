@@ -7,7 +7,6 @@ import { VerificationCode } from "../models/VerificationCode.js";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { uploadDocument, deleteChat, getUserChats} from "../controllers/chatController.js";
-import { transcribeHindi } from '../controllers/speechController.js';
 import authMiddleware from "../middlewares/auth.js";
 import lawyersRouter from "./lawyers.js";
 import formsRouter from './forms.js';
@@ -540,8 +539,7 @@ router.put('/profile/update', authMiddleware, async (req, res) => {
 router.post('/profile/upload-image', authMiddleware, upload.single('image'), uploadProfileImage);
 router.delete('/profile/delete-image', authMiddleware, deleteProfileImage);
 
-// Google Cloud Speech-to-Text (Hindi) - accepts multipart `file`
-router.post('/api/transcribe-hindi', upload.single('file'), transcribeHindi);
+// Speech transcription route removed
 
 // mount lawyer-related routes
 router.use('/api/lawyers', lawyersRouter);
