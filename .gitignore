@@ -104,3 +104,5 @@ pip-log.txt
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+backend/gcloud-sa.json
+gcloud-sa.json
