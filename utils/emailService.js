@@ -138,7 +138,6 @@ The Legal SahAI Team
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Verification code sent to ${userEmail}`);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending verification code:', error);
@@ -270,7 +269,6 @@ The Legal SahAI Security Team
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Password reset code sent to ${userEmail}`);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending password reset code:', error);
@@ -374,7 +372,6 @@ The Legal SahAI Team
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Approval email sent to ${lawyerEmail}`);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending approval email:', error);
@@ -490,7 +487,6 @@ The Legal SahAI Team
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`✅ Rejection email sent to ${lawyerEmail}`);
     return { success: true };
   } catch (error) {
     console.error('❌ Error sending rejection email:', error);

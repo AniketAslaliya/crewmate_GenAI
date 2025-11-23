@@ -76,8 +76,6 @@ router.get(
         picture: user.picture,
       });
 
-      console.log("Generated Token:", token);
-
       // Redirect back to frontend with token in query string
       res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}`);
     } catch (err) {

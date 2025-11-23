@@ -4,7 +4,7 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { config } from 'dotenv';
-config();
+config({ silent: true });
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/legal-ai';
 
@@ -24,7 +24,6 @@ async function createAdminUser() {
   try {
     // Connect to MongoDB
     await mongoose.connect(MONGO_URI);
-    console.log('✅ Connected to MongoDB');
 
     // Admin credentials
     const adminEmail = 'admin@legalai.com';
@@ -34,13 +33,11 @@ async function createAdminUser() {
     // Check if admin already exists
     const existingAdmin = await User.findOne({ email: adminEmail });
     if (existingAdmin) {
-      console.log('⚠️  Admin user already exists with email:', adminEmail);
       
       // Update role if needed
       if (existingAdmin.role !== 'admin') {
         existingAdmin.role = 'admin';
         await existingAdmin.save();
-        console.log('✅ Updated existing user to admin role');
       }
       
       process.exit(0);
@@ -58,11 +55,6 @@ async function createAdminUser() {
       picture: null,
       googleId: null
     });
-
-    console.log('✅ Admin user created successfully!');
-    console.log('📧 Email:', adminEmail);
-    console.log('🔑 Password:', adminPassword);
-    console.log('⚠️  IMPORTANT: Change the password after first login!');
 
     process.exit(0);
   } catch (error) {

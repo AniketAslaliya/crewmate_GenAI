@@ -1,9 +1,17 @@
+// Suppress punycode deprecation warning
+process.emitWarning = (warning, ...args) => {
+  if (warning.name === 'DeprecationWarning' && warning.message.includes('punycode')) {
+    return;
+  }
+  return process.emitWarning(warning, ...args);
+};
+
 import express, { json } from "express";
 import passport from "passport";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import { config } from "dotenv";
-config();
+config({ silent: true });
 import connectDB from "./config/db.js";
 import "./config/passport.js";
 import session from "express-session";
@@ -120,7 +128,5 @@ connectDB().then(() => {
     });
   });
 
-  server.listen(process.env.PORT, () => {
-    console.log(`Server running on port ${process.env.PORT}`);
-  });
+  server.listen(process.env.PORT);
 });

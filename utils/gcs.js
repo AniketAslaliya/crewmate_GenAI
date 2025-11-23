@@ -21,13 +21,6 @@ try {
         .update(credentialsObject.private_key)
         .digest('hex')
         .slice(0, 16);
-
-      console.info('GCS credentials loaded from env:', {
-        projectId: credentialsObject.project_id,
-        private_key_len: credentialsObject.private_key.length,
-        private_key_contains_escaped_newlines: containsEscaped,
-        private_key_fingerprint: credentialFingerprint
-      });
     }
   }
 } catch (err) {

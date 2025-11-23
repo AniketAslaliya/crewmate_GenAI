@@ -4,7 +4,6 @@ const authMiddleware = async (req, res, next) => {
   try {
     const token = req.header("Authorization")?.replace("Bearer ", "");
     if (!token) {
-      console.log('Auth middleware: No token provided');
       return res.status(401).json({ message: "No token provided" });
     }
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
