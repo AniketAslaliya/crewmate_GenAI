@@ -39,7 +39,12 @@ const ForgotPassword = () => {
       setStep(2);
       setTimer(60);
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Failed to send code');
+      const msg = err?.response?.data?.error || 'Failed to send code';
+      toast.error(msg);
+      // If backend says user not found (404), redirect to login so they can sign up
+      if (err?.response?.status === 404) {
+        setTimeout(() => navigate('/login'), 2000);
+      }
     } finally {
       setLoading(false);
     }
@@ -141,7 +146,11 @@ const ForgotPassword = () => {
       setTimer(60);
       setCode(['', '', '', '', '', '']);
     } catch (err) {
-      toast.error('Failed to resend code');
+      const msg = err?.response?.data?.error || 'Failed to resend code';
+      toast.error(msg);
+      if (err?.response?.status === 404) {
+        setTimeout(() => navigate('/login'), 2000);
+      }
     } finally {
       setLoading(false);
     }

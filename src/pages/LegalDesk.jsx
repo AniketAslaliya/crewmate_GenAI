@@ -227,6 +227,18 @@ const LegalDesk = () => {
 
     setUploading(true);
 
+    let newChat = null;
+    const cleanupDesk = async (deskId) => {
+      if (!deskId) return;
+      try {
+        await api.delete(`/api/delete/${deskId}`);
+      } catch (delErr) {
+        console.warn('Failed to cleanup desk after pipeline error', delErr);
+      }
+      // Also remove from local UI state
+      setChats(prev => prev.filter(c => c._id !== deskId));
+    };
+
     try {
       // 1. Create legal desk entry
       // Persist chat and upload file to our backend (stores to GCS)
@@ -238,7 +250,7 @@ const LegalDesk = () => {
       const res1 = await api.post("/api/uploaddoc", createForm, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (!res1.data?.chat) throw new Error("Failed to create legal desk entry.");
 
-      const newChat = res1.data.chat;
+      newChat = res1.data.chat;
       // show a temporary preview while backend signs URL
       setChats(prev => [{ ...newChat, summary: 'Generating summary...', previewUrl: file ? URL.createObjectURL(file) : undefined }, ...prev]);
       setAdding(false);
@@ -283,18 +295,26 @@ const LegalDesk = () => {
         riskForm.append('thread_id', newChat._id);
         riskForm.append('file', file);
         riskForm.append('output_language', selectedOutputLang);
-        // Call external risk endpoint via papi
+        // Call external risk endpoint via papi (fire-and-track)
         riskPromise = papi.post('/api/upload-risk-doc', riskForm, { headers: { 'Content-Type': 'multipart/form-data' } });
       } catch (e) {
         console.warn('Failed to start risk upload', e);
       }
 
-      await Promise.all([
-        papi.post("/api/ingest", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        }),
-        updateProgress()
-      ]);
+      // 2. Ingest document (must succeed before next steps)
+      try {
+        await Promise.all([
+          papi.post("/api/ingest", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+          }),
+          updateProgress()
+        ]);
+      } catch (ingestErr) {
+        // If ingest fails, remove created desk and rethrow to outer catch
+        console.error('Ingest failed for thread', newChat?._id, ingestErr);
+        await cleanupDesk(newChat?._id);
+        throw ingestErr;
+      }
 
       // 3. After ingest, call summary only
       let summaryText = '';
@@ -309,8 +329,10 @@ const LegalDesk = () => {
           }
         );
         summaryText = summaryRes.data?.summary || '';
-      } catch (e) {
-        summaryText = '';
+      } catch (summaryErr) {
+        console.error('Summary generation failed for thread', newChat?._id, summaryErr);
+        await cleanupDesk(newChat?._id);
+        throw summaryErr;
       }
 
       // If summary is empty or not useful, replace with user-requested fallback sentence
@@ -352,8 +374,10 @@ const LegalDesk = () => {
           }
           // update UI with risk result
           setChats(prev => prev.map(desk => desk._id === newChat._id ? ({ ...desk, riskAnalyses: [ ...(desk.riskAnalyses || []), { createdAt: new Date().toISOString(), result: riskJson } ] }) : desk));
-        } catch (e) {
-          console.warn('Risk upload failed', e);
+        } catch (riskErr) {
+          console.error('Risk upload failed for thread', newChat?._id, riskErr);
+          await cleanupDesk(newChat?._id);
+          throw riskErr;
         }
       }
 
@@ -364,7 +388,16 @@ const LegalDesk = () => {
     } catch (err) {
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Error creating legal desk. Please try again.';
       toast.error(errorMsg);
-      setChats(prev => prev.filter(c => c.title !== title));
+      // Ensure we cleaned up server-side desk if it exists
+      if (newChat && newChat._id) {
+        try {
+          await cleanupDesk(newChat._id);
+        } catch (delErr) {
+          console.warn('Failed to delete desk in outer catch', delErr);
+        }
+      } else {
+        setChats(prev => prev.filter(c => c.title !== title));
+      }
     } finally {
       setUploading(false);
       setIsLoading(false);

@@ -149,6 +149,7 @@ const NotebookPage = (props) => {
   const [followUpQuestions, setFollowUpQuestions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const chatEndRef = useRef(null);
+  const messageInputRef = useRef(null);
   
   // Zustand store for caching feature responses
   const getCachedFeature = useNotebookStore((state) => state.getCachedFeature);
@@ -162,7 +163,7 @@ const NotebookPage = (props) => {
     predictive: { title: "Predictive", icon: <FaMagic />, content: null, tooltip: "Predicted outcomes based on document analysis" },
     'case-law': { title: "Case Law", icon: <FaGavel />, content: null, tooltip: "Relevant case law and legal precedents" },
   });
-  const [predictiveLang] = useState('en');
+
   const [timelineView, setTimelineView] = useState('date'); // 'date', 'event', 'mindmap'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // mobile feature panel
   const currentRequestRef = useRef({}); // Track current request IDs to prevent race conditions
@@ -228,7 +229,9 @@ const NotebookPage = (props) => {
         // Default UI language to the chat's persisted output_language (if present)
         try {
           const persistedLang = notebookRes.data.chat?.output_language;
-          if (persistedLang) setSelectedLang(String(persistedLang).slice(0,2));
+          if (persistedLang && persistedLang !== selectedLang) {
+            setSelectedLang(persistedLang);
+          }
         } catch (e) {}
         setMessages(messagesRes.data.messages);
       } catch (err) {
@@ -237,7 +240,7 @@ const NotebookPage = (props) => {
     };
 
     fetchNotebookAndMessages();
-  }, [id]);
+  }, [id, selectedLang]);
 
   useEffect(() => {
     const MIC_DENIED_KEY = 'app:mic-denied:v1';
@@ -517,13 +520,14 @@ const NotebookPage = (props) => {
     setLoadingFeature(true);
 
     try {
-      const langToUse = featureKey === 'predictive' ? (langOverride || predictiveLang) : undefined;
+      const langToUse = featureKey === 'predictive' ? (langOverride || selectedLang) : undefined;
       const currentTimelineView = timelineViewOverride || timelineView;
+      const langForCache = (langOverride || selectedLang || 'en').slice(0,2);
       let cacheKey = featureKey;
-      if (featureKey === 'predictive') {
-        cacheKey = `${featureKey}:${langToUse}`;
+      if (featureKey === 'predictive' || featureKey === 'case-law' || featureKey === 'summary' || featureKey === 'questions' || featureKey === 'insights') {
+        cacheKey = `${featureKey}:${langForCache}`;
       } else if (featureKey === 'timeline') {
-        cacheKey = `${featureKey}:${currentTimelineView}`;
+        cacheKey = `${featureKey}:${currentTimelineView}:${langForCache}`;
       }
       
       // Generate unique request ID to prevent race conditions
@@ -797,7 +801,7 @@ const NotebookPage = (props) => {
         }
       } else if (featureKey === 'case-law') {
         try {
-          const res = await papi.post(`/api/suggest-case-law`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) });
+          const res = await papi.post(`/api/suggest-case-law`, { ...payload, output_language: (langToUse || payload.output_language) });
           const suggestion = res.data;
 
           const normalizeCase = (it) => {
@@ -864,7 +868,7 @@ const NotebookPage = (props) => {
         }
       } else if (featureKey === "predictive") {
         try {
-          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || predictiveLang).slice(0,2) });
+          const res = await papi.post(`/api/predictive-output`, { ...payload, output_language: (langToUse || payload.output_language) });
           const pred = res.data.prediction;
           content = <PredictiveDisplay prediction={pred} />;
         } catch (err) {
@@ -1110,6 +1114,10 @@ const NotebookPage = (props) => {
       }
     } finally {
       setIsAiThinking(false);
+      // Focus the input field after response is received so user can continue typing
+      setTimeout(() => {
+        messageInputRef.current?.focus();
+      }, 100);
     }
   };
 
@@ -1488,7 +1496,7 @@ const NotebookPage = (props) => {
                 type="button" 
                 onClick={isRecording ? stopVoiceRecording : startVoiceRecording} 
                 disabled={isProcessingAudio}
-                className={`flex-shrink-0 p-2 md:p-2 rounded-md ${
+                className={`flex-shrink-0 h-10 w-10 flex items-center justify-center rounded-md ${
                   isRecording 
                     ? 'bg-red-500 text-white' 
                     : isProcessingAudio 
@@ -1502,12 +1510,13 @@ const NotebookPage = (props) => {
                 ) : isRecording ? (
                   <div className="w-4 h-4 bg-white rounded-sm" />
                 ) : (
-                  <FaMicrophone className="text-sm" />
+                  <FaMicrophone className="text-base" />
                 )}
               </motion.button>
 
               {/* Message Input */}
               <input 
+                ref={messageInputRef}
                 type="text" 
                 placeholder={isAiThinking ? 'Generating response...' : 'Ask anything...'} 
                 value={newMessage} 
