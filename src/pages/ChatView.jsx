@@ -106,7 +106,6 @@ const ChatView = () => {
     socketRef.current = s;
 
     const onConnect = () => {
-      // console.log('socket connected');
     };
     s.on('connect', onConnect);
 

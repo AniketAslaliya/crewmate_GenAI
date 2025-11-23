@@ -117,11 +117,8 @@ const MermaidMindMap = ({ chartCode }) => {
         setSvgContent('');
         setError(null);
 
-        console.log('Original mindmap code:', chartCode);
-
         // Sanitize the chart code to fix special characters
         const sanitizedCode = sanitizeMindmapCode(chartCode.trim());
-        console.log('Sanitized mindmap code:', sanitizedCode);
         
         // Generate a unique ID for this render (required by Mermaid)
         const uniqueId = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

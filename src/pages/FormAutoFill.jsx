@@ -499,18 +499,15 @@ const FormAutoFill = () => {
     setLanguage(selectedLang);
     
     // Upload to cloud storage first
-    toast.info('📤 Uploading form to cloud storage...');
     try {
       const uploadedForm = await formStorageService.uploadForm(selectedFile, selectedLang);
       setCurrentFormId(uploadedForm.formId);
     } catch (error) {
       console.error('Failed to upload to cloud storage:', error);
-      toast.error('Failed to save to cloud, but continuing with analysis...');
     }
     
     // Start analysis using persistent service (continues even if component unmounts)
     setLoading(true);
-    toast.info('⏳ Analysis started. This may take a few minutes. You can navigate to other pages while processing.');
     
     // Use the persistent service - it returns immediately but the request continues
     const { id, isNew } = formAnalysisService.startAnalysis(selectedFile, selectedLang);
@@ -794,14 +791,10 @@ const FormAutoFill = () => {
     if (!checkGuestAccess('Analyze Form')) return;
     if (!file) { toast.error('Please upload a form image or PDF first.'); return; }
     setLoading(true);
-    toast.info('⏳ Analysis started. This may take a few minutes. You can navigate to other pages while processing.');
     
     // Use the persistent service - it returns immediately but the request continues
     const { id, isNew } = formAnalysisService.startAnalysis(file, language);
     setCurrentAnalysisId(id);
-    
-    // The listener in useEffect will handle the completion
-    console.log(`Analysis ${isNew ? 'started' : 'already running'} with ID:`, id);
   };
 
   // heuristic detection of rectangular light fields from the rendered canvas
@@ -963,8 +956,6 @@ const FormAutoFill = () => {
         throw new Error('Failed to get download URL');
       }
       
-      console.log('Fetching from proxy URL:', downloadUrl);
-      
       // Get auth token
       const token = useAuthStore.getState().token;
       
@@ -989,16 +980,12 @@ const FormAutoFill = () => {
         throw new Error('Downloaded file is empty');
       }
       
-      console.log('✅ Downloaded blob:', blob.size, 'bytes, type:', blob.type);
-      
       // Ensure mime type is correct
       const mimeType = formData.mimeType || blob.type || 'application/pdf';
       
       const fetchedFile = new File([blob], formData.originalFileName, { 
         type: mimeType 
       });
-      
-      console.log('✅ Created File object:', fetchedFile.name, fetchedFile.type, fetchedFile.size);
       
       // Load the file
       setFile(fetchedFile);
@@ -1007,18 +994,13 @@ const FormAutoFill = () => {
       const pdfCheck = mimeType === 'application/pdf' || formData.originalFileName.toLowerCase().endsWith('.pdf');
       setIsPdf(pdfCheck);
       
-      console.log('Is PDF:', pdfCheck);
-      
       if (pdfCheck) {
-        console.log('Rendering PDF to canvas...');
         await renderPdfToCanvas(fetchedFile, 1);
-        console.log('✅ PDF rendered to canvas');
         
         try {
           const reader = new FileReader();
           reader.onload = (ev) => {
             setPdfArrayBuffer(ev.target.result);
-            console.log('✅ PDF array buffer loaded');
           };
           reader.readAsArrayBuffer(fetchedFile);
         } catch (e) {
@@ -1029,7 +1011,6 @@ const FormAutoFill = () => {
         const img = new Image();
         img.onload = () => {
           setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-          console.log('✅ Image loaded, size:', img.naturalWidth, 'x', img.naturalHeight);
         };
         img.onerror = (err) => {
           console.error('Failed to load image:', err);
@@ -1067,7 +1048,6 @@ const FormAutoFill = () => {
         
         // Auto-start analysis
         setTimeout(() => {
-          toast.info('⏳ Starting analysis automatically...');
           const { id } = formAnalysisService.startAnalysis(fetchedFile, formData.language || 'en');
           setCurrentAnalysisId(id);
           setLoading(true);
@@ -1654,7 +1634,6 @@ const FormAutoFill = () => {
     if (!file || !currentFormId) return;
     
     try {
-      toast.info('📤 Uploading image...');
       await formStorageService.uploadFieldImage(currentFormId, fieldId, file);
       toast.success('✅ Image uploaded successfully!');
       
@@ -1777,17 +1756,6 @@ const FormAutoFill = () => {
       if (spokenLang) fd.append('language', spokenLang);
       const res = await api.post('/api/transcribe-hindi', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       const transcript = res.data?.combinedTranscript || res.data?.transcript || (res.data?.transcripts && res.data?.transcripts[0]) || '';
-      const usedLanguage = res.data?.usedLanguage || res.data?.language || null;
-      const incomingLang = res.data?.incomingLang || null;
-      console.log('Transcription response', { transcript, usedLanguage, incomingLang, raw: res.data });
-      // show which language the server used
-      if (usedLanguage && incomingLang) {
-        if (usedLanguage !== incomingLang) {
-          toast.info(`Server used ${usedLanguage} (requested ${incomingLang})`);
-        } else {
-          toast.info(`Server used ${usedLanguage}`);
-        }
-      }
       if (!transcript) {
         toast.error('No transcript returned');
         return;
@@ -2225,7 +2193,6 @@ const FormAutoFill = () => {
                         e.target.parentElement.innerHTML = `<div style="color: red; font-size: 12px; text-align: center; padding: 10px;">❌<br/>Image Load Error</div>`;
                       }}
                       onLoad={(e) => {
-                        console.log('✓ Image loaded for field:', f.id);
                       }}
                       style={{ 
                         minWidth: '140px',

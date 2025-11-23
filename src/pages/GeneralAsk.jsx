@@ -257,7 +257,6 @@ const GeneralAsk = () => {
     try {
       const denied = (() => { try { return !!localStorage.getItem(MIC_DENIED_KEY); } catch (e) { return false; } })();
       if (denied) {
-        console.log('Microphone previously denied; not requesting again.');
         try { toast.error('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); } catch (e) { alert('Microphone access was previously denied. Enable it in your browser settings if you want voice features.'); }
         return;
       }
@@ -426,7 +425,6 @@ const GeneralAsk = () => {
         };
         if (user_id) papiPayload.user_id = user_id;
         const papiRes = await papi.post('/api/general-ask', papiPayload);
-      console.log('papi response', papiRes && papiRes.data ? papiRes.data : papiRes);
       // extract answer from common response shapes (res.data.answer OR res.data.data.answer)
       let answerText = '';
       try {
