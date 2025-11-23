@@ -1,25 +1,63 @@
 import nodemailer from 'nodemailer';
 
-// Create email transporter
+// Create a single pooled transporter for reuse (improves performance in prod)
+let transporter = null;
 const createTransporter = () => {
-  // Configure based on your email provider
-  // For Gmail, you need to enable "Less secure app access" or use App Passwords
-  const transporter = nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE || 'gmail', // e.g., 'gmail', 'outlook', 'yahoo'
+  if (transporter) return transporter;
+
+  // Use pooling to avoid opening a new connection per email
+  // Tunable options: maxConnections and maxMessages
+  const opts = {
+    service: process.env.EMAIL_SERVICE || 'gmail',
     auth: {
-      user: process.env.EMAIL_USER, // Your email address
-      pass: process.env.EMAIL_PASSWORD, // Your email password or app password
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD,
     },
+    pool: true,
+    maxConnections: parseInt(process.env.EMAIL_MAX_CONNECTIONS || '5', 10),
+    maxMessages: parseInt(process.env.EMAIL_MAX_MESSAGES || '100', 10),
+    // Timeouts — helps detect network issues faster in deployed env
+    connectionTimeout: parseInt(process.env.EMAIL_CONNECTION_TIMEOUT || '10000', 10),
+    greetingTimeout: parseInt(process.env.EMAIL_GREETING_TIMEOUT || '10000', 10),
+    socketTimeout: parseInt(process.env.EMAIL_SOCKET_TIMEOUT || '20000', 10),
+  };
+
+  transporter = nodemailer.createTransport(opts);
+
+  // Verify transporter at startup to surface auth/network issues early
+  transporter.verify().then(() => {
+    console.log('✅ Email transporter verified');
+  }).catch((err) => {
+    console.warn('⚠️ Email transporter verification failed:', err && err.message ? err.message : err);
   });
 
   return transporter;
 };
 
 // Send email verification code
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+const sendWithRetries = async (mailOptions, maxRetries = 2) => {
+  const tx = createTransporter();
+  let attempt = 0;
+  let lastErr = null;
+  while (attempt <= maxRetries) {
+    try {
+      const info = await tx.sendMail(mailOptions);
+      return { success: true, info };
+    } catch (err) {
+      lastErr = err;
+      attempt += 1;
+      const backoff = 250 * Math.pow(2, attempt); // exponential backoff
+      console.warn(`Email send attempt ${attempt} failed; retrying in ${backoff}ms`, err && err.message ? err.message : err);
+      await sleep(backoff);
+    }
+  }
+  return { success: false, error: lastErr && lastErr.message ? lastErr.message : lastErr };
+};
+
 export const sendVerificationCode = async (userEmail, userName, verificationCode) => {
   try {
-    const transporter = createTransporter();
-
     const mailOptions = {
       from: `"Legal SahAI" <${process.env.EMAIL_USER}>`,
       to: userEmail,
@@ -137,11 +175,15 @@ The Legal SahAI Team
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    return { success: true };
+    const res = await sendWithRetries(mailOptions, parseInt(process.env.EMAIL_MAX_RETRIES || '2', 10));
+    if (!res.success) {
+      console.error('❌ Error sending verification code:', res.error);
+      return { success: false, error: res.error };
+    }
+    return { success: true, info: res.info };
   } catch (error) {
-    console.error('❌ Error sending verification code:', error);
-    return { success: false, error: error.message };
+    console.error('❌ Error preparing verification email:', error && error.message ? error.message : error);
+    return { success: false, error: error && error.message ? error.message : error };
   }
 };
 
@@ -268,8 +310,12 @@ The Legal SahAI Security Team
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    return { success: true };
+    const res = await sendWithRetries(mailOptions, parseInt(process.env.EMAIL_MAX_RETRIES || '2', 10));
+    if (!res.success) {
+      console.error('❌ Error sending password reset code:', res.error);
+      return { success: false, error: res.error };
+    }
+    return { success: true, info: res.info };
   } catch (error) {
     console.error('❌ Error sending password reset code:', error);
     return { success: false, error: error.message };
@@ -371,8 +417,12 @@ The Legal SahAI Team
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    return { success: true };
+    const res = await sendWithRetries(mailOptions, parseInt(process.env.EMAIL_MAX_RETRIES || '2', 10));
+    if (!res.success) {
+      console.error('❌ Error sending approval email:', res.error);
+      return { success: false, error: res.error };
+    }
+    return { success: true, info: res.info };
   } catch (error) {
     console.error('❌ Error sending approval email:', error);
     return { success: false, error: error.message };
@@ -486,8 +536,12 @@ The Legal SahAI Team
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    return { success: true };
+    const res = await sendWithRetries(mailOptions, parseInt(process.env.EMAIL_MAX_RETRIES || '2', 10));
+    if (!res.success) {
+      console.error('❌ Error sending rejection email:', res.error);
+      return { success: false, error: res.error };
+    }
+    return { success: true, info: res.info };
   } catch (error) {
     console.error('❌ Error sending rejection email:', error);
     return { success: false, error: error.message };

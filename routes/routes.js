@@ -245,9 +245,8 @@ router.post("/forgot-password", async (req, res) => {
     // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
-      // Reject silently - don't reveal if email exists or not (security)
-      // Still return success message to prevent email enumeration
-      return res.json({ message: 'If the email exists, a reset code has been sent' });
+      // Inform the requester that the account does not exist and prompt to sign up
+      return res.status(404).json({ error: 'No account found for this email. Please sign up first.' });
     }
 
     // Generate 6-digit code

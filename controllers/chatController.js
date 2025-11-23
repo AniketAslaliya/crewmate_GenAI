@@ -20,7 +20,7 @@ export const updateChatSummary = async (req, res) => {
   }
 };
 import { Chat } from "../models/Chat.js";
-import { uploadToGCS, getSignedUrl, getReadStream } from "../utils/gcs.js";
+import { uploadToGCS, getSignedUrl, getReadStream, deleteFromGCS } from "../utils/gcs.js";
 
 // Upload & process ANY document → create chat
 export const uploadDocument = async (req, res) => {
@@ -126,20 +126,31 @@ export const deleteChat = async (req, res) => {
     if (req.user.id === 'guest' || req.user.role === 'guest') {
       return res.status(403).json({ error: 'Guest users cannot delete chats.' });
     }
-    
+
     const { id } = req.params;
 
-    const chat = await Chat.findOneAndDelete({
-      _id: id,
-      user: req.user.id, // only allow deleting own chats
-    });
-
+    // Find the chat first so we can remove any associated file from GCS
+    const chat = await Chat.findOne({ _id: id, user: req.user.id });
     if (!chat) {
       return res.status(404).json({ error: "Chat not found or not authorized" });
     }
 
+    // Attempt to delete associated file from GCS if present
+    if (chat.fileGcsPath) {
+      try {
+        await deleteFromGCS(chat.fileGcsPath);
+      } catch (gcsErr) {
+        console.error('Failed to delete file from GCS during chat deletion:', gcsErr);
+        // continue with DB deletion even if GCS delete fails
+      }
+    }
+
+    // Delete chat record
+    await Chat.deleteOne({ _id: id, user: req.user.id });
+
     res.json({ message: "Chat deleted successfully" });
   } catch (err) {
+    console.error('deleteChat error', err);
     res.status(500).json({ error: "Failed to delete chat" });
   }
 };
