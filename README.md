@@ -24,6 +24,7 @@ Upload any legal document — PDF, DOCX, image, or handwritten note — and unlo
 - **Suggested Questions:** Generates relevant legal queries.
 - **Predictive Analysis:** Forecasts potential case outcomes.
 - **Case Law Suggestions:** Retrieves supporting precedents via Kanoon API.
+- **Smart Risk Audit:** Visually highlights risky clauses and explains their compliance status under specific Indian laws.
 
 ---
 
