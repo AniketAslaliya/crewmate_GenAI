@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import useAuthStore from '../context/AuthContext';
 import { FaMicrophone } from 'react-icons/fa';
 import api from '../Axios/axios';
@@ -393,6 +394,32 @@ const GeneralAsk = () => {
     try { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); } catch (e) { }
   }, [chats, isAiThinking]);
 
+  const TypingIndicator = () => (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      className="flex justify-start"
+      aria-live="polite"
+    >
+      <div className="max-w-[85%] px-4 py-3 rounded-2xl shadow-sm bg-[var(--card-bg)] text-[var(--text)] border border-[var(--border)]">
+        <div className="flex items-center gap-3">
+          <div className="flex items-end gap-1">
+            <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }} />
+            <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, delay: 0.15, repeat: Infinity, ease: 'easeInOut' }} />
+            <motion.span className="w-2 h-2 rounded-full bg-[var(--palette-3)]" animate={{ y: [0, -6, 0] }} transition={{ duration: 0.9, delay: 0.3, repeat: Infinity, ease: 'easeInOut' }} />
+          </div>
+          <div className="text-sm text-gray-400">Thinking...</div>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <div className="h-2 bg-[rgba(255,255,255,0.06)] rounded w-3/4 animate-pulse" />
+          <div className="h-2 bg-[rgba(255,255,255,0.04)] rounded w-1/2 animate-pulse" />
+        </div>
+      </div>
+    </motion.div>
+  );
+
   const sendQuery = async () => {
     if (!checkGuestAccess('Ask Legal Question')) return;
     const txt = (query || '').trim();
@@ -681,13 +708,9 @@ const GeneralAsk = () => {
           {/* anchor for autoscroll */}
           <div ref={chatEndRef} />
 
-          {/* AI thinking indicator */}
+          {/* AI thinking indicator (notebook-style) */}
           {activeChat && isAiThinking && (
-            <div className="mb-3 flex justify-start">
-              <div className="bg-[var(--panel)] text-[var(--text)] rounded-tr-lg rounded-br-lg rounded-bl-lg max-w-[60%] px-3 py-2">
-                <div className="text-sm">Thinking<span className="animate-pulse">...</span></div>
-              </div>
-            </div>
+            <TypingIndicator />
           )}
         </div>
         {/* follow-up suggestions */}
@@ -704,13 +727,15 @@ const GeneralAsk = () => {
 
         <div className="flex-none p-2 border-t flex items-center gap-2 flex-shrink-0" style={{borderColor:'var(--border)', background: 'var(--panel)'}}>
           <button type="button" onClick={isRecording ? stopVoiceRecording : startVoiceRecording} disabled={isProcessingAudio} className={`px-3 py-1 rounded ${isRecording ? 'bg-red-500 text-white' : 'bg-white border'}`}>
-            {isRecording ? 'Stop' : (<><FaMicrophone className="inline-block mr-2" />Voice</>)}
+            {isProcessingAudio ? (
+              <div className="w-4 h-4 border-2 border-gray-700 border-t-transparent rounded-full animate-spin" />
+            ) : isRecording ? 'Stop' : (<><FaMicrophone className="inline-block mr-2" />Voice</>)}
           </button>
           <input
             ref={inputRef}
             value={query}
             onChange={e=>setQuery(e.target.value)}
-            placeholder="Ask a legal question..."
+            placeholder={isProcessingAudio ? 'Transcribing...' : (isAiThinking ? 'Thinking...' : 'Ask a legal question...')}
             className="flex-1 p-2 border rounded h-9 bg-white text-[var(--text)]"
             onKeyDown={(e) => {
               // Enter to send; Shift+Enter to keep a newline (if input becomes textarea)

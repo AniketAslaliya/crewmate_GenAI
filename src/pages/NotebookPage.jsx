@@ -223,6 +223,11 @@ const NotebookPage = (props) => {
     return () => clearTimeout(timer);
   }, [messages, isAiThinking]);
 
+  // Log followUpQuestions when updated for debugging
+  useEffect(() => {
+    console.log('[NotebookPage] followUpQuestions state change:', followUpQuestions);
+  }, [followUpQuestions]);
+
   // Close mobile menu when feature changes
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -1074,6 +1079,57 @@ const NotebookPage = (props) => {
       let aiContent = "";
       let followups = [];
 
+      const extractFollowUps = (obj) => {
+        if (!obj) return [];
+        const keys = ['followupquestion','followup_questions','follow_up_questions','followups','followUpQuestions','follow_up','suggested_questions','followup'];
+        for (const k of keys) {
+          if (Object.prototype.hasOwnProperty.call(obj, k)) {
+            const v = obj[k];
+            if (!v) return [];
+            if (Array.isArray(v)) return v.map(x => typeof x === 'string' ? x.trim() : String(x)).filter(Boolean);
+            if (typeof v === 'string') {
+              // try JSON parse first
+              try {
+                const parsed = JSON.parse(v);
+                if (Array.isArray(parsed)) return parsed.map(x => String(x).trim()).filter(Boolean);
+                if (typeof parsed === 'object') {
+                  const arr = Object.values(parsed).map(x => String(x).trim());
+                  return arr.filter(Boolean);
+                }
+              } catch (e) {
+                // not JSON, fall back to splitting by lines or commas
+                const lines = v.split(/\r?\n|,|;/).map(s => s.trim()).filter(Boolean);
+                if (lines.length > 0) return lines;
+                return [v.trim()].filter(Boolean);
+              }
+            }
+            // fallback
+            return [String(v).trim()].filter(Boolean);
+          }
+        }
+        // also check nested response objects
+        if (typeof obj === 'object') {
+          for (const val of Object.values(obj)) {
+            if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'string') return val.map(x => x.trim()).filter(Boolean);
+          }
+        }
+        return [];
+      };
+
+      // If the API returns follow-ups at the top-level (e.g., follow_up_questions), prefer those
+      try {
+        const topLevel = res2?.data;
+        const topLevelF = extractFollowUps(topLevel);
+        if (Array.isArray(topLevelF) && topLevelF.length > 0) {
+          // Use top-level followups and set a basic aiContent if available
+          followups = topLevelF.map(q => String(q).trim()).filter(Boolean).slice(0,2);
+          // ensure apiAnswer/aiContent are set so downstream logic is consistent
+          if (!apiAnswer && topLevel?.answer) apiAnswer = topLevel.answer;
+        }
+      } catch (e) {
+        // ignore
+      }
+
       if (apiAnswer == null) {
         throw new Error("API returned empty answer");
       }
@@ -1085,11 +1141,13 @@ const NotebookPage = (props) => {
           if (parsed?.response) {
             const apiResponse = parsed.response;
             aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
-            followups = apiResponse.followupquestion || [];
+            followups = extractFollowUps(apiResponse);
           } else if (parsed?.answer) {
             aiContent = parsed.answer;
+            followups = extractFollowUps(parsed);
           } else {
             aiContent = trimmed;
+            followups = extractFollowUps(parsed);
           }
         } catch (parseError) {
           aiContent = trimmed;
@@ -1098,19 +1156,33 @@ const NotebookPage = (props) => {
         if (apiAnswer?.response) {
           const apiResponse = apiAnswer.response;
           aiContent = apiResponse["PLAIN ANSWER"] || apiResponse.answer || JSON.stringify(apiResponse);
-          followups = apiResponse.followupquestion || [];
+          followups = extractFollowUps(apiResponse);
         } else if (apiAnswer?.answer) {
           aiContent = apiAnswer.answer;
+          followups = extractFollowUps(apiAnswer);
         } else {
           aiContent = JSON.stringify(apiAnswer);
+          followups = extractFollowUps(apiAnswer);
         }
       } else {
         aiContent = String(apiAnswer);
       }
 
+      // Normalize and limit to max 2 follow-ups as per UI contract
+      if (!Array.isArray(followups)) followups = [];
+      followups = followups.map(q => String(q || '').trim()).filter(Boolean).slice(0,2);
+
       const res3 = await api.post('/api/messages', { chatId: id, content: aiContent, role: 'response' });
       setMessages((prev) => [...prev, res3.data.message]);
       setTimeout(scrollToBottom, 100);
+      // Debug logs for follow-up extraction
+      try {
+        console.log('[NotebookPage] raw ask API response:', res2?.data);
+        console.log('[NotebookPage] apiAnswer:', apiAnswer);
+        console.log('[NotebookPage] extracted followups:', followups);
+      } catch (e) {
+        console.warn('Failed to log followup debug info', e);
+      }
       setFollowUpQuestions(followups || []);
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m._id !== tempId));
@@ -1381,16 +1453,18 @@ const NotebookPage = (props) => {
                     {isAiThinking && <TypingIndicator key="typing" />}
                   </AnimatePresence>
 
-                  {followUpQuestions.length > 0 && (  
+                  {followUpQuestions.length === 2 && (
                     <div className="mt-4 space-y-2">
                       <h3 className="text-gray-400 text-xs font-semibold">Follow-up Questions:</h3>
-                      {followUpQuestions.map((question, index) => (
-                        <motion.button 
-                          key={index} 
-                          whileHover={{ scale: 1.02 }} 
-                          whileTap={{ scale: 0.98 }} 
-                          onClick={(e) => handleSendMessage(e, question)} 
+                      {followUpQuestions.slice(0,2).map((question, index) => (
+                        <motion.button
+                          key={index}
+                          type="button"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => handleSendMessage(null, question)}
                           className="w-full text-left px-3 py-2 bg-[var(--palette-2)] text-white rounded-md shadow-sm hover:opacity-95 transition-all duration-200 text-sm"
+                          aria-label={`Ask follow up question ${index + 1}`}
                         >
                           {question}
                         </motion.button>
@@ -1520,7 +1594,7 @@ const NotebookPage = (props) => {
                 whileTap={{ scale: 0.95 }}
               >
                 {isProcessingAudio ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 border-2 border-gray-700 border-t-transparent rounded-full animate-spin" />
                 ) : isRecording ? (
                   <div className="w-4 h-4 bg-white rounded-sm" />
                 ) : (

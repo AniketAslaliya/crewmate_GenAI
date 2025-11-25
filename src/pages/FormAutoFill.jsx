@@ -104,6 +104,7 @@ const FormAutoFill = () => {
   const audioChunksRef = useRef([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [spokenLang, setSpokenLang] = useState('hi-IN');
 
   // Comprehensive file validation with security checks (same as LegalDesk)
@@ -1749,6 +1750,7 @@ const FormAutoFill = () => {
 
   async function handleAudioBlob(blob, targetFieldId, spokenLang) {
     setIsTranscribing(true);
+    setIsProcessingAudio(true);
     try {
       const fd = new FormData();
       // Some browsers produce webm; backend handles common audio types
@@ -1792,6 +1794,7 @@ const FormAutoFill = () => {
       toast.error('Transcription failed');
     } finally {
       setIsTranscribing(false);
+      setIsProcessingAudio(false);
     }
   }
 
@@ -1867,6 +1870,14 @@ const FormAutoFill = () => {
           New Box
         </button>
       </div>
+
+      {/* Ingest audio loader banner (shows when audio is being processed) */}
+      {isProcessingAudio && (
+        <div className="mb-4 p-3 rounded-lg bg-white border border-gray-200 flex items-center gap-3">
+          <div className="w-4 h-4 border-2 border-gray-700 border-t-transparent rounded-full animate-spin" />
+          <div className="text-sm text-gray-700">Transcribing audio…</div>
+        </div>
+      )}
 
       {/* Upload Form Modal - Compact */}
       {showUploadModal && (
@@ -2306,14 +2317,19 @@ const FormAutoFill = () => {
                           type="button"
                           onClick={() => isRecording ? stopRecording() : startRecordingForField(`simple:${name}`, spokenLang)}
                           title="Record voice for this field"
-                          className={`ml-1 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors ${isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                          disabled={isProcessingAudio}
+                          className={`ml-1 inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors ${isProcessingAudio ? 'opacity-60 cursor-wait' : isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
                         >
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
-                            <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
-                            <path d="M12 17v4" />
-                            <path d="M8 21h8" />
-                          </svg>
+                          {isProcessingAudio ? (
+                            <div className="w-4 h-4 border-2 border-gray-700 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
+                              <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
+                              <path d="M12 17v4" />
+                              <path d="M8 21h8" />
+                            </svg>
+                          )}
                         </button>
                       </div>
                   </div>
@@ -2443,14 +2459,19 @@ const FormAutoFill = () => {
                           type="button"
                           onClick={() => isRecording ? stopRecording() : startRecordingForField(selectedField.id, spokenLang)}
                           title="Record voice for this field"
-                          className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors ${isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                          disabled={isProcessingAudio}
+                          className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition-colors ${isProcessingAudio ? 'opacity-60 cursor-wait' : isRecording ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
                         >
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
-                            <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
-                            <path d="M12 17v4" />
-                            <path d="M8 21h8" />
-                          </svg>
+                          {isProcessingAudio ? (
+                            <div className="w-4 h-4 border-2 border-gray-700 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z" />
+                              <path d="M19 11v1a7 7 0 0 1-14 0v-1" />
+                              <path d="M12 17v4" />
+                              <path d="M8 21h8" />
+                            </svg>
+                          )}
                         </button>
                         
                       </div>
