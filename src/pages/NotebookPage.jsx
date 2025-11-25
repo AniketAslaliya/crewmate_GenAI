@@ -183,6 +183,18 @@ const NotebookPage = (props) => {
   const [selectedLang, setSelectedLang] = useState('en');
   const toast = useToast();
 
+  // Normalize language codes for API calls: send 'en' for any English locale, otherwise two-letter code
+  const langForApi = (l) => {
+    try {
+      if (!l) return 'en';
+      const s = String(l).toLowerCase();
+      if (s.startsWith('en')) return 'en';
+      return s.slice(0,2);
+    } catch (e) {
+      return 'en';
+    }
+  };
+
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
@@ -230,7 +242,7 @@ const NotebookPage = (props) => {
         try {
           const persistedLang = notebookRes.data.chat?.output_language;
           if (persistedLang && persistedLang !== selectedLang) {
-            setSelectedLang(persistedLang);
+            setSelectedLang(langForApi(persistedLang));
           }
         } catch (e) {}
         setMessages(messagesRes.data.messages);
@@ -498,10 +510,12 @@ const NotebookPage = (props) => {
     try {
       const formData = new FormData();
       formData.append("file", audioBlob, "audio.wav");
-      const res = await papi.post("/api/ingest-audio", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const transcript = res.data.transcript;
+      // Only send the audio file and the input language per API contract
+      formData.append('input_language', langForApi(selectedLang || notebook?.output_language || 'en'));
+
+      // Let the browser set the multipart boundary header automatically
+      const res = await papi.post('/api/ingest-audio', formData);
+      const transcript = res.data?.transcript || res.data?.combinedTranscript || '';
       if (transcript && !transcript.startsWith("(speech error")) {
         setNewMessage(transcript.trim());
       } else {

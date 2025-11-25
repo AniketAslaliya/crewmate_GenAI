@@ -57,7 +57,13 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
     };
 
     return (
-      <button onClick={handleClick} className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-colors ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-neutral-10'}`} aria-label={label} title={label}>
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label={label}
+        title={label}
+        className={`w-full flex items-center ${isOpen ? 'gap-3 px-4 py-2' : 'justify-center py-2'} rounded-lg transition-transform duration-150 ease-in-out transform focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/40 ${active ? 'bg-card text-primary' : 'text-primary/80 hover:bg-neutral-10 hover:translate-x-1 hover:scale-[1.02] hover:shadow-md'}`}
+      >
         <span className="text-lg flex items-center">{icon}</span>
         {isOpen && <span className="text-sm font-medium">{labelText}</span>}
       </button>

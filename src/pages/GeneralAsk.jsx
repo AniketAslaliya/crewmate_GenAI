@@ -9,6 +9,7 @@ import { useToast } from '../components/ToastProvider';
 import papi from '../Axios/paxios';
 import { useGuestAccess } from '../hooks/useGuestAccess';
 import GuestAccessModal from '../components/GuestAccessModal';
+import { useLanguage } from '../context/LanguageContext';
 // Simple General Ask chat UI (not PDF-bound). Stores chats locally and attempts
 // to persist to backend at /api/general-ask/save (optional). Uses /api/general-ask
 // to get AI answers from the server's general knowledge base.
@@ -17,6 +18,18 @@ const makeId = () => `gch-${Date.now()}-${Math.random().toString(36).slice(2,8)}
 
 const GeneralAsk = () => {
   const { user } = useAuthStore();
+  const { language, setLanguage } = useLanguage();
+  // Normalize language codes for API calls: send 'en' for any English locale, otherwise two-letter code
+  const langForApi = (l) => {
+    try {
+      if (!l) return 'en';
+      const s = String(l).toLowerCase();
+      if (s.startsWith('en')) return 'en';
+      return s.slice(0,2);
+    } catch (e) {
+      return 'en';
+    }
+  };
   // using server-authenticated axios instance `api`
   const [chats, setChats] = useState([]); // { id, title, messages: [{role:'user'|'assistant', text, createdAt}], updated }
   const [activeChatId, setActiveChatId] = useState(null);
@@ -216,6 +229,37 @@ const GeneralAsk = () => {
   const audioBufferRef = useRef([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const languages = [
+    { label: 'English', code: 'en-US' },
+    { label: 'हिन्दी', code: 'hi-IN' },
+    { label: 'ગુજરાતી', code: 'gu-IN' },
+    { label: 'मराठी', code: 'mr-IN' },
+    { label: 'தமிழ்', code: 'ta-IN' },
+    { label: 'తెలుగు', code: 'te-IN' },
+    { label: 'বাংলা', code: 'bn-IN' },
+    { label: 'ಕನ್ನಡ', code: 'kn-IN' },
+    { label: 'മലയാളം', code: 'ml-IN' },
+    { label: 'ਪੰਜਾਬੀ', code: 'pa-IN' }
+  ];
+  // Dropdown state for language selector next to input
+  const [showLangMenu, setShowLangMenu] = useState(false);
+  const langMenuRef = useRef(null);
+
+  // close menu on outside click
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (showLangMenu && langMenuRef.current && !langMenuRef.current.contains(e.target)) {
+        setShowLangMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [showLangMenu]);
+
+  const labelForCode = (code) => {
+    try { return (languages.find(l => l.code === code) || {}).label || String(code).toUpperCase(); } catch (e) { return String(code).toUpperCase(); }
+  };
+  
 
   const encodeWAV = (samples, sampleRate) => {
     const buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -321,8 +365,12 @@ const GeneralAsk = () => {
     try {
       const fd = new FormData();
       fd.append('file', audioBlob, 'audio.wav');
-      const res = await papi.post('/api/ingest-audio', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const transcript = res.data?.transcript;
+      // Only send the audio file and the input language per API contract
+      fd.append('input_language', langForApi(language));
+
+      // Do not set Content-Type header manually when sending FormData
+      const res = await papi.post('/api/ingest-audio', fd);
+      const transcript = res.data?.transcript || res.data?.combinedTranscript || '';
       if (transcript && !transcript.startsWith('(speech error')) {
         setQuery(transcript.trim());
         // auto-send the transcribed query
@@ -420,7 +468,8 @@ const GeneralAsk = () => {
         const papiPayload = {
           query: txt,
           history,
-          output_language: 'en',
+          // send normalized output language (English locales => 'en')
+          output_language: langForApi(language),
           thread_id: chatId,
         };
         if (user_id) papiPayload.user_id = user_id;
@@ -552,11 +601,13 @@ const GeneralAsk = () => {
       {/* List (left) - full width on mobile, fixed on md+ */}
       <div className={`${activeChat ? 'hidden' : 'flex'} md:flex w-full md:w-80 border-r flex-col min-h-0 h-full bg-[var(--panel)]`} style={{borderColor:'var(--palette-3)'}}>
         <div className="p-3 border-b flex items-center justify-between">
-          <div className="font-semibold">Quick Guide</div>
-          <div>
-            <button onClick={createNew} className="px-2 py-1 bg-green-600 text-white rounded">New</button>
-          </div>
-        </div>
+                <div className="font-semibold">Quick Guide</div>
+                <div className="flex items-center gap-2">
+                  <div>
+                    <button onClick={createNew} className="px-2 py-1 bg-green-600 text-white rounded">New</button>
+                  </div>
+                </div>
+              </div>
         <div className="p-2">
           <input placeholder="Search conversations" className="w-full p-2 border rounded text-sm" />
         </div>
@@ -669,6 +720,30 @@ const GeneralAsk = () => {
               }
             }}
           />
+          {/* Language dropdown button beside input */}
+          <div className="relative" ref={langMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowLangMenu(s => !s)}
+              title={`Select language (current: ${String(language || '').toUpperCase()})`}
+              className="px-2 py-1 border rounded bg-white text-sm"
+            >
+              {labelForCode(language)}
+            </button>
+            {showLangMenu && (
+              <div className="absolute right-0 bottom-full mb-2 bg-white border rounded shadow-md z-50 w-40">
+                {languages.map(l => (
+                  <button
+                    key={l.code}
+                    onClick={() => { try { setLanguage(l.code); } catch(e){}; setShowLangMenu(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button onClick={sendQuery} disabled={loading} className="px-3 py-1 btn-primary text-white rounded">{loading ? 'Asking...' : 'Ask'}</button>
         </div>
       </div>

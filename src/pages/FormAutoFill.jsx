@@ -1753,9 +1753,22 @@ const FormAutoFill = () => {
       const fd = new FormData();
       // Some browsers produce webm; backend handles common audio types
       fd.append('file', blob, 'recording.webm');
-      if (spokenLang) fd.append('language', spokenLang);
-      const res = await api.post('/api/transcribe-hindi', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      const transcript = res.data?.combinedTranscript || res.data?.transcript || (res.data?.transcripts && res.data?.transcripts[0]) || '';
+      // Only send the input language per the pipeline contract (normalize English to 'en')
+      const langForApi = (l) => {
+        try {
+          if (!l) return 'en';
+          const s = String(l).toLowerCase();
+          if (s.startsWith('en')) return 'en';
+          return s.slice(0,2);
+        } catch (e) {
+          return 'en';
+        }
+      };
+      if (spokenLang) fd.append('input_language', langForApi(spokenLang));
+
+      // Send to the pipeline ingestion endpoint via papi
+      const res = await papi.post('/api/ingest-audio', fd);
+      const transcript = res.data?.transcript || res.data?.combinedTranscript || (res.data?.transcripts && res.data.transcripts[0]) || '';
       if (!transcript) {
         toast.error('No transcript returned');
         return;
