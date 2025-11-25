@@ -10,13 +10,13 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
   const [renderError, setRenderError] = useState(null);
   const [normalizedBoxes, setNormalizedBoxes] = useState([]);
   const [selectedBox, setSelectedBox] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // loading state removed (unused) to satisfy ESLint
 
   useEffect(() => {
     let cancelled = false;
+    let pdfLocal = null;
     async function loadPdf() {
       setRenderError(null);
-      setIsLoading(true);
       try {
         const pdfjs = await import('pdfjs-dist/legacy/build/pdf');
         if (pdfjs && pdfjs.GlobalWorkerOptions) {
@@ -35,26 +35,24 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
           : pdfjs.getDocument(src.url || src);
 
         const pdf = await loadingTask.promise;
+        pdfLocal = pdf;
         if (cancelled) return;
         setPdfRef(pdf);
         setTotalPages(pdf.numPages || 1);
       } catch (err) {
         console.error('RiskViewer loadPdf failed', err);
         setRenderError('Failed to load PDF');
-      } finally {
-        // keep loading visible until first render completes
       }
     }
 
     loadPdf();
-    return () => { cancelled = true; if (pdfRef && pdfRef.destroy) try { pdfRef.destroy(); } catch(e){} };
+    return () => { cancelled = true; if (pdfLocal && pdfLocal.destroy) try { pdfLocal.destroy(); } catch(e){} };
   }, [fileUrl, fileBlob]);
 
   useEffect(() => {
     let cancelled = false;
     async function render() {
       setRenderError(null);
-      setIsLoading(true);
       if (!pdfRef) return;
       try {
         const page = await pdfRef.getPage(pageNum);
@@ -156,11 +154,11 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
         } catch (e) {
           console.warn('Failed to draw overlays', e);
         }
-        setIsLoading(false);
+        // finished rendering
       } catch (err) {
         console.error('RiskViewer render failed', err);
         setRenderError('Failed to render page');
-        setIsLoading(false);
+        // finished rendering
       }
     }
 
@@ -444,8 +442,8 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
             <button onClick={onClose} className="px-3 py-1 bg-blue-600 text-white rounded">Close</button>
           </div>
         </div>
-        <div className="p-3 flex gap-4">
-          <div className="flex-1 relative">
+        <div className="p-3 flex flex-col md:flex-row gap-4">
+          <div className="flex-1 relative max-h-[60vh] overflow-auto">
             {renderError && <div className="text-red-600 mb-2">{renderError}</div>}
             {/* Sticky pagination controls like FormAutoFill */}
             {totalPages > 1 && (
@@ -481,12 +479,14 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
               </div>
             )}
             <div className="w-full">
-              <canvas ref={canvasRef} style={{ width: '100%', height: 'auto', display: 'block' }} />
+              <div className="w-full">
+                <canvas ref={canvasRef} style={{ width: '100%', height: 'auto', display: 'block' }} />
+              </div>
             </div>
           </div>
 
-          {/* Details panel for clicked field */}
-          <div className="w-80 max-h-[70vh] overflow-auto bg-gray-50 border-l border-gray-100 p-3 rounded-r-lg">
+          {/* Details panel for clicked field (stacked on mobile) */}
+          <div className="w-full md:w-80 max-h-[60vh] overflow-auto bg-gray-50 md:border-l border-t md:border-t-0 border-gray-100 p-3 rounded-b-lg md:rounded-r-lg">
             <h4 className="font-semibold text-gray-800 mb-2">Field Details</h4>
             {!selectedBox && <div className="text-sm text-gray-500">Click a highlighted field on the document to see details here.</div>}
             {selectedBox && (

@@ -11,7 +11,7 @@ const Support = () => {
   const [contactForm, setContactForm] = useState({ subject: '', message: '' });
   const [submitting, setSubmitting] = useState(false);
   const authUser = useAuthStore(s => s.user) || {};
-  const isLawyer = authUser?.role === 'lawyer';
+  // removed unused isLawyer binding (lint cleanup)
 
   // Helper function to render feature icons
   const getFeatureIcon = (iconName) => {
@@ -355,36 +355,36 @@ const Support = () => {
         }
       ]
     },
-    {
-      id: 'guest-access',
-      title: 'Guest Access Feature',
-      icon: 'user',
-      steps: [
         {
-          title: '1. Try Without Signing Up',
-          description: 'Use "Try as Guest" on the landing page to explore features without creating an account.',
-          tips: ['Guest sessions last 24 hours']
-        },
-        {
-          title: '2. Limited Features',
-          description: 'Guests can try AutoFill Forms, Legal Desk, and Quick Guide.',
-          tips: [
-            'Cannot connect with lawyers as a guest',
-            'Cannot save data permanently',
-            'Chat history is temporary'
-          ]
-        },
-        {
-          title: '3. Convert to Full Account',
-          description: 'Click "Sign Up" anytime to convert your guest session to a full account.',
-          tips: [
-            'Guest data can be migrated to your account',
-            'Get full access to all features',
-            'Connect with lawyers and save your work'
+          id: 'guest-access',
+          title: 'Guest Access Feature',
+          icon: 'user',
+          steps: [
+            {
+              title: '1. Try Without Signing Up',
+              description: 'Use "Try as Guest" on the landing page to explore features without creating an account.',
+              tips: ['Guest sessions last 24 hours']
+            },
+            {
+              title: '2. Limited Features',
+              description: 'Guests can try AutoFill Forms, Legal Desk, and Legal Chatbot.',
+              tips: [
+                'Cannot connect with lawyers as a guest',
+                'Cannot save data permanently',
+                'Chat history is temporary'
+              ]
+            },
+            {
+              title: '3. Convert to Full Account',
+              description: 'Click "Sign Up" anytime to convert your guest session to a full account.',
+              tips: [
+                'Guest data can be migrated to your account',
+                'Get full access to all features',
+                'Connect with lawyers and save your work'
+              ]
+            }
           ]
         }
-      ]
-    }
   ];
 
   const faqs = [
@@ -396,7 +396,7 @@ const Support = () => {
     {
       id: 2,
       question: 'How much does it cost to use LegalSahai?',
-      answer: 'Creating an account and browsing lawyers is completely free. You only pay consultation fees directly to lawyers based on their rates. The AutoFill Forms, Legal Desk, and Quick Guide features are free to use. There are no hidden charges or platform fees.'
+      answer: 'Creating an account and browsing lawyers is completely free. You only pay consultation fees directly to lawyers based on their rates. The AutoFill Forms, Legal Desk, and Legal Chatbot features are free to use. There are no hidden charges or platform fees.'
     },
     {
       id: 3,
@@ -406,7 +406,7 @@ const Support = () => {
     {
       id: 4,
       question: 'Can I use the app without creating an account?',
-      answer: 'Yes! You can try the app as a guest to explore AutoFill Forms, Legal Desk, and Quick Guide. However, guest access is limited and temporary (24 hours). To connect with lawyers, save your work permanently, and access all features, you\'ll need to create a free account.'
+      answer: 'Yes! You can try the app as a guest to explore AutoFill Forms, Legal Desk, and Legal Chatbot. However, guest access is limited and temporary (24 hours). To connect with lawyers, save your work permanently, and access all features, you\'ll need to create a free account.'
     },
     {
       id: 5,

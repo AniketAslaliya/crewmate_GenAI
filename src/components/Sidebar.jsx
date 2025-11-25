@@ -133,8 +133,8 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
            icon={<MdOutlineDocumentScanner size={20} />}
           labelText="AutoFill Forms"
         />
-        {/* General Ask / Quick Guide feature */}
-  <IconBtn onClick={() => go('/general-ask')} active={pathname.startsWith('/general-ask')} label="Quick Guide" icon={pathname.startsWith('/general-ask') ? <MdLightbulb size={20} /> : <MdOutlineLightbulb size={20} />} labelText="Quick Guide" />
+          {/* General Ask / Legal Chatbot feature */}
+        <IconBtn onClick={() => go('/general-ask')} active={pathname.startsWith('/general-ask')} label="Legal Chatbot" icon={pathname.startsWith('/general-ask') ? <MdLightbulb size={20} /> : <MdOutlineLightbulb size={20} />} labelText="Legal Chatbot" />
         
         {/* Admin Panel - Only visible to admin users */}
         {isAdmin && (

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import useAuthStore from '../context/AuthContext';
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -10,7 +10,7 @@ import { useToast } from '../components/ToastProvider';
 import { useGuestAccess } from '../hooks/useGuestAccess';
 import GuestAccessModal from '../components/GuestAccessModal';
 import { sanitizeTextInput, validateFile, checkRateLimit } from '../utils/inputSecurity';
-// Removed problematic pdfjs-dist/web/pdf_viewer.css import; using canvas-based PDF rendering as in forms
+
 // Modern legal background with enhanced professional pattern
 const ModernBackground = () => (
   <div className="absolute inset-0 -z-10 bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
@@ -20,7 +20,6 @@ const ModernBackground = () => (
         backgroundRepeat: "repeat"
       }}
     />
-    {/* Enhanced gradient overlays */}
     <div className="absolute top-0 left-0 w-full h-1/3 bg-gradient-to-b from-blue-600/5 to-transparent" />
     <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-gradient-to-t from-indigo-600/3 to-transparent" />
   </div>
@@ -123,10 +122,11 @@ const LegalDesk = () => {
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
-  // Remove local userProfile state, use zustand
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [ingestionStatus, setIngestionStatus] = useState([]);
+  const [riskProcessing, setRiskProcessing] = useState(false);
+  const [riskIngestionStatus, setRiskIngestionStatus] = useState([]);
   const toast = useToast();
   const [deleteConfirmModal, setDeleteConfirmModal] = useState({ show: false, deskId: null, deskTitle: '' });
   const [riskModal, setRiskModal] = useState({ open: false, chat: null });
@@ -157,6 +157,9 @@ const LegalDesk = () => {
   // Per-chat loading states for buttons
   const [loadingOpenIds, setLoadingOpenIds] = useState([]); // ids for "Open Legal Desk"
   const [loadingRiskIds, setLoadingRiskIds] = useState([]); // ids for "View Risk"
+
+  // Guard to prevent accidental risk uploads while a desk file upload is in progress
+  const allowRiskUploadRef = useRef(true);
 
   const setOpenLoading = (id, loading) => {
     setLoadingOpenIds(prev => {
@@ -225,6 +228,8 @@ const LegalDesk = () => {
       return;
     }
 
+    // While we are uploading and ingesting, prevent any risk uploads from firing
+    allowRiskUploadRef.current = false;
     setUploading(true);
 
     let newChat = null;
@@ -285,21 +290,7 @@ const LegalDesk = () => {
       // Inform ingestion service of the desired output language
       formData.append('output_language', selectedOutputLang);
 
-      // Start risk upload in parallel to ingestion. We do not depend on its result
-      // for the summary flow, but we will update the UI once it completes.
-      // Start external ingestion + risk calls via papi (external service)
-      let riskPromise = null;
-      try {
-        const riskForm = new FormData();
-        riskForm.append('user_id', user?._id || '');
-        riskForm.append('thread_id', newChat._id);
-        riskForm.append('file', file);
-        riskForm.append('output_language', selectedOutputLang);
-        // Call external risk endpoint via papi (fire-and-track)
-        riskPromise = papi.post('/api/upload-risk-doc', riskForm, { headers: { 'Content-Type': 'multipart/form-data' } });
-      } catch (e) {
-        console.warn('Failed to start risk upload', e);
-      }
+      // --- MOVED RISK CALL: Risk analysis is NOT called here anymore ---
 
       // 2. Ingest document (must succeed before next steps)
       try {
@@ -360,26 +351,6 @@ const LegalDesk = () => {
       setChats(prev => prev.map(desk =>
         desk._id === newChat._id ? { ...desk, summary: summaryText, output_language: selectedOutputLang } : desk
       ));
-      // Optionally: handle/display risk analysis result here if needed
-      // Wait for risk result if it was started and update UI with returned JSON
-      if (riskPromise) {
-        try {
-          const riskRes = await riskPromise;
-          const riskJson = riskRes.data;
-          // persist risk JSON into our backend so it remains available
-          try {
-            await api.post(`/api/chats/${newChat._id}/risk`, { result: riskJson });
-          } catch (e) {
-            console.warn('Failed to persist risk to backend', e);
-          }
-          // update UI with risk result
-          setChats(prev => prev.map(desk => desk._id === newChat._id ? ({ ...desk, riskAnalyses: [ ...(desk.riskAnalyses || []), { createdAt: new Date().toISOString(), result: riskJson } ] }) : desk));
-        } catch (riskErr) {
-          console.error('Risk upload failed for thread', newChat?._id, riskErr);
-          await cleanupDesk(newChat?._id);
-          throw riskErr;
-        }
-      }
 
       // Use backend proxy download endpoint (same-origin) to avoid CORS issues with signed URLs
       // This endpoint will stream the file through our backend: /api/chats/:id/download?proxy=1
@@ -399,6 +370,8 @@ const LegalDesk = () => {
         setChats(prev => prev.filter(c => c.title !== title));
       }
     } finally {
+      // Re-enable risk uploads after the full upload/create pipeline completes
+      allowRiskUploadRef.current = true;
       setUploading(false);
       setIsLoading(false);
       setTitle("");
@@ -419,18 +392,133 @@ const LegalDesk = () => {
   };
 
   // Open Risk viewer: fetch file via our backend (with auth) as arraybuffer and pass Blob to RiskViewer
+  // UPDATED: Now triggers risk analysis generation if it doesn't exist
   const handleOpenRisk = async (chat) => {
     if (!checkGuestAccess('Legal Desk Access')) return;
     setRiskLoading(chat._id, true);
     try {
-      // Try to fetch proxied file from backend using axios client (sends auth headers/cookies)
+      // If an upload is in progress, wait briefly for it to finish before triggering risk.
+      const waitForAllow = async (timeoutMs = 30000) => {
+        const start = Date.now();
+        while (!allowRiskUploadRef.current) {
+          if (Date.now() - start > timeoutMs) return false;
+          await new Promise(r => setTimeout(r, 300));
+        }
+        return true;
+      };
+
+      const allowed = await waitForAllow(30000);
+      if (!allowed) {
+        toast.error('Upload still in progress. Please try View Risk after upload finishes.');
+        setRiskLoading(chat._id, false);
+        return;
+      }
+
+      // Ensure file format is supported for risk viewing/generation
+      const supportedExts = ['pdf', 'doc', 'docx', 'txt'];
+      const supportedMimes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain'
+      ];
+
+      const filename = (chat.originalFileName || chat.fileName || chat.title || '').toString();
+      const lowerName = filename.toLowerCase();
+      const ext = lowerName.includes('.') ? lowerName.split('.').pop() : '';
+      const mime = (chat.fileMimeType || '').toString();
+
+      if (!(supportedExts.includes(ext) || supportedMimes.includes(mime))) {
+        toast.error('View Risk is only available for PDF, DOC/DOCX and TXT files.');
+        setRiskLoading(chat._id, false);
+        return;
+      }
+
+      // 1. Fetch File Blob (Needed for viewer AND potentially for generating risk analysis)
       const resp = await api.get(`/api/chats/${chat._id}/download?proxy=1`, { responseType: 'arraybuffer' });
       const blob = new Blob([resp.data], { type: chat.fileMimeType || 'application/pdf' });
-      setRiskModal({ open: true, chat: { ...chat, fileBlob: blob } });
+
+      // 2. Check if Risk Analysis exists. If not, Generate it.
+      let riskData = null;
+      if (chat.riskAnalyses && chat.riskAnalyses.length > 0) {
+         riskData = chat.riskAnalyses[chat.riskAnalyses.length - 1].result;
+      } else {
+         // Generate Risk Analysis on Demand (with upload-like smart animation)
+         // Prepare a multi-step loader that mirrors the upload animation feel
+         const riskSteps = [
+           { id: 1, text: "Preparing document for risk analysis...", status: 'pending' },
+           { id: 2, text: "Parsing and segmenting legal clauses...", status: 'pending' },
+           { id: 3, text: "Generating legal risk embeddings...", status: 'pending' },
+           { id: 4, text: "Running compliance checks and heuristics...", status: 'pending' },
+           { id: 5, text: "Compiling risk findings and recommendations...", status: 'pending' },
+           { id: 6, text: "Finalizing risk analysis report...", status: 'pending' }
+         ];
+
+         setRiskIngestionStatus(riskSteps);
+         setRiskProcessing(true);
+
+         // Animate progress in the background (upload-like pacing)
+         const animateRiskProgress = async () => {
+           for (let i = 0; i < riskSteps.length; i++) {
+             await new Promise(resolve => setTimeout(resolve, 800));
+             setRiskIngestionStatus(prev => prev.map((step, index) => ({
+               ...step,
+               status: index < i ? 'completed' : index === i ? 'in-progress' : 'pending'
+             })));
+           }
+         };
+
+         try {
+           const animPromise = animateRiskProgress();
+
+           const riskForm = new FormData();
+           riskForm.append('user_id', user?._id || '');
+           riskForm.append('thread_id', chat._id);
+           // Send the file blob to the risk endpoint
+           riskForm.append('file', blob, chat.title || 'document.pdf');
+           riskForm.append('output_language', chat.output_language || selectedOutputLang);
+
+           const riskRes = await papi.post('/api/upload-risk-doc', riskForm, { headers: { 'Content-Type': 'multipart/form-data' } });
+           riskData = riskRes.data;
+
+           // Persist result to backend
+           await api.post(`/api/chats/${chat._id}/risk`, { result: riskData });
+
+           // Update local state so we don't regenerate next time
+           const newAnalysis = { createdAt: new Date().toISOString(), result: riskData };
+           setChats(prev => prev.map(c => 
+             c._id === chat._id 
+             ? { ...c, riskAnalyses: [...(c.riskAnalyses || []), newAnalysis] } 
+             : c
+           ));
+
+           // Allow animation to finish gracefully
+           try { await animPromise; } catch (e) { /* ignore */ }
+
+         } catch (genErr) {
+           console.error("Failed to generate risk analysis on demand:", genErr);
+           toast.error("Failed to generate risk analysis. Showing document only.");
+         } finally {
+           // mark steps completed and hide loader
+           setRiskIngestionStatus(prev => prev.map(s => ({ ...s, status: 'completed' })));
+           setTimeout(() => setRiskProcessing(false), 300);
+         }
+      }
+
+      // 3. Open Modal
+      setRiskModal({ 
+        open: true, 
+        chat: { 
+          ...chat, 
+          fileBlob: blob,
+          // Inject the newly generated or existing risk data directly so the modal doesn't use stale chat state
+          riskAnalyses: riskData ? [{ result: riskData }] : [] 
+        } 
+      });
+
     } catch (err) {
-      console.error('Failed to fetch preview via proxy, falling back to previewUrl', err);
-      toast.error('Failed to load document preview. Trying fallback.');
-      setRiskModal({ open: true, chat });
+      console.error('Failed to fetch preview or generate risk', err);
+      toast.error('Failed to load document or risk analysis.');
     } finally {
       setRiskLoading(chat._id, false);
     }
@@ -574,6 +662,7 @@ const LegalDesk = () => {
 
       <AnimatePresence>
         {isLoading && <IngestionLoader steps={ingestionStatus} />}
+        {riskProcessing && <IngestionLoader steps={riskIngestionStatus} />}
       </AnimatePresence>
 
 
@@ -1076,7 +1165,7 @@ const LegalDesk = () => {
         <RiskViewer
           fileUrl={riskModal.chat?.previewUrl}
           fileBlob={riskModal.chat?.fileBlob || null}
-          riskData={(riskModal.chat && riskModal.chat.riskAnalyses && riskModal.chat.riskAnalyses.length) ? riskModal.chat.riskAnalyses[riskModal.chat.riskAnalyses.length - 1].result : (riskModal.chat && riskModal.chat.riskAnalyses) || null}
+          riskData={(riskModal.chat && riskModal.chat.riskAnalyses && riskModal.chat.riskAnalyses.length) ? riskModal.chat.riskAnalyses[riskModal.chat.riskAnalyses.length - 1].result : null}
           onClose={() => setRiskModal({ open: false, chat: null })}
         />
       )}

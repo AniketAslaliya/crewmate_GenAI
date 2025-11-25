@@ -82,7 +82,7 @@ const GeneralAsk = () => {
         const res = await api.get('/api/general-ask/list?_=' + Date.now());
         const backendChats = (res && res.data && res.data.chats) ? res.data.chats : [];
         if (backendChats && backendChats.length) {
-            const mapped = backendChats.map(c => ({ id: c._id, title: c.title || 'Quick Guide', messages: [], updated: c.updatedAt || c.createdAt, preview: c.lastMessageText || '' }));
+            const mapped = backendChats.map(c => ({ id: c._id, title: c.title || 'Legal Chatbot', messages: [], updated: c.updatedAt || c.createdAt, preview: c.lastMessageText || '' }));
             setChats(mapped);
             // restore previously-selected active chat if present
             const stored = (() => { try { return localStorage.getItem(ACTIVE_CHAT_KEY); } catch(e){ return null; } })();
@@ -99,7 +99,7 @@ const GeneralAsk = () => {
     })();
   }, [openChat, setActive]);
 
-  // Handle incoming navigation state: startQuestion + chatId from Home quick guide
+  // Handle incoming navigation state: startQuestion + chatId from Home legal chatbot
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
@@ -111,7 +111,7 @@ const GeneralAsk = () => {
       try {
         // If chatId provided, set it as active (and create a stub entry)
         if (chatId) {
-          const stub = { id: chatId, title: 'Quick Guide', messages: [], updated: Date.now(), isNew: true };
+          const stub = { id: chatId, title: 'Legal Chatbot', messages: [], updated: Date.now(), isNew: true };
           setChats(prev => [stub, ...prev]);
           setActive(chatId);
           setQuery(startQuestion);
@@ -123,7 +123,7 @@ const GeneralAsk = () => {
             const r = await api.post('/api/general-ask/create', { title: startQuestion.slice(0,60) });
             const c = r?.data?.chat;
             if (c && c._id) {
-              const newChat = { id: c._id, title: c.title || 'Quick Guide', messages: [], updated: Date.now(), isNew: true };
+              const newChat = { id: c._id, title: c.title || 'Legal Chatbot', messages: [], updated: Date.now(), isNew: true };
               setChats(prev => [newChat, ...prev]);
               setActive(c._id);
               setQuery(startQuestion);
@@ -135,7 +135,7 @@ const GeneralAsk = () => {
           }
         }
       } catch (e) {
-        console.warn('auto-start quick guide failed', e);
+        console.warn('auto-start legal chatbot failed', e);
       } finally {
         // clear navigation state so repeated mounts don't resend
         try { navigate(location.pathname, { replace: true }); } catch(e) {}
@@ -172,11 +172,11 @@ const GeneralAsk = () => {
     // create on backend to obtain persistent chat id
     (async () => {
       try {
-        const res = await api.post('/api/general-ask/create', { title: 'Quick Guide' });
+        const res = await api.post('/api/general-ask/create', { title: 'Legal Chatbot' });
         const chat = res.data && res.data.chat ? res.data.chat : null;
         if (chat && chat._id) {
           // mark as new so first question can become the chat title
-          const c = { id: chat._id, title: chat.title || 'Quick Guide', messages: [], updated: Date.now(), isNew: true };
+          const c = { id: chat._id, title: chat.title || 'Legal Chatbot', messages: [], updated: Date.now(), isNew: true };
           setChats(prev => [c, ...prev]);
           setActive(chat._id);
           // focus the input so user can type the first question
@@ -203,24 +203,7 @@ const GeneralAsk = () => {
     return [];
   })();
 
-  // Simple safe formatter: escape HTML, convert **bold** to <strong> and preserve line breaks.
-  const escapeHtml = (unsafe) => {
-    return String(unsafe)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  };
-
-  const formatMessageToHtml = (text) => {
-    if (!text && text !== 0) return '';
-    const escaped = escapeHtml(text);
-    // Convert **bold** (markdown-like) to <strong>
-    const bolded = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // preserve line breaks
-    return bolded.replace(/\n/g, '<br/>');
-  };
+  // (removed unused HTML formatting helpers to satisfy ESLint)
 
   // --- Voice Input (shared approach with NotebookPage) ---
   const audioContextRef = useRef(null);
@@ -434,11 +417,11 @@ const GeneralAsk = () => {
       let createdNewChatLocal = null;
       if (!chatId) {
         try {
-          const resCreate = await api.post('/api/general-ask/create', { title: 'Quick Guide' });
+          const resCreate = await api.post('/api/general-ask/create', { title: 'Legal Chatbot' });
           const chat = resCreate && resCreate.data && resCreate.data.chat ? resCreate.data.chat : null;
             if (chat && chat._id) {
             chatId = chat._id;
-            const newChat = { id: chatId, title: chat.title || 'Quick Guide', messages: [], updated: Date.now(), preview: '' };
+            const newChat = { id: chatId, title: chat.title || 'Legal Chatbot', messages: [], updated: Date.now(), preview: '' };
             setChats(prev => [newChat, ...prev]);
             setActive(chatId);
             createdNewChatLocal = newChat;
@@ -470,7 +453,7 @@ const GeneralAsk = () => {
         if (found) {
           return prev.map(c => c.id === chatId ? { ...c, messages: [...(c.messages || []), userMsg], updated: Date.now(), preview: txt } : c);
         }
-        const temp = { id: chatId, title: 'Quick Guide', messages: [userMsg], updated: Date.now(), isNew: false, preview: txt };
+        const temp = { id: chatId, title: 'Legal Chatbot', messages: [userMsg], updated: Date.now(), isNew: false, preview: txt };
         return [temp, ...prev];
       });
   // remember optimistic text so UI can show it while server response loads
@@ -628,7 +611,7 @@ const GeneralAsk = () => {
       {/* List (left) - full width on mobile, fixed on md+ */}
       <div className={`${activeChat ? 'hidden' : 'flex'} md:flex w-full md:w-80 border-r flex-col min-h-0 h-full bg-[var(--panel)]`} style={{borderColor:'var(--palette-3)'}}>
         <div className="p-3 border-b flex items-center justify-between">
-                <div className="font-semibold">Quick Guide</div>
+                <div className="font-semibold">Legal Chatbot</div>
                 <div className="flex items-center gap-2">
                   <div>
                     <button onClick={createNew} className="px-2 py-1 bg-green-600 text-white rounded">New</button>
@@ -638,7 +621,7 @@ const GeneralAsk = () => {
         <div className="p-2">
           <input placeholder="Search conversations" className="w-full p-2 border rounded text-sm" />
         </div>
-        {/* Vertical scroll list (Quick Guide) */}
+        {/* Vertical scroll list (Legal Chatbot) */}
         <div className="flex-1 overflow-y-auto" ref={listRef}>
           {chats.length === 0 && (
             <div className="p-4 text-sm text-[var(--muted)]">No saved guides yet. Click New to start.</div>
@@ -672,11 +655,11 @@ const GeneralAsk = () => {
         {/* Mobile header with back */}
         <div className="md:hidden flex-none p-3 border-b flex items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
           <button onClick={()=>setActive(null)} className="mr-1 px-2 py-1 rounded hover:bg-gray-100" aria-label="Back to list">←</button>
-          <div className="font-semibold truncate">{activeChat ? (activeChat.title || 'Conversation') : 'Quick Guide'}</div>
+                  <div className="font-semibold truncate">{activeChat ? (activeChat.title || 'Conversation') : 'Legal Chatbot'}</div>
         </div>
         {/* Desktop header */}
         <div className="hidden md:flex flex-none p-3 border-b items-center gap-3 bg-white" style={{borderColor:'var(--border)'}}>
-          <div className="font-semibold">{activeChat ? (activeChat.title || 'Conversation') : 'Quick Guide'}</div>
+                <div className="font-semibold">{activeChat ? (activeChat.title || 'Conversation') : 'Legal Chatbot'}</div>
         </div>
 
   <div className="flex-1 min-h-0 overflow-y-auto p-3 bg-[var(--palette-4)]">

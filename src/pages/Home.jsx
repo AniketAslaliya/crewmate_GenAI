@@ -39,7 +39,7 @@ const Home = () => {
   ];
 
   // When user clicks Ask in the expanded "View more" area, pass the question
-  // to the GeneralAsk page (Quick Guide) and let that page perform the query.
+  // to the GeneralAsk page (Legal Chatbot) and let that page perform the query.
   // We attempt to create a persistent chat first (best-effort) so GeneralAsk
   // receives a chatId if available.
   const handleAskInline = async (question) => {
@@ -186,11 +186,11 @@ const Home = () => {
             </>
           )}
 
-          {/* Quick Guide shortcuts */}
+          {/* Legal Chatbot shortcuts */}
           {!isLawyer && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold">Quick Guide</h2>
+              <h2 className="text-lg font-semibold">Legal Chatbot</h2>
               <button onClick={() => setShowMore(s => !s)} className="text-sm text-primary/80">{showMore ? 'View less' : 'View more'}</button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -203,7 +203,7 @@ const Home = () => {
               ].slice(0,4).map((q) => (
                 <button key={q} onClick={async () => {
                   try {
-                    // create a persistent Quick Guide chat and redirect with state so GeneralAsk auto-sends
+                    // create a persistent Legal Chatbot chat and redirect with state so GeneralAsk auto-sends
                     const res = await api.post('/api/general-ask/create', { title: q.slice(0,60) });
                     const chat = res?.data?.chat;
                     const chatId = chat?._id;
