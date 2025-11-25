@@ -157,7 +157,7 @@ const Sidebar = ({ isOpen = true, toggleSidebar = () => {} }) => {
                  Exploring as Guest
               </p>
               <button
-                onClick={() => navigate('/login')}
+                onClick={() => { logout(); navigate('/login'); }}
                 className="w-full mt-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-xs font-semibold transition-colors"
               >
                 Sign Up to Unlock

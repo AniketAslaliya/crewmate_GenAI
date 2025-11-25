@@ -1,42 +1,51 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import useAuthStore from '../context/AuthContext';
+import api from '../Axios/axios';
 
 const Landing = () => {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const [activeFeature, setActiveFeature] = useState(0);
-  const [hoveredCard, setHoveredCard] = useState(null);
-  const [isVisible, setIsVisible] = useState(false);
+  const { user, setToken } = useAuthStore();
+  const [guestLoading, setGuestLoading] = useState(false);
 
-  useEffect(() => {
-    // Redirect to home if user is already logged in
-    if (user) {
-      navigate('/home');
+  const handleGuestStart = async () => {
+    try {
+      setGuestLoading(true);
+      const res = await api.post('/auth/guest-login');
+      const token = res.data?.token;
+      if (token) {
+        // Persist token in auth store which will fetch user
+        setToken(token);
+        // Navigate to home after short delay to ensure user fetch starts
+        navigate('/home');
+      } else {
+        console.error('No token received from guest-login');
+      }
+    } catch (err) {
+      console.error('Guest login failed', err);
+    } finally {
+      setGuestLoading(false);
     }
-  }, [user, navigate]);
+  };
+  const [activeFeature, setActiveFeature] = useState(0);
+  const [isVisible, setIsVisible] = useState(false);
+  const featuresSectionRef = useRef(null);
 
-  useEffect(() => {
-    setIsVisible(true);
-    const interval = setInterval(() => {
-      setActiveFeature(prev => (prev + 1) % 6);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
+  // Define features array before useEffect that uses it
   const features = [
     {
       icon: (
-        <svg className="w-full h-full" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-full h-full" fill="none" stroke="currentColor" viewBox="0 0 24 20
+        ">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
         </svg>
       ),
       title: 'Legal Desks',
       description: 'Create dedicated workspaces for each case. Upload documents, ask questions, and get AI-powered insights directly from your case files.',
       details: ['Multi-document support', 'Context-aware AI analysis', 'RAG-based retrieval', 'Secure document storage'],
-      color: 'from-slate-600 to-slate-800',
-      bgGradient: 'from-slate-50 to-gray-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Upload contracts, agreements, or case files and ask questions like "What are the payment terms?" or "Summarize this contract"'
     },
     {
@@ -48,8 +57,8 @@ const Landing = () => {
       title: 'Smart Form AutoFill',
       description: 'AI detects form fields in PDFs and images, suggests values, and fills them automatically with voice or text input support.',
       details: ['OCR field detection', 'Voice-to-text input', 'Multi-language support', 'AcroForm compatibility'],
-      color: 'from-blue-600 to-blue-800',
-      bgGradient: 'from-blue-50 to-sky-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Upload any legal form PDF and watch AI identify all fields. Fill them using voice commands in 10+ Indian languages!'
     },
     {
@@ -61,8 +70,8 @@ const Landing = () => {
       title: 'Quick Legal Guide',
       description: 'Get instant answers to legal questions with AI-powered chat. Ask about divorce, arrests, wills, child custody, and more.',
       details: ['24/7 AI assistance', 'Follow-up questions', 'Persistent conversations', 'Multi-language responses'],
-      color: 'from-emerald-600 to-teal-700',
-      bgGradient: 'from-emerald-50 to-teal-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Ask questions like "How do I file for divorce?" or "What are my rights if wrongfully terminated?" and get instant guidance'
     },
     {
@@ -74,8 +83,8 @@ const Landing = () => {
       title: 'Find & Connect with Lawyers',
       description: 'Search verified lawyers by specialty, location, experience, and rating. Connect instantly via secure chat.',
       details: ['Advanced filtering', 'Verified profiles', 'Real-time chat', 'Consultation requests'],
-      color: 'from-amber-600 to-orange-700',
-      bgGradient: 'from-amber-50 to-orange-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Filter by specialization, location, fees, languages, and court experience. Send consultation requests and chat directly'
     },
     {
@@ -87,8 +96,8 @@ const Landing = () => {
       title: 'Admin Verification System',
       description: 'Lawyers undergo rigorous verification by admins. Only verified professionals can accept clients.',
       details: ['Document verification', 'Profile review', 'Status tracking', 'Quality assurance'],
-      color: 'from-violet-600 to-purple-700',
-      bgGradient: 'from-violet-50 to-purple-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Lawyers submit credentials, admins review and approve. Ensures you only connect with legitimate professionals'
     },
     {
@@ -100,11 +109,39 @@ const Landing = () => {
       title: 'Multi-Language Voice Support',
       description: 'Speak in Hindi, Gujarati, Marathi, Tamil, Telugu, Bengali, Kannada, Malayalam, Punjabi, or English.',
       details: ['10+ Indian languages', 'Text-to-speech', 'Voice-to-text', 'Real-time translation'],
-      color: 'from-cyan-600 to-blue-700',
-      bgGradient: 'from-cyan-50 to-blue-50',
+      color: 'from-sky-400 to-blue-500',
+      bgGradient: 'from-sky-50 to-blue-50',
       demo: 'Fill forms, ask questions, and get responses in your preferred language with full voice support'
     }
   ];
+
+  useEffect(() => {
+    // Redirect to home if user is already logged in
+    if (user) {
+      navigate('/home');
+    }
+  }, [user, navigate]);
+
+  useEffect(() => {
+    setIsVisible(true);
+  }, []);
+
+  // Auto-rotating circular carousel for features
+  useEffect(() => {
+    const numFeatures = features.length;
+    const rotationInterval = 3000; // 3 seconds per feature (faster)
+    
+    const intervalId = setInterval(() => {
+      setActiveFeature(prev => {
+        const next = (prev + 1) % numFeatures;
+        return next;
+      });
+    }, rotationInterval);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [features.length]);
 
   const stats = [
     { 
@@ -207,38 +244,77 @@ const Landing = () => {
       <motion.header
         initial={{ y: -100, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.6 }}
-        className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm"
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-2xl border-b border-gray-100/80 shadow-sm"
       >
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 md:h-20">
             <motion.div
-              className="flex items-center gap-3"
-              whileHover={{ scale: 1.05 }}
+              className="flex items-center gap-3 cursor-pointer group"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             >
-              <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-xl">L</span>
+              <div className="relative">
+                <div className="w-11 h-11 md:w-12 md:h-12 rounded-xl bg-slate-900 flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300 group-hover:scale-110 p-1">
+                  <img
+                    src="/logo.png"
+                    alt="Legal SahAI"
+                    className="w-full h-full object-contain rounded"
+                  />
+                </div>
+                <motion.div
+                  className="absolute inset-0 bg-slate-600 rounded-xl opacity-0 group-hover:opacity-20 blur-xl"
+                  animate={{ scale: [1, 1.2, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
               </div>
-              <span className="text-2xl font-bold text-slate-800">
-                Legal SahAI
-              </span>
+              <div className="flex flex-col">
+                <span className="text-xl md:text-2xl font-bold bg-gradient-to-r from-slate-800 via-blue-800 to-indigo-800 bg-clip-text text-transparent leading-tight">
+                  Legal SahAI
+                </span>
+                <span className="text-[10px] md:text-xs font-medium text-gray-500 -mt-0.5">
+                  AI-Powered Legal Platform
+                </span>
+              </div>
             </motion.div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 md:gap-4">
               <motion.button
-                whileHover={{ scale: 1.05 }}
+                whileHover={{ scale: 1.05, y: -1 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => navigate('/login')}
-                className="px-6 py-2.5 text-gray-700 font-medium hover:text-blue-600 transition-colors"
+                className="px-5 md:px-6 py-2 md:py-2.5 text-gray-700 font-semibold hover:text-blue-600 transition-all duration-300 text-sm md:text-base relative group"
               >
-                Sign In
+                <span className="relative z-10">Sign In</span>
+                <span className="absolute bottom-0 left-0 w-0 h-0.5 bg-blue-600 group-hover:w-full transition-all duration-300" />
               </motion.button>
               <motion.button
-                whileHover={{ scale: 1.05, boxShadow: "0 10px 25px -5px rgba(59, 130, 246, 0.5)" }}
+                whileHover={{ 
+                  scale: 1.05, 
+                  y: -2,
+                  boxShadow: "0 20px 40px -10px rgba(30, 64, 175, 0.4)" 
+                }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate('/login')}
-                className="px-6 py-2.5 bg-slate-800 text-white rounded-xl font-semibold shadow-lg hover:bg-slate-900 transition-colors"
+                onClick={handleGuestStart}
+                className="px-5 md:px-7 py-2.5 md:py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-300 text-sm md:text-base relative overflow-hidden group"
+                aria-label="Get started as guest"
+                disabled={guestLoading}
               >
-                Get Started Free
+                <span className="relative z-10 flex items-center gap-2">
+                  {guestLoading ? (
+                    <>
+                      <span className="inline-block w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      Get Started Free
+                      <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                      </svg>
+                    </>
+                  )}
+                </span>
               </motion.button>
             </div>
           </div>
@@ -281,10 +357,18 @@ const Landing = () => {
               <motion.button
                 whileHover={{ scale: 1.05, boxShadow: "0 20px 40px -10px rgba(30, 41, 59, 0.5)" }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate('/login')}
+                onClick={handleGuestStart}
                 className="px-10 py-4 bg-slate-800 text-white rounded-2xl text-lg font-bold shadow-2xl hover:bg-slate-900 transition-all"
+                disabled={guestLoading}
               >
-                Start Using Free →
+                {guestLoading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="inline-block w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
+                    Starting...
+                  </span>
+                ) : (
+                  'Start Using Free →'
+                )}
               </motion.button>
               <motion.button
                 whileHover={{ scale: 1.05 }}
@@ -319,9 +403,10 @@ const Landing = () => {
         </div>
       </section>
 
-      {/* Interactive Features Showcase */}
-      <section id="features" className="py-20 px-6 bg-gradient-to-b from-gray-50 to-white">
-        <div className="container mx-auto">
+      {/* Interactive Features Showcase - Full Screen Carousel */}
+      <section id="features" ref={featuresSectionRef} className="relative w-full min-h-screen bg-gradient-to-b from-gray-50 to-white py-20 mb-5">
+        <div className="container mx-auto px-6">
+          {/* Section Title */}
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -337,161 +422,112 @@ const Landing = () => {
             </p>
           </motion.div>
 
-          {/* Feature Cards with Hover Effects */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
-            {features.map((feature, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, y: 60 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.1 }}
-                transition={{ 
-                  duration: 0.9, 
-                  delay: index * 0.2,
-                  ease: [0.16, 1, 0.3, 1]
-                }}
-                whileHover={{ 
-                  y: -12, 
-                  scale: 1.03,
-                  transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] }
-                }}
-                onHoverStart={() => setHoveredCard(index)}
-                onHoverEnd={() => setHoveredCard(null)}
-                className={`relative p-8 rounded-3xl bg-gradient-to-br ${feature.bgGradient} border-2 border-transparent hover:border-white shadow-xl hover:shadow-2xl transition-all duration-700 overflow-hidden group cursor-pointer`}
-                onClick={() => setActiveFeature(index)}
-              >
-                {/* Animated background gradient on hover */}
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: hoveredCard === index ? 0.1 : 0 }}
-                  transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-                  className={`absolute inset-0 bg-gradient-to-br ${feature.color}`}
-                />
+          {/* Full Screen Carousel Container */}
+          <div className="relative w-full h-[600px] md:h-[700px] overflow-hidden">
+            <div className="relative w-full h-full flex items-center justify-center [perspective:2000px]">
+              {features.map((feature, index) => {
+                // Calculate position relative to active feature
+                let offset = index - activeFeature;
+                if (offset > features.length / 2) offset -= features.length;
+                if (offset < -features.length / 2) offset += features.length;
                 
-                <div className="relative z-10">
+                // Only show 3 cards: previous (-1), current (0), next (+1)
+                if (Math.abs(offset) > 1) return null;
+                
+                const isActive = offset === 0;
+                const isLeft = offset === -1;
+                
+                // Calculate positions and styles
+                const xPosition = offset * 450; // Horizontal spacing
+                const scale = 1; // Consistent size for all cards
+                const opacity = isActive ? 1 : 0.3; // Side cards fade out
+                const zIndex = isActive ? 20 : isLeft ? 10 : 10;
+                const rotateY = isActive ? 0 : offset * 20; // Tilt side cards slightly
+                const rotateZ = isActive ? 0 : offset * 2; // Slight vertical tilt for side cards
+                
+                return (
                   <motion.div
-                    animate={hoveredCard === index ? { 
-                      scale: [1, 1.15, 1],
-                      rotate: [0, 8, 0]
-                    } : {}}
-                    transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-                    className={`w-16 h-16 mb-6 text-slate-700 bg-white rounded-xl p-3 shadow-lg`}
+                    key={index}
+                    initial={false}
+                    animate={{
+                      x: xPosition,
+                      scale: scale,
+                      opacity: opacity,
+                      rotateY: rotateY,
+                      rotateZ: rotateZ,
+                      z: isActive ? 0 : -150, // Depth for 3D effect
+                    }}
+                    transition={{
+                      duration: 1,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    style={{
+                      transformStyle: 'preserve-3d',
+                      position: 'absolute',
+                      width: '90%',
+                      maxWidth: '800px',
+                      height: '90%',
+                      zIndex: zIndex,
+                    }}
+                    className="rounded-3xl p-8 md:p-10 text-white bg-gradient-to-br from-sky-400 via-blue-500 to-blue-600 shadow-2xl cursor-pointer"
+                    onClick={() => setActiveFeature(index)}
                   >
-                    {feature.icon}
-                  </motion.div>
-                  
-                  <motion.h3 
-                    className="text-2xl font-bold text-gray-900 mb-3 group-hover:text-blue-600 transition-colors duration-500"
-                    animate={hoveredCard === index ? { x: [0, 8, 0] } : {}}
-                    transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-                  >
-                    {feature.title}
-                  </motion.h3>
-                  
-                  <p className="text-gray-700 mb-6 leading-relaxed">
-                    {feature.description}
-                  </p>
-                  
-                  <div className="space-y-2 mb-6">
-                    {feature.details.map((detail, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, x: -30 }}
-                        whileInView={{ opacity: 1, x: 0 }}
-                        viewport={{ once: true }}
-                        transition={{ 
-                          delay: idx * 0.15,
-                          duration: 0.7,
-                          ease: [0.16, 1, 0.3, 1]
-                        }}
-                        className="flex items-center gap-2 text-sm text-gray-600"
-                      >
-                        <motion.div 
-                          className={`w-2 h-2 rounded-full bg-gradient-to-r ${feature.color}`}
-                          animate={hoveredCard === index ? { scale: [1, 1.5, 1] } : {}}
-                          transition={{ 
-                            duration: 0.7,
-                            delay: idx * 0.08,
-                            ease: [0.16, 1, 0.3, 1]
-                          }}
-                        />
-                        {detail}
-                      </motion.div>
-                    ))}
-                  </div>
-
-                  {/* Demo text on hover */}
-                  <AnimatePresence>
-                    {hoveredCard === index && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="text-sm text-gray-600 bg-white/80 backdrop-blur-sm p-4 rounded-xl border border-gray-200"
-                      >
-                        <span className="font-semibold text-blue-600">Try it: </span>
-                        {feature.demo}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* Feature Showcase Carousel */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            className="max-w-6xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-200"
-          >
-            <div className="grid md:grid-cols-2">
-              {/* Feature Preview */}
-              <div className={`p-12 bg-gradient-to-br ${features[activeFeature].bgGradient} flex flex-col justify-center`}>
-                <motion.div
-                  key={activeFeature}
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="w-24 h-24 mb-6 text-slate-700 bg-white rounded-2xl p-5 shadow-xl"
-                >
-                  {features[activeFeature].icon}
-                </motion.div>
-                <h3 className="text-3xl font-bold text-gray-900 mb-4">
-                  {features[activeFeature].title}
-                </h3>
-                <p className="text-lg text-gray-700 leading-relaxed">
-                  {features[activeFeature].demo}
-                </p>
-              </div>
-
-              {/* Feature Selector */}
-              <div className="p-8 bg-gray-50">
-                <h4 className="text-xl font-bold text-gray-900 mb-6">Select Feature to Preview</h4>
-                <div className="space-y-3">
-                  {features.map((feature, idx) => (
-                    <motion.button
-                      key={idx}
-                      whileHover={{ x: 5 }}
-                      onClick={() => setActiveFeature(idx)}
-                      className={`w-full text-left p-4 rounded-xl transition-all ${
-                        activeFeature === idx
-                          ? `bg-slate-800 text-white shadow-lg`
-                          : 'bg-white text-gray-700 hover:bg-gray-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 ${activeFeature === idx ? 'text-white' : 'text-slate-700'}`}>
-                          {feature.icon}
-                        </div>
-                        <span className="font-semibold">{feature.title}</span>
+                    <div className="flex flex-col items-start justify-center h-full">
+                      <div className="w-18 h-18 md:w-20 md:h-20 mb-5 text-white bg-white/20 backdrop-blur-sm rounded-xl p-4 shadow-xl">
+                        {feature.icon}
                       </div>
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
+                      <h3 className="text-2xl md:text-3xl font-bold mb-4">
+                        {feature.title}
+                      </h3>
+                      <p className="text-base md:text-lg text-white/90 leading-relaxed mb-5">
+                        {feature.description}
+                      </p>
+                      <div className="space-y-2 mb-5">
+                        {feature.details.map((detail, detailIdx) => (
+                          <div key={detailIdx} className="flex items-center gap-2 text-sm md:text-base text-white/80">
+                            <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                            {detail}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 p-3 bg-white/10 backdrop-blur-sm rounded-lg border border-white/20">
+                        <p className="text-xs md:text-sm text-white/90">
+                          <span className="font-semibold">Try it: </span>
+                          {feature.demo}
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
-          </motion.div>
+            
+            {/* Navigation Dots */}
+            <div className="absolute bottom-6 left-0 right-0 z-30 flex items-center justify-center gap-2 flex-wrap px-6  ">
+              {features.map((feature, index) => (
+                <motion.button
+                  key={index}
+                  onClick={() => setActiveFeature(index)}
+                  whileHover={{ scale: 1.2, y: -2 }}
+                  whileTap={{ scale: 0.9 }}
+                  className={`relative w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+                    index === activeFeature 
+                      ? 'bg-slate-800 w-8' 
+                      : 'bg-gray-300 hover:bg-gray-400'
+                  }`}
+                  aria-label={`Go to ${feature.title}`}
+                >
+                  {index === activeFeature && (
+                    <motion.div
+                      layoutId="activeDot"
+                      className="absolute inset-0 rounded-full bg-slate-800"
+                      transition={{ type: "spring", bounce: 0.3, duration: 0.6 }}
+                    />
+                  )}
+                </motion.button>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -667,13 +703,33 @@ const Landing = () => {
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 lg:gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 max-w-6xl mx-auto">
+            {/* First 3 cards */}
             {[
-              { name: 'Aniket Aslaliya', role: 'Full Stack Developer', gradient: 'from-blue-500 to-cyan-500', initials: 'AA' },
-              { name: 'Daksh Patel', role: 'AI/ML Engineer', gradient: 'from-purple-500 to-pink-500', initials: 'DP' },
-              { name: 'Pranav Khunt', role: 'Backend Developer', gradient: 'from-emerald-500 to-teal-500', initials: 'PK' },
-              { name: 'Jeet Manseta', role: 'Frontend Developer', gradient: 'from-orange-500 to-red-500', initials: 'JM' },
-              { name: 'Manav Jobanputra', role: 'DevOps Engineer', gradient: 'from-violet-500 to-purple-500', initials: 'MJ' }
+              { 
+                name: 'Aniket Aslaliya', 
+                role: 'Frontend Developer', 
+                gradient: 'from-blue-500 to-cyan-500', 
+                initials: 'AA',
+                description: 'Creating intuitive and responsive user interfaces with modern web technologies.',
+                bgColor: 'bg-blue-100'
+              },
+              { 
+                name: 'Daksh Patel', 
+                role: 'Frontend Developer', 
+                gradient: 'from-purple-500 to-pink-500', 
+                initials: 'DP',
+                description: 'Building engaging user experiences and implementing cutting-edge frontend solutions.',
+                bgColor: 'bg-purple-100'
+              },
+              { 
+                name: 'Pranav Khunt', 
+                role: 'AI/ML Engineer', 
+                gradient: 'from-emerald-500 to-teal-500', 
+                initials: 'PK',
+                description: 'Crafting intelligent systems that understand and process legal documents.',
+                bgColor: 'bg-emerald-100'
+              }
             ].map((member, idx) => (
               <motion.div
                 key={idx}
@@ -689,88 +745,87 @@ const Landing = () => {
               >
                 <motion.div 
                   whileHover={{ 
-                    y: -20,
+                    y: -12,
                     transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] }
                   }}
                   className="relative"
                 >
-                  <div className="relative p-8 bg-white rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-700 overflow-hidden border border-gray-100 hover:border-gray-200">
-                    {/* Gradient background - always visible but subtle */}
-                    <motion.div
-                      initial={{ opacity: 0.05 }}
-                      whileHover={{ opacity: 0.12 }}
-                      transition={{ duration: 0.6 }}
-                      className={`absolute inset-0 bg-gradient-to-br ${member.gradient}`}
-                    />
-                    
-                    {/* Animated glow effect on hover */}
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      whileHover={{ opacity: 0.3, scale: 1.2 }}
-                      transition={{ duration: 0.8 }}
-                      className={`absolute inset-0 bg-gradient-to-br ${member.gradient} blur-2xl`}
-                    />
-                    
-                    <div className="relative z-10 text-center">
-                      {/* Avatar with enhanced design */}
+                  <div className="relative p-6 bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200">
+                    <div className="relative z-10">
+                      {/* Circular Profile Picture */}
                       <motion.div
                         whileHover={{ 
-                          scale: 1.15, 
-                          rotate: 8,
-                          transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] }
+                          scale: 1.1,
+                          transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] }
                         }}
-                        className="relative mx-auto mb-6"
+                        className="relative mx-auto mb-4"
                       >
-                        <div className={`w-28 h-28 mx-auto bg-gradient-to-br ${member.gradient} rounded-full flex items-center justify-center text-white text-3xl font-bold shadow-xl relative overflow-hidden`}>
-                          {/* Shimmer effect */}
-                          <motion.div
-                            animate={{ 
-                              x: ['-100%', '100%'],
-                            }}
-                            transition={{ 
-                              duration: 2,
-                              repeat: Infinity,
-                              repeatDelay: 3,
-                              ease: "easeInOut"
-                            }}
-                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
-                          />
+                        <div className="w-24 h-24 mx-auto bg-gray-100 rounded-full flex items-center justify-center text-gray-800 text-2xl font-bold shadow-lg relative overflow-hidden">
                           <span className="relative z-10">{member.initials}</span>
                         </div>
                       </motion.div>
                       
-                      <motion.h3 
-                        className="text-xl font-bold text-gray-900 mb-2"
-                        whileHover={{ scale: 1.05 }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        {member.name}
-                      </motion.h3>
-                      
-                     
-                      
-                      {/* Social Links with enhanced styling */}
-                      <div className="flex justify-center gap-3">
-                        <motion.a
-                          whileHover={{ scale: 1.25, y: -4 }}
-                          whileTap={{ scale: 0.95 }}
+                      {/* Name with Checkmark */}
+                      <div className="flex items-center justify-center gap-2 mb-1">
+                        <motion.h3 
+                          className="text-lg font-bold text-gray-900"
+                          whileHover={{ scale: 1.05 }}
                           transition={{ duration: 0.3 }}
-                          href="#"
-                          className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center hover:bg-blue-500 hover:text-white transition-all duration-300 shadow-sm hover:shadow-md"
                         >
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/>
+                          {member.name}
+                        </motion.h3>
+                        {/* Green Checkmark */}
+                        <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                      
+                      {/* Role/Title */}
+                      <p className="text-sm text-gray-600 mb-4 text-center">
+                        {member.role}
+                      </p>
+                      
+                      {/* Description */}
+                      <p className="text-sm text-gray-700 mb-6 text-center leading-relaxed min-h-[60px]">
+                        {member.description}
+                      </p>
+                      
+                      {/* Social Media Icons */}
+                      <div className="flex justify-center gap-3 pt-4 border-t border-gray-100">
+                        <motion.a
+                          whileHover={{ scale: 1.2, y: -2 }}
+                          whileTap={{ scale: 0.95 }}
+                          transition={{ duration: 0.2 }}
+                          href="#"
+                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-pink-500 hover:text-white transition-all duration-300"
+                          aria-label="Instagram"
+                        >
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
                           </svg>
                         </motion.a>
                         <motion.a
-                          whileHover={{ scale: 1.25, y: -4 }}
+                          whileHover={{ scale: 1.2, y: -2 }}
                           whileTap={{ scale: 0.95 }}
-                          transition={{ duration: 0.3 }}
+                          transition={{ duration: 0.2 }}
                           href="#"
-                          className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center hover:bg-gray-900 hover:text-white transition-all duration-300 shadow-sm hover:shadow-md"
+                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-300"
+                          aria-label="Facebook"
                         >
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                          </svg>
+                        </motion.a>
+                        <motion.a
+                          whileHover={{ scale: 1.2, y: -2 }}
+                          whileTap={{ scale: 0.95 }}
+                          transition={{ duration: 0.2 }}
+                          href="#"
+                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all duration-300"
+                          aria-label="Pinterest"
+                        >
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0C5.373 0 0 5.372 0 12s5.373 12 12 12 12-5.372 12-12S18.627 0 12 0zm0 19c-.721 0-1.418-.109-2.073-.312.286-.465.713-1.227.876-1.878.067-.271.405-1.799.405-1.799.213.406.836.758 1.498.758 1.971 0 3.307-1.794 3.307-4.188 0-1.832-1.576-3.435-4.001-3.435-2.707 0-4.203 1.989-4.203 3.756 0 .712.273 1.343.717 1.584.08.037.091.052.053.096-.03.045-.098.152-.128.197-.04.062-.136.084-.313.05-1.163-.345-1.891-1.434-1.891-2.888 0-3.667 2.651-6.891 6.933-6.891 3.64 0 6.044 2.508 6.044 5.853 0 3.617-2.271 6.519-5.531 6.519-1.08 0-2.098-.562-2.445-1.263 0 0-.537 2.051-.666 2.551-.241.926-.895 2.085-1.333 2.797.999.307 2.053.472 3.155.472 6.627 0 12-5.372 12-12S18.627 0 12 0z"/>
                           </svg>
                         </motion.a>
                       </div>
@@ -779,6 +834,131 @@ const Landing = () => {
                 </motion.div>
               </motion.div>
             ))}
+            
+            {/* Bottom row - Two centered cards */}
+            <div className="lg:col-span-3 flex justify-center gap-6 lg:gap-8 mt-6 lg:mt-8 flex-wrap">
+              {[
+                { 
+                  name: 'Jeet Manseta', 
+                  role: 'AI/ML Engineer', 
+                  gradient: 'from-orange-500 to-red-500', 
+                  initials: 'JM',
+                  description: 'Developing advanced AI models and machine learning algorithms for legal applications.',
+                  bgColor: 'bg-orange-100'
+                },
+                { 
+                  name: 'Manav Jobanputra', 
+                  role: 'Backend Developer', 
+                  gradient: 'from-violet-500 to-purple-500', 
+                  initials: 'MJ',
+                  description: 'Designing robust APIs and database architectures for legal workflows.',
+                  bgColor: 'bg-violet-100'
+                }
+              ].map((member, idx) => (
+                <motion.div
+                  key={idx + 3}
+                  initial={{ opacity: 0, y: 80, scale: 0.9 }}
+                  whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                  viewport={{ once: true, amount: 0.1 }}
+                  transition={{ 
+                    duration: 1, 
+                    delay: (idx + 3) * 0.12,
+                    ease: [0.16, 1, 0.3, 1]
+                  }}
+                  className="relative group w-full max-w-sm md:max-w-xs"
+                >
+                  <motion.div 
+                    whileHover={{ 
+                      y: -12,
+                      transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] }
+                    }}
+                    className="relative"
+                  >
+                    <div className="relative p-6 bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200">
+                      <div className="relative z-10">
+                        {/* Circular Profile Picture */}
+                        <motion.div
+                          whileHover={{ 
+                            scale: 1.1,
+                            transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] }
+                          }}
+                          className="relative mx-auto mb-4"
+                        >
+                          <div className="w-24 h-24 mx-auto bg-gray-100 rounded-full flex items-center justify-center text-gray-800 text-2xl font-bold shadow-lg relative overflow-hidden">
+                            <span className="relative z-10">{member.initials}</span>
+                          </div>
+                        </motion.div>
+                        
+                        {/* Name with Checkmark */}
+                        <div className="flex items-center justify-center gap-2 mb-1">
+                          <motion.h3 
+                            className="text-lg font-bold text-gray-900"
+                            whileHover={{ scale: 1.05 }}
+                            transition={{ duration: 0.3 }}
+                          >
+                            {member.name}
+                          </motion.h3>
+                          {/* Green Checkmark */}
+                          <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        
+                        {/* Role/Title */}
+                        <p className="text-sm text-gray-600 mb-4 text-center">
+                          {member.role}
+                        </p>
+                        
+                        {/* Description */}
+                        <p className="text-sm text-gray-700 mb-6 text-center leading-relaxed min-h-[60px]">
+                          {member.description}
+                        </p>
+                        
+                        {/* Social Media Icons */}
+                        <div className="flex justify-center gap-3 pt-4 border-t border-gray-100">
+                          <motion.a
+                            whileHover={{ scale: 1.2, y: -2 }}
+                            whileTap={{ scale: 0.95 }}
+                            transition={{ duration: 0.2 }}
+                            href="#"
+                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-pink-500 hover:text-white transition-all duration-300"
+                            aria-label="Instagram"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                            </svg>
+                          </motion.a>
+                          <motion.a
+                            whileHover={{ scale: 1.2, y: -2 }}
+                            whileTap={{ scale: 0.95 }}
+                            transition={{ duration: 0.2 }}
+                            href="#"
+                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-300"
+                            aria-label="Facebook"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                            </svg>
+                          </motion.a>
+                          <motion.a
+                            whileHover={{ scale: 1.2, y: -2 }}
+                            whileTap={{ scale: 0.95 }}
+                            transition={{ duration: 0.2 }}
+                            href="#"
+                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all duration-300"
+                            aria-label="Pinterest"
+                          >
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 0C5.373 0 0 5.372 0 12s5.373 12 12 12 12-5.372 12-12S18.627 0 12 0zm0 19c-.721 0-1.418-.109-2.073-.312.286-.465.713-1.227.876-1.878.067-.271.405-1.799.405-1.799.213.406.836.758 1.498.758 1.971 0 3.307-1.794 3.307-4.188 0-1.832-1.576-3.435-4.001-3.435-2.707 0-4.203 1.989-4.203 3.756 0 .712.273 1.343.717 1.584.08.037.091.052.053.096-.03.045-.098.152-.128.197-.04.062-.136.084-.313.05-1.163-.345-1.891-1.434-1.891-2.888 0-3.667 2.651-6.891 6.933-6.891 3.64 0 6.044 2.508 6.044 5.853 0 3.617-2.271 6.519-5.531 6.519-1.08 0-2.098-.562-2.445-1.263 0 0-.537 2.051-.666 2.551-.241.926-.895 2.085-1.333 2.797.999.307 2.053.472 3.155.472 6.627 0 12-5.372 12-12S18.627 0 12 0z"/>
+                            </svg>
+                          </motion.a>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -877,11 +1057,11 @@ const Landing = () => {
           <div className="grid md:grid-cols-3 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold">L</span>
+                  <div className="w-8 h-8 rounded-lg bg-slate-900 p-1 flex items-center justify-center">
+                    <img src="/logo.png" alt="Legal SahAI" className="w-full h-full object-contain rounded" />
+                  </div>
+                  <span className="text-xl font-bold text-white">Legal SahAI</span>
                 </div>
-                <span className="text-xl font-bold text-white">Legal SahAI</span>
-              </div>
               <p className="text-sm text-gray-400">
                 Your complete AI-powered legal assistance platform
               </p>
@@ -900,9 +1080,7 @@ const Landing = () => {
               </ul>
             </div>
           </div>
-          <div className="pt-8 border-t border-gray-800 text-center text-sm">
-            <p>&copy; {new Date().getFullYear()} Legal SahAI. All rights reserved.</p>
-          </div>
+          
         </div>
       </footer>
     </div>

@@ -494,7 +494,7 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
                 <div><strong>Category:</strong> <span className="font-medium">{selectedBox.meta?.category || selectedBox.meta?.risk_level || '—'}</span></div>
                 <div><strong>Risk Level:</strong> <span className="font-medium">{selectedBox.meta?.risk_level || 'Unknown'}</span></div>
                 {selectedBox.meta?.compliance_check && (
-                  <div><strong>Compliance Check:</strong>
+                  <div><strong>Legal Status:</strong>
                     <div className="mt-1 p-2 bg-white border rounded text-xs text-gray-800">{selectedBox.meta.compliance_check}</div>
                   </div>
                 )}
