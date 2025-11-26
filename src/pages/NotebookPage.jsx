@@ -223,10 +223,7 @@ const NotebookPage = (props) => {
     return () => clearTimeout(timer);
   }, [messages, isAiThinking]);
 
-  // Log followUpQuestions when updated for debugging
-  useEffect(() => {
-    console.log('[NotebookPage] followUpQuestions state change:', followUpQuestions);
-  }, [followUpQuestions]);
+  // followUpQuestions state is used to render suggested follow-ups. Debug logging removed.
 
   // Close mobile menu when feature changes
   useEffect(() => {
@@ -1175,14 +1172,7 @@ const NotebookPage = (props) => {
       const res3 = await api.post('/api/messages', { chatId: id, content: aiContent, role: 'response' });
       setMessages((prev) => [...prev, res3.data.message]);
       setTimeout(scrollToBottom, 100);
-      // Debug logs for follow-up extraction
-      try {
-        console.log('[NotebookPage] raw ask API response:', res2?.data);
-        console.log('[NotebookPage] apiAnswer:', apiAnswer);
-        console.log('[NotebookPage] extracted followups:', followups);
-      } catch (e) {
-        console.warn('Failed to log followup debug info', e);
-      }
+      // Debug logging removed in production build
       setFollowUpQuestions(followups || []);
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m._id !== tempId));
