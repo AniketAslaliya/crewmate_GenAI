@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 // Reuses the same dynamic import approach as FormAutoFill to avoid bundling pdfjs
 const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
   const [pdfRef, setPdfRef] = useState(null);
   const [pageNum, setPageNum] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -58,24 +57,14 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
       try {
         const page = await pdfRef.getPage(pageNum);
         if (cancelled) return;
-        // Compute a scale so the rendered PDF fills the available container width
-        const baseViewport = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: 1 });
         const canvas = canvasRef.current;
         if (!canvas) { setRenderError('No canvas to render'); return; }
-        // measure available container width (fall back to base viewport width)
-        const containerWidth = (containerRef.current && containerRef.current.getBoundingClientRect && containerRef.current.getBoundingClientRect().width) || Math.min(baseViewport.width * 1.2, baseViewport.width);
-        const desiredScale = Math.max(1, Math.min(2.6, (containerWidth / baseViewport.width) * 0.96));
-        const viewport = page.getViewport({ scale: desiredScale });
-
         const ctx = canvas.getContext('2d');
-        // Support high-DPI displays for crisp rendering
-        const DPR = window.devicePixelRatio || 1;
-        canvas.width = Math.round(viewport.width * DPR);
-        canvas.height = Math.round(viewport.height * DPR);
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
         canvas.style.width = '100%';
         canvas.style.height = 'auto';
-        // scale the context to account for DPR
-        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
         await page.render({ canvasContext: ctx, viewport }).promise;
 
         // draw overlays if riskData contains boxes
@@ -446,7 +435,7 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[95vh] overflow-auto">
+      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-auto">
         <div className="flex items-center justify-between p-3 border-b">
           <h3 className="font-semibold text-gray-900">Risk Analysis Preview</h3>
           <div className="flex items-center gap-2">
@@ -454,7 +443,7 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
           </div>
         </div>
         <div className="p-3 flex flex-col md:flex-row gap-4">
-          <div ref={containerRef} className="flex-1 relative max-h-[85vh] overflow-auto">
+          <div className="flex-1 relative max-h-[60vh] overflow-auto">
             {renderError && <div className="text-red-600 mb-2">{renderError}</div>}
             {/* Sticky pagination controls like FormAutoFill */}
             {totalPages > 1 && (
@@ -497,7 +486,7 @@ const RiskViewer = ({ fileUrl, fileBlob, riskData, onClose }) => {
           </div>
 
           {/* Details panel for clicked field (stacked on mobile) */}
-          <div className="w-full md:w-96 max-h-[85vh] overflow-auto bg-gray-50 md:border-l border-t md:border-t-0 border-gray-100 p-3 rounded-b-lg md:rounded-r-lg">
+          <div className="w-full md:w-80 max-h-[60vh] overflow-auto bg-gray-50 md:border-l border-t md:border-t-0 border-gray-100 p-3 rounded-b-lg md:rounded-r-lg">
             <h4 className="font-semibold text-gray-800 mb-2">Field Details</h4>
             {!selectedBox && <div className="text-sm text-gray-500">Click a highlighted field on the document to see details here.</div>}
             {selectedBox && (

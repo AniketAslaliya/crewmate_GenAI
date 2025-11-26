@@ -29,8 +29,8 @@ export default function StrategyCards({ strategies = [] }) {
               <strong id={`strategy-title-${i}`} className="text-lg font-semibold text-gray-800">{s.title}</strong>
               <p className="mt-1 text-sm text-gray-700">{s.reasoning}</p>
               <div className="mt-3">
-                <strong className="text-lg font-semibold text-gray-800">Action</strong>
-                <h4 className="mt-1 text-base  text-gray-700 whitespace-pre-wrap">{s.action_item}</h4>
+                <strong className="text-lg font-semibold text-gray-800">Action:</strong>
+                <h4 className="mt-1 text-base  text-gray-700 whitespace-pre-wrap">{s.action_item || s.your_counter}</h4>
               </div>
             </div>
 

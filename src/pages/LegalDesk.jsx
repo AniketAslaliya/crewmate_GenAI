@@ -861,7 +861,7 @@ const LegalDesk = () => {
                     </Button>
                     
                     <div className="flex items-center gap-2">
-                      {((chat.riskAnalyses && chat.riskAnalyses.length > 0) || chat.previewUrl) && (
+                      {((chat.riskAnalyses && chat.riskAnalyses.length > 0) || chat.previewUrl || chat.fileName || chat.originalFileName || chat.fileMimeType) && (
                         <button
                           onClick={() => handleOpenRisk(chat)}
                           disabled={loadingRiskIds.includes(chat._id)}
