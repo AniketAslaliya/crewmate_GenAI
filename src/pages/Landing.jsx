@@ -3,29 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import useAuthStore from '../context/AuthContext';
 import api from '../Axios/axios';
+import { useToast } from '../components/ToastProvider';
 
 const Landing = () => {
   const navigate = useNavigate();
-  const { user, setToken } = useAuthStore();
-  const [guestLoading, setGuestLoading] = useState(false);
+  const user = useAuthStore(s => s.user);
+  const setToken = useAuthStore(s => s.setToken);
+  const toast = useToast();
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleGuestStart = async () => {
+  const startGuest = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
     try {
-      setGuestLoading(true);
       const res = await api.post('/auth/guest-login');
-      const token = res.data?.token;
-      if (token) {
-        // Persist token in auth store which will fetch user
-        setToken(token);
-        // Navigate to home after short delay to ensure user fetch starts
-        navigate('/home');
-      } else {
-        console.error('No token received from guest-login');
+      if (res.data?.token) {
+        setToken(res.data.token);
+        toast.success('Welcome! Exploring as Guest');
+        window.location.href = '/home';
       }
-    } catch (err) {
-      console.error('Guest login failed', err);
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to start guest mode');
+      navigate('/login');
     } finally {
-      setGuestLoading(false);
+      setIsLoading(false);
     }
   };
   const [activeFeature, setActiveFeature] = useState(0);
@@ -256,16 +258,12 @@ const Landing = () => {
               onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             >
               <div className="relative">
-                <div className="w-11 h-11 md:w-12 md:h-12 rounded-xl bg-slate-900 flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300 group-hover:scale-110 p-1">
-                  <img
-                    src="/logo.png"
-                    alt="Legal SahAI"
-                    className="w-full h-full object-contain rounded"
-                  />
+                <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center shadow-lg overflow-hidden bg-white">
+                  <img src="/logo.png" alt="Legal SahAI" className="w-full h-full object-contain" />
                 </div>
                 <motion.div
-                  className="absolute inset-0 bg-slate-600 rounded-xl opacity-0 group-hover:opacity-20 blur-xl"
-                  animate={{ scale: [1, 1.2, 1] }}
+                  className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-20 blur-xl"
+                  animate={{ scale: [1, 1.04, 1] }}
                   transition={{ duration: 2, repeat: Infinity }}
                 />
               </div>
@@ -295,25 +293,14 @@ const Landing = () => {
                   boxShadow: "0 20px 40px -10px rgba(30, 64, 175, 0.4)" 
                 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={handleGuestStart}
+                onClick={startGuest}
                 className="px-5 md:px-7 py-2.5 md:py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-300 text-sm md:text-base relative overflow-hidden group"
-                aria-label="Get started as guest"
-                disabled={guestLoading}
               >
                 <span className="relative z-10 flex items-center gap-2">
-                  {guestLoading ? (
-                    <>
-                      <span className="inline-block w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
-                      Starting...
-                    </>
-                  ) : (
-                    <>
-                      Get Started Free
-                      <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                    </>
-                  )}
+                  {isLoading ? 'Starting...' : 'Get Started Free'}
+                  <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                  </svg>
                 </span>
               </motion.button>
             </div>
@@ -357,18 +344,10 @@ const Landing = () => {
               <motion.button
                 whileHover={{ scale: 1.05, boxShadow: "0 20px 40px -10px rgba(30, 41, 59, 0.5)" }}
                 whileTap={{ scale: 0.95 }}
-                onClick={handleGuestStart}
+                onClick={startGuest}
                 className="px-10 py-4 bg-slate-800 text-white rounded-2xl text-lg font-bold shadow-2xl hover:bg-slate-900 transition-all"
-                disabled={guestLoading}
               >
-                {guestLoading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-block w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
-                    Starting...
-                  </span>
-                ) : (
-                  'Start Using Free →'
-                )}
+                {isLoading ? 'Starting...' : 'Start Using Free →'}
               </motion.button>
               <motion.button
                 whileHover={{ scale: 1.05 }}
@@ -404,7 +383,7 @@ const Landing = () => {
       </section>
 
       {/* Interactive Features Showcase - Full Screen Carousel */}
-      <section id="features" ref={featuresSectionRef} className="relative w-full min-h-screen bg-gradient-to-b from-gray-50 to-white py-20 mb-5">
+      <section id="features" ref={featuresSectionRef} className="relative w-full min-h-screen bg-gradient-to-b from-gray-50 to-white py-20">
         <div className="container mx-auto px-6">
           {/* Section Title */}
           <motion.div
@@ -503,7 +482,7 @@ const Landing = () => {
             </div>
             
             {/* Navigation Dots */}
-            <div className="absolute bottom-6 left-0 right-0 z-30 flex items-center justify-center gap-2 flex-wrap px-6  ">
+            <div className="absolute bottom-6 left-0 right-0 z-30 flex items-center justify-center gap-2 flex-wrap px-6">
               {features.map((feature, index) => (
                 <motion.button
                   key={index}
@@ -712,7 +691,9 @@ const Landing = () => {
                 gradient: 'from-blue-500 to-cyan-500', 
                 initials: 'AA',
                 description: 'Creating intuitive and responsive user interfaces with modern web technologies.',
-                bgColor: 'bg-blue-100'
+                bgColor: 'bg-blue-100',
+                linkedin: 'https://www.linkedin.com/in/aniket-aslaliya/',
+                github: 'https://github.com/AniketAslaliya'
               },
               { 
                 name: 'Daksh Patel', 
@@ -720,7 +701,9 @@ const Landing = () => {
                 gradient: 'from-purple-500 to-pink-500', 
                 initials: 'DP',
                 description: 'Building engaging user experiences and implementing cutting-edge frontend solutions.',
-                bgColor: 'bg-purple-100'
+                bgColor: 'bg-purple-100',
+                linkedin: 'https://www.linkedin.com/in/daksh-patel-459a99286/',
+                github: 'https://github.com/dp177'
               },
               { 
                 name: 'Pranav Khunt', 
@@ -728,7 +711,9 @@ const Landing = () => {
                 gradient: 'from-emerald-500 to-teal-500', 
                 initials: 'PK',
                 description: 'Crafting intelligent systems that understand and process legal documents.',
-                bgColor: 'bg-emerald-100'
+                bgColor: 'bg-emerald-100',
+                linkedin: 'https://www.linkedin.com/in/pranav-khunt-571b88272/',
+                github: 'https://github.com/pranav6905'
               }
             ].map((member, idx) => (
               <motion.div
@@ -796,36 +781,28 @@ const Landing = () => {
                           whileHover={{ scale: 1.2, y: -2 }}
                           whileTap={{ scale: 0.95 }}
                           transition={{ duration: 0.2 }}
-                          href="#"
-                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-pink-500 hover:text-white transition-all duration-300"
-                          aria-label="Instagram"
-                        >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-                          </svg>
-                        </motion.a>
-                        <motion.a
-                          whileHover={{ scale: 1.2, y: -2 }}
-                          whileTap={{ scale: 0.95 }}
-                          transition={{ duration: 0.2 }}
-                          href="#"
+                          href={member.linkedin}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-300"
-                          aria-label="Facebook"
+                          aria-label="LinkedIn"
                         >
                           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
                           </svg>
                         </motion.a>
                         <motion.a
                           whileHover={{ scale: 1.2, y: -2 }}
                           whileTap={{ scale: 0.95 }}
                           transition={{ duration: 0.2 }}
-                          href="#"
-                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all duration-300"
-                          aria-label="Pinterest"
+                          href={member.github}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-800 hover:text-white transition-all duration-300"
+                          aria-label="GitHub"
                         >
                           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 0C5.373 0 0 5.372 0 12s5.373 12 12 12 12-5.372 12-12S18.627 0 12 0zm0 19c-.721 0-1.418-.109-2.073-.312.286-.465.713-1.227.876-1.878.067-.271.405-1.799.405-1.799.213.406.836.758 1.498.758 1.971 0 3.307-1.794 3.307-4.188 0-1.832-1.576-3.435-4.001-3.435-2.707 0-4.203 1.989-4.203 3.756 0 .712.273 1.343.717 1.584.08.037.091.052.053.096-.03.045-.098.152-.128.197-.04.062-.136.084-.313.05-1.163-.345-1.891-1.434-1.891-2.888 0-3.667 2.651-6.891 6.933-6.891 3.64 0 6.044 2.508 6.044 5.853 0 3.617-2.271 6.519-5.531 6.519-1.08 0-2.098-.562-2.445-1.263 0 0-.537 2.051-.666 2.551-.241.926-.895 2.085-1.333 2.797.999.307 2.053.472 3.155.472 6.627 0 12-5.372 12-12S18.627 0 12 0z"/>
+                            <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482C19.138 20.197 22 16.425 22 12.017 22 6.484 17.522 2 12 2z" clipRule="evenodd"/>
                           </svg>
                         </motion.a>
                       </div>
@@ -844,7 +821,9 @@ const Landing = () => {
                   gradient: 'from-orange-500 to-red-500', 
                   initials: 'JM',
                   description: 'Developing advanced AI models and machine learning algorithms for legal applications.',
-                  bgColor: 'bg-orange-100'
+                  bgColor: 'bg-orange-100',
+                  linkedin: 'https://www.linkedin.com/in/jeet-manseta-a2ba59298/',
+                  github: 'https://github.com/JeetM2207'
                 },
                 { 
                   name: 'Manav Jobanputra', 
@@ -852,7 +831,9 @@ const Landing = () => {
                   gradient: 'from-violet-500 to-purple-500', 
                   initials: 'MJ',
                   description: 'Designing robust APIs and database architectures for legal workflows.',
-                  bgColor: 'bg-violet-100'
+                  bgColor: 'bg-violet-100',
+                  linkedin: 'https://www.linkedin.com/in/manav-jobanputra-814a1629a?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app',
+                  github: 'https://github.com/Manav13254'
                 }
               ].map((member, idx) => (
                 <motion.div
@@ -920,36 +901,28 @@ const Landing = () => {
                             whileHover={{ scale: 1.2, y: -2 }}
                             whileTap={{ scale: 0.95 }}
                             transition={{ duration: 0.2 }}
-                            href="#"
-                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-pink-500 hover:text-white transition-all duration-300"
-                            aria-label="Instagram"
-                          >
-                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-                            </svg>
-                          </motion.a>
-                          <motion.a
-                            whileHover={{ scale: 1.2, y: -2 }}
-                            whileTap={{ scale: 0.95 }}
-                            transition={{ duration: 0.2 }}
-                            href="#"
+                            href={member.linkedin}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-300"
-                            aria-label="Facebook"
+                            aria-label="LinkedIn"
                           >
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                              <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
                             </svg>
                           </motion.a>
                           <motion.a
                             whileHover={{ scale: 1.2, y: -2 }}
                             whileTap={{ scale: 0.95 }}
                             transition={{ duration: 0.2 }}
-                            href="#"
-                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all duration-300"
-                            aria-label="Pinterest"
+                            href={member.github}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-800 hover:text-white transition-all duration-300"
+                            aria-label="GitHub"
                           >
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M12 0C5.373 0 0 5.372 0 12s5.373 12 12 12 12-5.372 12-12S18.627 0 12 0zm0 19c-.721 0-1.418-.109-2.073-.312.286-.465.713-1.227.876-1.878.067-.271.405-1.799.405-1.799.213.406.836.758 1.498.758 1.971 0 3.307-1.794 3.307-4.188 0-1.832-1.576-3.435-4.001-3.435-2.707 0-4.203 1.989-4.203 3.756 0 .712.273 1.343.717 1.584.08.037.091.052.053.096-.03.045-.098.152-.128.197-.04.062-.136.084-.313.05-1.163-.345-1.891-1.434-1.891-2.888 0-3.667 2.651-6.891 6.933-6.891 3.64 0 6.044 2.508 6.044 5.853 0 3.617-2.271 6.519-5.531 6.519-1.08 0-2.098-.562-2.445-1.263 0 0-.537 2.051-.666 2.551-.241.926-.895 2.085-1.333 2.797.999.307 2.053.472 3.155.472 6.627 0 12-5.372 12-12S18.627 0 12 0z"/>
+                              <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482C19.138 20.197 22 16.425 22 12.017 22 6.484 17.522 2 12 2z" clipRule="evenodd"/>
                             </svg>
                           </motion.a>
                         </div>
@@ -1040,10 +1013,10 @@ const Landing = () => {
               <motion.button
                 whileHover={{ scale: 1.05, boxShadow: "0 20px 40px -10px rgba(255, 255, 255, 0.5)" }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate('/login')}
+                onClick={startGuest}
                 className="px-12 py-5 bg-white text-slate-900 rounded-2xl text-xl font-bold shadow-2xl hover:shadow-white/50 transition-all"
               >
-                Start Using Now — It's Free →
+                {isLoading ? 'Starting...' : "Start Using Now — It's Free →"}
               </motion.button>
             </div>
             
@@ -1056,12 +1029,12 @@ const Landing = () => {
         <div className="container mx-auto">
           <div className="grid md:grid-cols-3 gap-8 mb-8">
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-lg bg-slate-900 p-1 flex items-center justify-center">
-                    <img src="/logo.png" alt="Legal SahAI" className="w-full h-full object-contain rounded" />
-                  </div>
-                  <span className="text-xl font-bold text-white">Legal SahAI</span>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden bg-white">
+                  <img src="/logo.png" alt="Legal SahAI" className="w-full h-full object-contain" />
                 </div>
+                <span className="text-xl font-bold text-white">Legal SahAI</span>
+              </div>
               <p className="text-sm text-gray-400">
                 Your complete AI-powered legal assistance platform
               </p>
@@ -1080,7 +1053,9 @@ const Landing = () => {
               </ul>
             </div>
           </div>
-          
+          <div className="pt-8 border-t border-gray-800 text-center text-sm">
+            <p>&copy; {new Date().getFullYear()} Legal SahAI. All rights reserved.</p>
+          </div>
         </div>
       </footer>
     </div>
