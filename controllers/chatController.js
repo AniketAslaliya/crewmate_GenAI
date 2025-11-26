@@ -20,7 +20,7 @@ export const updateChatSummary = async (req, res) => {
   }
 };
 import { Chat } from "../models/Chat.js";
-import { uploadToGCS, getSignedUrl, getReadStream, deleteFromGCS } from "../utils/gcs.js";
+import { uploadToGCS, getSignedUrl, getReadStream, deleteFromGCS, fileExists } from "../utils/gcs.js";
 
 // Upload & process ANY document → create chat
 export const uploadDocument = async (req, res) => {
@@ -95,15 +95,29 @@ export const getChatDownload = async (req, res) => {
     const proxy = req.query.proxy === '1' || req.query.proxy === 'true' || req.query.proxy === 'yes';
     if (proxy) {
       try {
+        // Check if file exists first to provide a clear 404 instead of streaming errors
+        const exists = await fileExists(chat.fileGcsPath);
+        if (!exists) {
+          return res.status(404).json({ error: 'File not found in storage' });
+        }
+
         const stream = getReadStream(chat.fileGcsPath);
         // set headers to allow inline display in browser
         res.setHeader('Content-Type', chat.fileMimeType || 'application/octet-stream');
         const filename = chat.originalFileName || 'document';
         res.setHeader('Content-Disposition', `inline; filename="${filename.replace(/\"/g, '')}"`);
+
+        let responded = false;
         stream.on('error', (err) => {
           console.error('Stream error in getChatDownload proxy:', err);
-          if (!res.headersSent) res.status(500).end('Failed to stream file');
+          // If storage reports a missing object, return 404
+          const isNotFound = err && (err.code === 404 || /No such object/i.test(err.message || ''));
+          if (!res.headersSent && !responded) {
+            responded = true;
+            return res.status(isNotFound ? 404 : 500).json({ error: isNotFound ? 'File not found in storage' : 'Failed to stream file' });
+          }
         });
+
         stream.pipe(res);
         return;
       } catch (err) {
