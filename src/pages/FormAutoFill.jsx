@@ -2040,7 +2040,11 @@ const FormAutoFill = () => {
           ) : (
             <div className="p-6">
               {/* Show saved forms in empty state */}
-              {!loadingSavedForms && savedForms.length > 0 ? (
+              {loadingSavedForms ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                </div>
+              ) : (!loadingSavedForms && savedForms.length > 0) ? (
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-semibold text-gray-900">My Saved Forms</h3>

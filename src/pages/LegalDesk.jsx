@@ -178,12 +178,15 @@ const LegalDesk = () => {
 
   const fetchChats = useCallback(async () => {
     try {
+      setIsLoading(true);
       const res = await api.get("/api/getallchats");
       setChats(res.data.chats || []);
     } catch (err) {
       console.error("Failed to fetch chats:", err);
       const errorMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Failed to fetch chats';
       toast.error(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   }, [toast]);
 
@@ -724,7 +727,14 @@ const LegalDesk = () => {
         
 
         {/* No Legal Desks Message - Above Content */}
-        {filteredAndSortedChats.length === 0 && chats.length === 0 && (
+        {isLoading ? (
+          <motion.div className="py-12 mb-8 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-blue-100" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+            <div className="flex items-center justify-center p-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+              <div className="ml-4 text-gray-700">Loading your Legal Desks...</div>
+            </div>
+          </motion.div>
+        ) : (filteredAndSortedChats.length === 0 && chats.length === 0 && (
           <motion.div 
             className="text-center py-12 mb-8 bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-blue-100"
             initial={{ opacity: 0, y: 20 }}
@@ -748,7 +758,7 @@ const LegalDesk = () => {
               Create Your First Legal Desk
             </Button>
           </motion.div>
-        )}
+        ))}
 
         {/* Main Grid - Only show if there are desks */}
         {(filteredAndSortedChats.length > 0 || chats.length > 0) && (
