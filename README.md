@@ -21,5 +21,4 @@ I built a multi-agent educational and assistive system to democratize access to 
 2. **Strict Context Grounding:** The RAG pipeline was designed with explicit boundary instructions forcing the models to rely *only* on retrieved context, which is critical for high-stakes legal data.
 3. **Gemini API:** Selected for its reliability in executing complex, multi-step reasoning and maintaining strict adherence to system prompts across a large context window.
 
-## Daily Time Commitment
-I am currently in my 6th semester of my B.Tech CSE program. I can commit 4 hours daily during the current semester. I am also actively looking for a full-time summer internship from late May to July, during which I can commit up to 8+ hours daily.
+
