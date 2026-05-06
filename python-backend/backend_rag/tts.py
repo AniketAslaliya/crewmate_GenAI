@@ -1,98 +1,99 @@
-# backend_rag/translation.py
+# backend_rag/tts.py
 from __future__ import annotations
 import os
-from typing import Dict, Optional
-import html
+from typing import Optional
 
-# --- Google Translate (optional) ---
+# Try to import Google Cloud Text-to-Speech
 try:
-    from google.cloud import translate_v2 as translate
+    from google.cloud import texttospeech
     from google.oauth2 import service_account
-    _gcloud_translate_import_error = None
-except Exception as e:
-    translate = None
-    service_account = None
-    _gcloud_translate_import_error = e
+    _tts_available = True
+except ImportError:
+    _tts_available = False
+    print("--- [TTS] Warning: google-cloud-texttospeech not installed. ---")
 
-TRANSLATE_AVAILABLE = translate is not None and _gcloud_translate_import_error is None
-_translate_client = None
+_tts_client = None
 
-def _get_translate_client():
-    """Instantiates and returns a Google Translate client."""
-    global _translate_client
-    if not TRANSLATE_AVAILABLE:
-        return None
-    if _translate_client is not None:
-        return _translate_client
+def _get_tts_client():
+    global _tts_client
+    if not _tts_available: return None
+    if _tts_client: return _tts_client
 
     key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     try:
-        if key_path and os.path.exists(key_path) and service_account is not None:
+        if key_path and os.path.exists(key_path):
             creds = service_account.Credentials.from_service_account_file(key_path)
-            _translate_client = translate.Client(credentials=creds)
+            _tts_client = texttospeech.TextToSpeechClient(credentials=creds)
         else:
-            # Fallback to Application Default Credentials (ADC)
-            _translate_client = translate.Client()
-        return _translate_client
-    except Exception:
-        _translate_client = None
-        return None
-
-def detect_language(text: str) -> Optional[Dict]:
-    """
-    Detects the language of a given text snippet.
-    Returns a dictionary like {'language': 'hi', 'confidence': 0.98} or None.
-    """
-    client = _get_translate_client()
-    if not client or not text.strip():
-        return None
-    try:
-        # The API requires a non-empty string
-        result = client.detect_language(text[:500]) # Use a snippet for efficiency
-        return result
-    except Exception:
-        return None
-
-# In backend_rag/translation.py
-def translate_text(text: str, target_language: str) -> Optional[str]:
-    """
-    Translates text into the target language while preserving Markdown labels and field names.
-    """
-    print(f"\n--- [TRANSLATION] Attempting to translate to '{target_language}' ---")
-    
-    if not text or not text.strip():
-        print("--- [TRANSLATION] FAILED: Input text is empty or whitespace.")
-        return None
-
-    # Protect Markdown labels
-    placeholder_map = {
-        "### Q:": "___Q_PLACEHOLDER___",
-        "A:": "___A_PLACEHOLDER___"
-    }
-    protected_text = text
-    for k, v in placeholder_map.items():
-        protected_text = protected_text.replace(k, v)
-
-    client = _get_translate_client()
-    if not client:
-        print("--- [TRANSLATION] FAILED: Translate client not available.")
-        return None
-
-    try:
-        api_response = client.translate(protected_text, target_language=target_language)
-        translated = api_response.get('translatedText')
-        if not translated:
-            print("--- [TRANSLATION] FAILED: 'translatedText' not in API response.")
-            return None
-
-        translated = html.unescape(translated)
-
-        # Restore placeholders
-        for k, v in placeholder_map.items():
-            translated = translated.replace(v, k)
-
-        return translated
-
+            _tts_client = texttospeech.TextToSpeechClient()
+        return _tts_client
     except Exception as e:
-        print(f"--- [TRANSLATION] FAILED: Exception during the API call: {e}")
+        print(f"--- [TTS] Error initializing client: {e} ---")
+        return None
+
+def generate_speech_audio(text: str, language_code: str = "en-US") -> Optional[bytes]:
+    """
+    Converts text to audio using HIGH QUALITY (Neural2/Wavenet) voices.
+    """
+    client = _get_tts_client()
+    if not client: return None
+
+    # 1. Map Codes to Full Locale
+    locale_map = {
+        "en": "en-IN", # Use Indian English for better relatability
+        "hi": "hi-IN",
+        "gu": "gu-IN",
+        "ta": "ta-IN",
+        "te": "te-IN",
+        "mr": "mr-IN",
+        "bn": "bn-IN",
+        "kn": "kn-IN",
+        "ml": "ml-IN"
+    }
+    full_lang_code = locale_map.get(language_code, "en-US")
+
+    # 2. Select the BEST Voice (Neural2 or Wavenet)
+    # Google Cloud Voice Names: https://cloud.google.com/text-to-speech/docs/voices
+    voice_name_map = {
+        "en-IN": "en-IN-Neural2-D",  # Indian English (Neural - Female)
+        "en-US": "en-US-Neural2-J",  # US English (Neural - Male)
+        "hi-IN": "hi-IN-Neural2-A",  # Hindi (Neural - Female) - Very Natural
+        "gu-IN": "gu-IN-Wavenet-A",  # Gujarati (Wavenet - Female)
+        "ta-IN": "ta-IN-Wavenet-D",  # Tamil (Wavenet - Female)
+        "te-IN": "te-IN-Standard-A", # Telugu (Standard - sometimes better for specific dialects)
+        "mr-IN": "mr-IN-Wavenet-A",  # Marathi
+        "bn-IN": "bn-IN-Wavenet-A",  # Bengali
+    }
+    
+    # Default to a specific high-quality voice if defined, otherwise let Google pick
+    selected_name = voice_name_map.get(full_lang_code)
+
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    if selected_name:
+        # Request the specific high-quality voice
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=full_lang_code,
+            name=selected_name
+        )
+    else:
+        # Fallback
+        voice = texttospeech.VoiceSelectionParams(
+            language_code=full_lang_code,
+            ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+        )
+
+    # 3. MP3 Config
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+        speaking_rate=0.95  # Slightly slower for better clarity in explanation
+    )
+
+    try:
+        response = client.synthesize_speech(
+            input=synthesis_input, voice=voice, audio_config=audio_config
+        )
+        return response.audio_content
+    except Exception as e:
+        print(f"--- [TTS] Synthesis failed: {e} ---")
         return None

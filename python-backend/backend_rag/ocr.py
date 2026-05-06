@@ -19,6 +19,7 @@ try:
     from google.cloud import storage as gcs
     from google.oauth2 import service_account
     from google.cloud import speech_v2 as speech
+    from google.cloud import speech_v1
 
     _gcloud_import_error = None
 except Exception as e:  # pragma: no cover
@@ -282,97 +283,131 @@ from pydub import AudioSegment
 # (Make sure the necessary imports are at the top, like speech, AudioSegment, io, etc.)
 # (Also ensure the _get_speech_client() function is present in the file)
 
-def speech_to_text_from_bytes(content: bytes, language_code: str | None = None,enable_automatic_punctuation: bool = True) -> str:
+# In backend_rag/ocr.py
+
+def _get_speech_client_v1():
     """
-    Transcribes audio using Google Cloud Speech-to-Text v2.
-    If `language_code` is provided, it forces that language.
-    Otherwise, auto-detects using multiple language codes.
-    Returns native-script output (e.g., Hindi → 'यह क्या है', Gujarati → 'આ શું છે').
+    Get the Speech V1 client to support 'latest_short' models and general encoding.
     """
+    global _speech_client
+    if not SPEECH_AVAILABLE:
+        return None
+
+    if _speech_client:
+        return _speech_client
+
+    key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     try:
-        from google.cloud import speech_v2
-        from google.oauth2 import service_account
-        import json
-
-        # --- Step 1: Load credentials & project info ---
-        key_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if not key_path or not Path(key_path).exists():
-            return "(speech error: GOOGLE_APPLICATION_CREDENTIALS missing or invalid path)"
-
-        with open(key_path, "r", encoding="utf-8") as f:
-            creds_data = json.load(f)
-        project_id = creds_data.get("project_id")
-        if not project_id:
-            return "(speech error: project_id missing in service account JSON)"
-
-        creds = service_account.Credentials.from_service_account_file(key_path)
-        client = speech_v2.SpeechClient(credentials=creds)
-
-        # --- Step 2: Prepare audio (normalize) ---
-        audio_segment = AudioSegment.from_file(io.BytesIO(content))
-        audio_segment = audio_segment.set_frame_rate(16000).set_channels(1)
-        buf = io.BytesIO()
-        audio_segment.export(buf, format="wav")
-        wav_bytes = buf.getvalue()
-
-        # --- Step 3: Build language list ---
-        if language_code:
-            languages = [language_code]
+        if key_path and Path(key_path).exists() and service_account is not None:
+            creds = service_account.Credentials.from_service_account_file(key_path)
+            _speech_client = speech_v1.SpeechClient(credentials=creds)
         else:
-            languages = ["hi-IN", "gu-IN", "en-US"]  # Auto-detect among these (add more if needed)
+            _speech_client = speech_v1.SpeechClient()
+        return _speech_client
+    except Exception as e:
+        print(f"[SPEECH INIT] Error: {e}")
+        return None
 
-        # --- Step 4: Create RecognizeRequest ---
-        request = speech_v2.RecognizeRequest(
-            recognizer=f"projects/{project_id}/locations/global/recognizers/_",
-            config=speech_v2.RecognitionConfig(
-                auto_decoding_config={},
-                language_codes=languages,
-                model="long",
-                features=speech_v2.RecognitionFeatures(
-                    enable_automatic_punctuation=True,
-                    enable_spoken_punctuation=True,
-                ),
-            ),
-            content=wav_bytes,
+# In backend_rag/ocr.py
+
+# In backend_rag/ocr.py
+
+# In backend_rag/ocr.py
+
+# In backend_rag/ocr.py
+
+def speech_to_text_from_bytes(content: bytes, language_code: str = "en", enable_automatic_punctuation: bool = True) -> str:
+    """
+    Transcribes audio using Google Cloud Speech-to-Text V1.
+    Handles audio normalization and robust model fallback.
+    """
+    client = _get_speech_client_v1()
+    if not client:
+        return "(speech error: client not available)"
+
+    # 1. Language Mapping
+    lang_map = {
+        "en": "en-US",
+        "hi": "hi-IN",
+        "gu": "gu-IN",
+        "ta": "ta-IN",
+        "te": "te-IN",
+        "mr": "mr-IN",
+        "bn": "bn-IN",
+        "kn": "kn-IN",
+        "ml": "ml-IN"
+    }
+    full_lang_code = lang_map.get(language_code, language_code)
+
+    try:
+        # 2. Normalize Audio (16-bit, 16kHz, Mono)
+        try:
+            audio_segment = AudioSegment.from_file(io.BytesIO(content))
+            audio_segment = audio_segment.set_channels(1)\
+                                         .set_frame_rate(16000)\
+                                         .set_sample_width(2) 
+            buf = io.BytesIO()
+            audio_segment.export(buf, format="wav")
+            wav_bytes = buf.getvalue()
+        except Exception as e:
+            print(f"[SPEECH] Pydub conversion failed: {e}. Using raw bytes.")
+            wav_bytes = content
+
+        audio = speech_v1.RecognitionAudio(content=wav_bytes)
+
+        # 3. Initial Config (Try 'latest_short' for best quality)
+        config = speech_v1.RecognitionConfig(
+            encoding=speech_v1.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=16000,
+            language_code=full_lang_code,
+            enable_automatic_punctuation=enable_automatic_punctuation,
+            use_enhanced=True,
+            model="latest_short" 
         )
 
-        # --- Step 5: Transcribe ---
-        response = client.recognize(request=request)
+        print(f"[SPEECH] Transcribing with language: {full_lang_code}, model: latest_short")
 
-        transcript = ""
-        detected_lang = None
+        try:
+            response = client.recognize(config=config, audio=audio)
+        except Exception as e:
+            # 4. ROBUST FALLBACK LOGIC
+            error_str = str(e).lower()
+            
+            # We check for ANY indication that the model/config was wrong
+            if ("model" in error_str) or ("supported" in error_str) or ("invalid" in error_str):
+                print(f"[SPEECH] 'latest_short' failed for {full_lang_code}. Retrying with 'default' model...")
+                
+                # Switch to the standard model which supports ALL languages
+                config.model = "default"
+                config.use_enhanced = False
+                
+                response = client.recognize(config=config, audio=audio)
+            else:
+                # If it's a different error (like Auth), raise it
+                raise e
+
+        # 5. Process Results
+        transcript_parts = []
         for result in response.results:
-            transcript += result.alternatives[0].transcript.strip() + " "
-            if result.language_code:
-                detected_lang = result.language_code
-
-        transcript = transcript.strip()
-        print(f"[SPEECH V2] ✅ Transcript: {transcript}")
-        if detected_lang:
-            print(f"[SPEECH V2] 🌐 Detected Language: {detected_lang}")
-
-        return transcript or "(speech error: empty transcript)"
+            if result.alternatives:
+                transcript_parts.append(result.alternatives[0].transcript)
+        
+        final_transcript = " ".join(transcript_parts).strip()
+        return final_transcript
 
     except Exception as e:
         return f"(speech error: {e})"
 
-
-def speech_to_text_from_local_file(audio_path: str) -> dict:
+def speech_to_text_from_local_file(audio_path: str, language_code: str = "en") -> dict:
     """
-    Orchestrator function: reads a local file, detects the language from its
-    audio, then gets the full transcript in that language.
-    Returns a dictionary with the transcript and detected language.
+    Reads local file and transcribes it. Default language is now 'en'.
     """
     try:
         with open(audio_path, "rb") as f:
             content = f.read()
 
-        # First Pass: Detect language from the audio bytes
-        detected_language = detect_language_from_audio_bytes(content)
-
-        # Second Pass: Transcribe the full audio using the detected language
-        transcript = speech_to_text_from_bytes(content, language_code=detected_language)
+        transcript = speech_to_text_from_bytes(content, language_code=language_code)
         
-        return {"transcript": transcript, "detected_language": detected_language}
+        return {"transcript": transcript, "detected_language": language_code}
     except Exception as e:
-        return {"transcript": f"(speech error: {e})", "detected_language": "unknown"}
+        return {"transcript": f"(speech error: {e})", "detected_language": "error"}

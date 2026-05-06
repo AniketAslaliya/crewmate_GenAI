@@ -1,5 +1,6 @@
 # full updated file with corrected endpoints for JSON responses
 from __future__ import annotations
+from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse, JSONResponse
 import io
 import os
@@ -26,7 +27,17 @@ from backend_rag.form_processing import (
     # Assuming OcrResult class is defined in form_processing.py or imported there
 )
 # In api_server.py, at the top with other imports
+from cryptography.fernet import Fernet  # <--- ADD THIS
 
+# ... (other imports)
+
+# --- LOAD ENCRYPTION KEY ---
+ENCRYPTION_KEY = os.getenv("TEXT_ENCRYPTION_KEY")
+cipher = Fernet(ENCRYPTION_KEY) if ENCRYPTION_KEY else None
+if not cipher:
+    print("⚠️ WARNING: TEXT_ENCRYPTION_KEY not found. Ingestion will be PLAIN TEXT.")
+else:
+    print("🔒 Encryption is ENABLED for new uploads.")
 from backend_rag.prompts import build_strict_system_prompt 
 from backend_rag.prompts import WEB_ANSWER_SYSTEM_PROMPT
 from backend_rag.web_search import google_search
@@ -54,14 +65,17 @@ from backend_rag.analysis import (
     generate_predictive_output, 
     generate_clause_explanations,
     generate_mindmap,              
-    generate_structured_timeline
+    generate_structured_timeline,
+    generate_short_summary,
+    generate_risk_analysis,
+    
 )
 from backend_rag.prompts import (
     build_strict_system_prompt , 
     WEB_ANSWER_SYSTEM_PROMPT,
     GENERAL_LEGAL_QA_PROMPT  
 )
-
+from backend_rag.highlighting import find_text_coordinates
 from backend_rag.retrieval import retrieve_similar_chunks
 from backend_rag.ocr import speech_to_text_from_local_file, speech_to_text_from_bytes
 
@@ -96,6 +110,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "/tmp/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -116,6 +131,11 @@ class PredictiveOutputReq(BaseModel):
 class SpeakReq(BaseModel):
     text: str
     language: str = "en"
+    
+class ShortSummaryReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
+    output_language: Optional[str] = 'en'
 
 # --- START: ADDED FOR FORM FILLING (Pydantic Models) ---
 class DetectedField(BaseModel):
@@ -189,20 +209,18 @@ class CaseLawReq(BaseModel):
     thread_id: str
     output_language: Optional[str] = 'en' # Add this
 
-class FAQDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
 
-class TimelineDownloadReq(BaseModel):
+class StressTestReq(BaseModel):
     user_id: Optional[str] = None
     thread_id: str
+    output_language: Optional[str] = 'en'
 
-class StudyGuideDownloadReq(BaseModel):
-    user_id: Optional[str] = None
-    thread_id: str
 
 class GeneralAskReq(BaseModel):
+    user_id: Optional[str] = None
+    thread_id: str
     query: str
+    history: List[ChatMessage] = []  # <--- History Support
     output_language: Optional[str] = 'en'
 
 class ClauseReq(BaseModel):
@@ -222,6 +240,61 @@ from backend_rag.Translation import translate_text # Ensure this is imported
 from typing import Any, Dict, List, Optional, Union # Ensure these are imported
 
 # ... (keep all your other code and endpoints) ...
+def _find_coordinates_in_ocr_result(ocr_result: DetailedOcrResult, target_text: str) -> List[Dict[str, Any]]:
+    """
+    Locates a target text string within the pre-parsed OCR result (words + bboxes).
+    Mimics the logic of highlighting.py but uses the in-memory OcrResult object
+    instead of re-opening the PDF.
+    """
+    import re
+    
+    # Normalize target (lowercase, remove extra spaces)
+    normalized_target = re.sub(r'\s+', ' ', target_text).strip().lower()
+    target_words = normalized_target.split()
+    if not target_words:
+        return []
+
+    found_boxes = []
+    seq_len = len(target_words)
+
+    # Iterate through every page
+    for page in ocr_result.pages:
+        # Create a list of normalized words for this page
+        page_word_texts = [re.sub(r'\s+', ' ', w.text).strip().lower() for w in page.words]
+        
+        # Sliding window search
+        for i in range(len(page_word_texts) - seq_len + 1):
+            if page_word_texts[i : i + seq_len] == target_words:
+                
+                # Match Found! Grab the original word objects
+                matched_ocr_words = page.words[i : i + seq_len]
+                
+                # --- Merge Logic (Simple Union Rect per line) ---
+                # Group by Y-coordinate to handle multi-line highlights
+                lines = {}
+                for w in matched_ocr_words:
+                    # Round Y to nearest 5px to group words on same line
+                    y_key = round(w.bbox[1] / 5) * 5 
+                    if y_key not in lines: lines[y_key] = []
+                    lines[y_key].append(w)
+
+                # Create boxes
+                for _, line_words in lines.items():
+                    x0 = min(w.bbox[0] for w in line_words)
+                    top = min(w.bbox[1] for w in line_words)
+                    x1 = max(w.bbox[2] for w in line_words)
+                    bottom = max(w.bbox[3] for w in line_words)
+                    
+                    found_boxes.append({
+                        "page": page.page_number,
+                        "x": x0,
+                        "y": top,
+                        "width": x1 - x0,
+                        "height": bottom - top,
+                        # "text_fragment": " ".join([w.text for w in line_words]) # Optional debug
+                    })
+
+    return found_boxes
 
 # --- ADD THIS NEW HELPER FUNCTION near the top of api_server.py ---
 # This function can "walk" through a JSON object and translate all string values,
@@ -281,18 +354,65 @@ def _reset_vector_store(user_id: Optional[str], thread_id: str):
 
 # In api_server.py
 
-def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
+
+# In api_server.py
+
+def _extract_and_translate_only(local_path: str) -> Dict[str, Any]:
+    """
+    Lightweight Processor: Extracts and Translates text ONLY. 
+    Does NOT chunk, embed, or store in Pinecone.
+    """
+    # 1. Extract Text
+    extraction = extract_text_with_diagnostics(local_path)
+    text = (extraction.get("text") or "").strip()
+    
+    if not text:
+        return {"success": False, "message": "No text extracted from file."}
+
+    # 2. Language Detection & Translation (Crucial for Analysis)
+    detection = detect_language(text)
+    original_lang = 'en'
+    
+    if detection and detection.get('language') and detection.get('confidence', 0) > 0.5:
+        original_lang = detection['language']
+
+    text_to_process = text
+    if original_lang != 'en':
+        # We still need translation so the English-prompted AI can understand it
+        translated = translate_text(text, target_language='en')
+        if translated:
+            text_to_process = translated
+            print(f"--- [Risk Upload] Translated from {original_lang} to en ---")
+
+    return {
+        "success": True,
+        "extracted_text": text_to_process,
+        "original_language": original_lang
+    }
+# In api_server.py
+# In api_server.py
+
+
+# In api_server.py
+def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str,input_language: str = "en-IN"):
+    # 1. Extract Text
     extraction = extract_text_with_diagnostics(local_path)
     text = (extraction.get("text") or "").strip()
     source = extraction.get("source")
     diagnostics = extraction.get("diagnostics", {})
 
     if not text:
-        return {"success": False, "message": "No text extracted from file.", "diagnostics": diagnostics, "source": source}
+        return {
+            "success": False, 
+            "message": "No text extracted from file.", 
+            "diagnostics": diagnostics, 
+            "source": source
+        }
 
-    # --- NEW: Language Detection & Translation Step ---
+    # 2. Language Detection & Translation
+    # We translate to English for better Embedding/Search accuracy
     detection = detect_language(text)
-    original_lang = 'en' # Default to English
+    original_lang = 'en'
     if detection and detection.get('language') and detection.get('confidence', 0) > 0.5:
         original_lang = detection['language']
 
@@ -302,66 +422,93 @@ def _ingest_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[st
         if translated:
             text_to_process = translated
             diagnostics['translation'] = f"Detected '{original_lang}', translated to 'en'"
-        else:
-            # If translation fails, proceed with original text but log it
-            diagnostics['translation_error'] = f"Detected '{original_lang}', but translation failed."
-
-    # --- End of New Step ---
-
-    chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200) # Use the processed text
-    texts = [c[1] for c in chunks]
-    if not texts:
-        return {"success": False, "message": "No chunks created from file.", "diagnostics": diagnostics, "source": source}
     
+    # 3. Chunking (Process the English/Translated text)
+    chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200)
+    texts = [c[1] for c in chunks]
+    
+    if not texts:
+        return {
+            "success": False, 
+            "message": "No chunks created from file.", 
+            "diagnostics": diagnostics, 
+            "source": source
+        }
+    
+    # 4. Embed CLEAR TEXT (So the AI can understand and search it)
     vecs = embed_texts(texts)
     vecs_list = [v.astype("float32").tolist() for v in vecs]
     ids = [c[0] for c in chunks]
     
-    # --- MODIFIED: Add original_lang to metadata ---
-    metadatas = [
-        {
+    # 5. Prepare Metadata (Encrypting the text for storage)
+    metadatas = []
+    for i in range(len(texts)):
+        # Get the clear text snippet
+        clear_text_snippet = texts[i][:4000]
+        
+        # --- ENCRYPTION LOGIC ---
+        # We encrypt the text so it is unreadable in the Pinecone Dashboard
+        if 'cipher' in globals() and cipher:
+            try:
+                stored_text = cipher.encrypt(clear_text_snippet.encode()).decode()
+            except Exception as e:
+                print(f"--- [Ingest] Encryption failed for chunk {i}: {e} ---")
+                stored_text = clear_text_snippet # Fallback to clear text
+        else:
+            stored_text = clear_text_snippet
+        # ------------------------
+
+        metadatas.append({
             "file_name": file_name,
             "chunk_id": ids[i],
-            "text": texts[i][:4000],
-            "original_language": original_lang  # Store the detected language
-        } for i in range(len(texts))
-    ]
-    # --- End of Modification ---
+            "text": stored_text,  # Store ENCRYPTED text
+            "original_language": original_lang,
+        })
 
+    # 6. Upsert to Pinecone
     dim = get_embedding_dimension()
     index = get_or_create_index(dim)
     ns = namespace(user_id, thread_id)
     upsert_chunks(index, ns, vecs_list, ids, metadatas)
     
-    return {"success": True, "message": f"Ingested {len(chunks)} chunks (source={source}, lang={original_lang}) into chat {thread_id} for user {user_id}", "diagnostics": diagnostics, "source": source}
+    return {
+        "success": True, 
+        "message": f"Ingested {len(chunks)} chunks (source={source}, lang={original_lang}) into chat {thread_id}", 
+        "diagnostics": diagnostics, 
+        "source": source,
+        "extracted_text": text # Returning original text for frontend reference if needed
+    }
 
-# In api_server.py
 
-# In api_server.py
-
-def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optional[str], thread_id: str):
+def _ingest_audio_no_sqlite_save(
+    local_path: str, 
+    file_name: str, 
+    user_id: Optional[str], 
+    thread_id: str,
+    input_language: str = "en-US"  # <--- ADD THIS PARAMETER
+):
     try:
         # Step 1: Transcribe the audio file
-        speech_result = speech_to_text_from_local_file(local_path)
+        # Ensure speech_to_text_from_local_file in ocr.py accepts language_code
+        speech_result = speech_to_text_from_local_file(local_path, language_code=input_language)
+        
         transcript = speech_result.get("transcript", "")
-        detected_lang_code = speech_result.get("detected_language", "en-US")
+        detected_lang_code = speech_result.get("detected_language", input_language)
 
         if not transcript or transcript.startswith("(speech error"):
             return {"success": False, "message": f"Could not produce transcript. Reason: {transcript}"}
 
         text = transcript.strip()
-        original_lang = detected_lang_code.split('-')[0]  # e.g., 'gu-IN' → 'gu'
+        # Use the language code we detected or passed
+        original_lang = detected_lang_code.split('-')[0] 
         source = f"audio:{file_name}"
         diagnostics = {
             "transcript_length": len(text.split()),
             "detected_audio_language": detected_lang_code
         }
 
-        # ✅ Do NOT translate — store original language
-        text_to_process = text  
-
         # Step 2: Chunk + Embed + Store as usual
-        chunks = chunk_text(text_to_process, chunk_size=1000, overlap=200)
+        chunks = chunk_text(text, chunk_size=1000, overlap=200)
         texts = [c[1] for c in chunks]
         if not texts:
             return {"success": False, "message": "No chunks created from transcript.", "transcript": transcript}
@@ -370,16 +517,27 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
         vecs_list = [v.astype("float32").tolist() for v in vecs]
         ids = [c[0] for c in chunks]
 
-        metadatas = [
-            {
+        # Encrypt metadata
+        metadatas = []
+        for i in range(len(texts)):
+            clear_text_snippet = texts[i][:4000]
+            
+            # Encryption Logic
+            if 'cipher' in globals() and cipher:
+                try:
+                    stored_text = cipher.encrypt(clear_text_snippet.encode()).decode()
+                except Exception:
+                    stored_text = clear_text_snippet
+            else:
+                stored_text = clear_text_snippet
+
+            metadatas.append({
                 "file_name": file_name,
                 "chunk_id": ids[i],
-                "text": texts[i][:4000],
+                "text": stored_text, # Encrypted
                 "source": source,
                 "original_language": original_lang
-            }
-            for i in range(len(texts))
-        ]
+            })
 
         dim = get_embedding_dimension()
         index = get_or_create_index(dim)
@@ -401,6 +559,10 @@ def _ingest_audio_no_sqlite_save(local_path: str, file_name: str, user_id: Optio
 
 
 # ----------------------------- Endpoints --------------------------------------
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/docs")
+    
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -520,12 +682,15 @@ async def ingest(user_id: Optional[str] = Form(default=None), thread_id: str = F
         raise HTTPException(status_code=422, detail=result)
     return result
 
+# In api_server.py
+
 @app.post("/api/ingest-audio")
 async def ingest_audio(
     user_id: Optional[str] = Form(default=None),
-    thread_id: str = Form(...),
+    thread_id: str = Form(default=None),
     file: UploadFile = File(...),
-    replace: bool = Form(False)
+    replace: bool = Form(False),
+    input_language: str = Form("en-IN") # <--- New Form Field
 ):
     if replace:
         _reset_vector_store(user_id, thread_id)
@@ -535,10 +700,19 @@ async def ingest_audio(
     with local_path.open("wb") as f:
         f.write(await file.read())
     
-    result = _ingest_audio_no_sqlite_save(str(local_path), file.filename, user_id, thread_id)
+    # Pass the language code to the logic function
+    result = _ingest_audio_no_sqlite_save(
+        str(local_path), 
+        file.filename, 
+        user_id, 
+        thread_id,
+        input_language=input_language
+    )
     
     if not result.get("success"):
         raise HTTPException(status_code=422, detail=result)
+    
+    return result
     
     return result
 
@@ -551,11 +725,18 @@ import html
 
 
 # In api_server.py
-# (Replace your old api_ask function with this one)
+
+# Ensure these are imported at the top
+import json
+from fastapi.responses import StreamingResponse 
+
+# In api_server.py
+
+# In api_server.py
 
 @app.post("/api/ask")
 def api_ask(req: AskReq):
-    # --- Step 1: Translate query to English if needed ---
+    # --- Step 1: Translate query (Keep existing logic) ---
     query_to_process = req.query
     if req.query.strip():
         query_lang_detection = detect_language(req.query)
@@ -564,18 +745,18 @@ def api_ask(req: AskReq):
             if translated_query:
                 query_to_process = translated_query
 
-    # --- Step 2: Retrieve similar chunks ---
+    # --- Step 2: Retrieve similar chunks (Keep existing logic) ---
     hits = retrieve_similar_chunks(query_to_process, user_id=req.user_id, thread_id=req.thread_id, top_k=req.top_k)
     sources = []
     
     if not hits:
         print("--- [API Ask] No RAG results. Proceeding to web search. ---")
         context_combined = "No relevant document excerpts found."
-        rag_answer_json = None
     else:
-        # --- Step 3: Prepare context and get RAG answer ---
+        # --- Step 3: Prepare context ---
         context_blobs = []
         for r in hits:
+            # Note: r['text'] is already decrypted by retrieval.py
             text = (r.get("text") or "").replace("\n", " ")
             fn = r.get("file_name") or "document"
             context_blobs.append(f"--- From file: {fn} ---\n{text}\n")
@@ -583,69 +764,93 @@ def api_ask(req: AskReq):
 
         context_combined = "\n\n".join(context_blobs)
 
-    # --- NEW: Process History from Request ---
+    # --- Process History ---
     history_text = ""
-    # Take the last 6 messages to keep context focused and avoid token limits
-    recent_history = req.history[-6:] 
+    recent_history = req.history[-20:] 
     for msg in recent_history:
-        # Map 'user'/'assistant' to clear labels for the AI
         role_label = "User" if msg.role == "user" else "AI"
         history_text += f"{role_label}: {msg.content}\n"
 
-    # --- UPDATED: Pass history_text to the prompt builder ---
-    system_prompt_rag = build_strict_system_prompt(context_combined, chat_history_str=history_text)
-    user_prompt_rag = query_to_process.strip()
-
-    # Get the JSON response from the RAG model
-    rag_answer_json_string = call_model_system_then_user(
-        system_prompt_rag, user_prompt_rag, temperature=0.0
+    # --- Build Prompt with Follow-up Instruction ---
+    base_prompt = build_strict_system_prompt(context_combined, chat_history_str=history_text)
+    
+    # Append the hidden instruction to the system prompt
+    system_prompt_rag = base_prompt + (
+        "\n\n**BONUS TASK:** At the very end of your response, strictly on a new line, "
+        "generate exactly 2 relevant follow-up questions the USER should ask you next based on this topic. "
+        "Format them as: `||Q1: [Question]||Q2: [Question]||` so I can parse them easily."
     )
     
-    # --- Step 4: Check Confidence and Decide to Web Search ---
-    final_answer_string = ""
-    try:
-        json_match = re.search(r'\{.*\}', rag_answer_json_string, re.DOTALL)
-        if not json_match:
-            final_answer_string = rag_answer_json_string
-        else:
-            rag_json = json.loads(json_match.group(0))
-            confidence = rag_json.get("response", {}).get("ASSESSMENT", {}).get("CONFIDENCE", "High").lower()
-            plain_answer = rag_json.get("response", {}).get("PLAIN ANSWER", "")
+    user_prompt_rag = query_to_process.strip()
 
-            # Check for low confidence or "Not stated"
-            if confidence == "low" or "not stated in document" in plain_answer.lower():
-                print(f"--- [API Ask] RAG answer was '{plain_answer}' (Confidence: {confidence}). Proceeding to web search. ---")
-                
-                # --- Step 5: Perform Web Search ---
-                web_context = google_search(query_to_process)
-                
-                # Note: We don't typically pass history to the web search prompt yet, 
-                # but you could modify WEB_ANSWER_SYSTEM_PROMPT similarly if needed.
-                system_prompt_web = WEB_ANSWER_SYSTEM_PROMPT.format(web_context=web_context)
-                user_prompt_web = query_to_process
-                
-                # Call the web_model for summarization
-                web_answer = call_model_system_then_user(
-                    system_prompt_web, user_prompt_web
-                )
-                final_answer_string = web_answer
-                sources = [] # Clear document sources, as this is a web answer
-            else:
-                # Confidence is high, use the RAG answer
-                final_answer_string = plain_answer
-                
-    except Exception as e:
-        print(f"--- [API Ask] Error parsing JSON or routing: {e} ---")
-        final_answer_string = rag_answer_json_string # Fallback
+    # --- Call Model ---
+    ai_response_text = call_model_system_then_user(
+        system_prompt_rag, user_prompt_rag, temperature=0.2
+    )
+    
+    # --- Extract Follow-up Questions & Clean Answer ---
+    final_answer_string = ai_response_text
+    follow_up_questions = []
 
-    # --- Step 6: Translate the final string answer if needed ---
+    if "||Q1:" in ai_response_text:
+        parts = ai_response_text.split("||Q1:")
+        final_answer_string = parts[0].strip() # The clean Markdown answer
+        
+        # Extract the questions from the hidden part
+        remainder = parts[1]
+        if "||Q2:" in remainder:
+            try:
+                q1_part, q2_part = remainder.split("||Q2:")
+                q1_clean = q1_part.strip()
+                q2_clean = q2_part.replace("||", "").strip()
+                if q1_clean: follow_up_questions.append(q1_clean)
+                if q2_clean: follow_up_questions.append(q2_clean)
+            except Exception as e:
+                print(f"--- [API Ask] Error parsing follow-ups: {e}")
+
+    # --- Step 4: Check Confidence & Web Search ---
+    # If the AI explicitly says "CONFIDENCE_LOW", we switch to Web Search
+    if "CONFIDENCE_LOW" in final_answer_string or "Not stated in document" in final_answer_string:
+        print(f"--- [API Ask] Low confidence detected. Switching to Web Search. ---")
+        
+        web_context = google_search(query_to_process)
+        
+        # Use Web Search Prompt
+        system_prompt_web = WEB_ANSWER_SYSTEM_PROMPT.format(web_context=web_context)
+        user_prompt_web = query_to_process
+        
+        web_answer = call_model_system_then_user(
+            system_prompt_web, user_prompt_web
+        )
+        final_answer_string = web_answer
+        sources = [] # Clear document sources
+        follow_up_questions = [] # Clear follow-ups as context changed
+
+    # --- Step 5: Translation ---
     final_answer_translated = final_answer_string
-    if req.output_language and req.output_language != 'en' and final_answer_string:
-        translated = translate_text(final_answer_string, target_language=req.output_language)
-        if translated:
-            final_answer_translated = translated
+    final_followups = follow_up_questions
 
-    return {"success": True, "answer": final_answer_translated, "sources": sources}
+    if req.output_language and req.output_language != 'en':
+        # Translate Answer
+        if final_answer_string:
+            translated = translate_text(final_answer_string, target_language=req.output_language)
+            if translated:
+                final_answer_translated = translated
+        
+        # Translate Follow-up Questions
+        if follow_up_questions:
+            translated_qs = []
+            for q in follow_up_questions:
+                tq = translate_text(q, target_language=req.output_language)
+                translated_qs.append(tq if tq else q)
+            final_followups = translated_qs
+
+    return {
+        "success": True, 
+        "answer": final_answer_translated, 
+        "sources": sources,
+        "follow_up_questions": final_followups # New field in JSON response
+    }
 
 
 
@@ -691,10 +896,7 @@ async def transcribe_audio(file: UploadFile, user_id: str = Form(""), thread_id:
     except Exception as e:
         return JSONResponse(content={"success": False, "error": str(e)}, status_code=500)
 
-@app.post("/api/download/faq")
-# In api_server.py, replace the old @app.post("/api/faq") function with this one
 
-# In api_server.py
 
 @app.post("/api/faq")
 def faq(req: FAQReq):
@@ -750,32 +952,9 @@ def faq(req: FAQReq):
          print(f"--- [API FAQ] Unexpected Error: {e} ---")
          raise HTTPException(status_code=500, detail=f"Error processing FAQ request: {e}")
 
-@app.post("/api/download/timeline")
-def download_timeline(req: TimelineDownloadReq):
-    out = generate_timeline(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    timeline_list = out.get("timeline", [])
-    if not timeline_list:
-        message = out.get("message", "Empty timeline content.")
-        raise HTTPException(status_code=422, detail={"message": message})
-    timeline_text_parts = ["| Date | Event |", "|---|---|"]
-    for item in timeline_list:
-        timeline_text_parts.append(f"| {item.get('date', '')} | {item.get('event', '')} |")
-    timeline_text = "\n".join(timeline_text_parts)
-    base = f"thread_{req.thread_id}"
-    return _stream_text_file(timeline_text, f"{base}_timeline.md", media_type="text/markdown; charset=utf-8")
 
-@app.post("/api/download/study-guide")
-def download_study_guide(req: StudyGuideDownloadReq):
-    out = generate_study_guide(req.user_id, req.thread_id)
-    if not out.get("success"):
-        raise HTTPException(status_code=422, detail=out)
-    guide_text = out.get("study_guide") or ""
-    if not guide_text.strip():
-        raise HTTPException(status_code=422, detail={"message": "Empty study guide content."})
-    base = f"thread_{req.thread_id}"
-    return _stream_text_file(guide_text, f"{base}_study_guide.txt", media_type="text/plain; charset=utf-8")
+
+
 
 @app.get("/api/ns/stats")
 def api_ns_stats(user_id: Optional[str] = None, thread_id: str = Query(...)):
@@ -929,71 +1108,7 @@ def api_speak(req: SpeakReq):
     # This allows Javascript to capture it as a Blob and play it instantly.
     return Response(content=audio_bytes, media_type="audio/mpeg")
 
-@app.post("/api/forms/export")
-async def export_filled_form(req: FormExportRequest = Body(...)):
-    """
-    Receives final field values and generates a filled PDF or DOCX file.
-    """
-    print(f"--- [/api/forms/export] Request received for form ID: {req.form_id}, format: {req.export_format} ---")
-    
-    # Find the original uploaded file path based on form_id and filename
-    # This requires req.original_filename to be sent from frontend
-    if not req.original_filename:
-        raise HTTPException(status_code=400, detail="Missing original_filename in request for export.")
-        
-    original_file_path = UPLOAD_DIR / f"{req.form_id}_{req.original_filename}"
-    if not original_file_path.exists():
-         print(f"--- [/api/forms/export] Original file not found at expected path: {original_file_path} ---")
-         raise HTTPException(status_code=404, detail="Original form file not found for export. It might have been cleaned up.")
 
-    # Prepare data for filling functions {field_id: value}
-    field_data_dict = {fv.id: fv.value for fv in req.field_values}
-
-    # Define output path
-    output_filename = f"filled_{req.form_id}.{req.export_format}"
-    output_path = UPLOAD_DIR / output_filename
-
-    try:
-        if req.export_format == "pdf":
-            # NOTE: fill_pdf_form is a placeholder unless you implement AcroForm filling
-            fill_pdf_form(str(original_file_path), str(output_path), field_data_dict)
-            media_type = "application/pdf"
-        elif req.export_format == "docx":
-            fill_docx_form(str(original_file_path), str(output_path), field_data_dict)
-            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported export format.")
-
-        # Check if file was created
-        if not output_path.exists():
-             raise HTTPException(status_code=500, detail="Export failed: Output file not generated.")
-
-        # Stream the file back
-        def iterfile():
-            try:
-                with open(output_path, mode="rb") as file_like:
-                    yield from file_like
-            finally:
-                 # Clean up the generated filled file after streaming
-                 if output_path.exists():
-                     output_path.unlink()
-                     print(f"--- [/api/forms/export] Cleaned up exported file: {output_path} ---")
-                 # Optionally clean up the original uploaded file now too
-                 # if original_file_path.exists():
-                 #    original_file_path.unlink()
-
-        headers = {'Content-Disposition': f'attachment; filename="{output_filename}"'}
-        return StreamingResponse(iterfile(), media_type=media_type, headers=headers)
-
-    except HTTPException as httpe:
-        raise httpe
-    except Exception as e:
-        print(f"--- [/api/forms/export] Error: {e} ---")
-        # Clean up potentially corrupted output file on error
-        if output_path.exists(): output_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Failed to export form: {e}")
-
-# --- END: ADDED FOR FORM FILLING (API Endpoints) ---
 
 
 # In api_server.py
@@ -1001,82 +1116,62 @@ async def export_filled_form(req: FormExportRequest = Body(...)):
 
 # In api_server.py
 # (Replace your old api_general_ask function with this one)
+
+# In api_server.py
+from backend_rag.prompts import build_general_system_prompt
+# In api_server.py
 
 @app.post("/api/general-ask")
 def api_general_ask(req: GeneralAskReq):
     """
-    Answers a general legal question using the main (non-thread)
-    legal knowledge base.
+    General Legal Q&A with Chat History.
     """
+    print(f"--- [General Ask] User: {req.user_id} | Thread: {req.thread_id} ---")
+
     try:
-        # --- Step 1: Translate query to English if needed ---
+        # 1. Translate Query if needed
         query_to_process = req.query
         if req.query.strip():
-            query_lang_detection = detect_language(req.query)
-            if query_lang_detection and query_lang_detection.get('language') != 'en':
-                translated_query = translate_text(req.query, target_language='en')
-                if translated_query:
-                    query_to_process = translated_query
-                    print(f"--- [API GeneralAsk] Translated query to: {query_to_process}")
-        
-        # --- Step 2: NEW GREETING CHECK (Before RAG) ---
-        # We check for the greeting *before* running the search
-        greeting_triggers = ["hi", "hii", "hello", "how are you", "good morning", "good afternoon", "good evening"]
-        normalized_query = query_to_process.lower().strip(" ?.")
-        
-        if normalized_query in greeting_triggers:
-            print("--- [API GeneralAsk] Greeting detected. Bypassing RAG. ---")
-            
-            # This is the hardcoded greeting from your prompt's Rule 1
-            final_answer = "Hello, this is Legal SahAI. How may I help you?"
-            
-            # Translate the greeting *response* if needed
-            if req.output_language and req.output_language != 'en':
-                translated = translate_text(final_answer, target_language=req.output_language)
-                if translated:
-                    final_answer = translated
-            return {"success": True, "answer": final_answer}
-        # --- END OF NEW GREETING CHECK ---
+            query_lang = detect_language(req.query)
+            if query_lang and query_lang.get('language') != 'en':
+                translated = translate_text(req.query, target_language='en')
+                if translated: query_to_process = translated
 
-        # --- Step 3: (Was Step 2) Retrieve from GENERAL knowledge base ---
-        # This part now only runs if the query is NOT a greeting
-        print(f"--- [API GeneralAsk] Non-greeting query received. Retrieving chunks... ---")
-        hits = retrieve_general_legal_chunks(query_to_process, top_k=5)
-        
-        context_combined = ""
-        if not hits:
-            print("--- [API GeneralAsk] No relevant chunks found in general DB.")
-            context_combined = "(No relevant information found)"
-        else:
-            # Improved context building with both questions and answers
-            context_blobs = []
-            for i, r in enumerate(hits, 1):
-                question = r.get("retrieved_question", "").strip()
-                answer = r.get("text", "").strip()
-                context_blobs.append(
-                    f"--- Similar Question {i} ---\n"
-                    f"Q: {question}\n"
-                    f"A: {answer}\n"
-                )
-            context_combined = "\n\n".join(context_blobs)
+        # 2. Process History
+        history_text = ""
+        recent_history = req.history[-10:] 
+        for msg in recent_history:
+            role_label = "User" if msg.role == "user" else "AI"
+            history_text += f"{role_label}: {msg.content}\n"
 
-        # Use LLM with context
-        system_prompt = GENERAL_LEGAL_QA_PROMPT.format(context=context_combined)
-        final_answer = call_model_system_then_user(
-            system_prompt, query_to_process, temperature=0.1
+        # 3. Build Prompt
+        # This function now returns the complete System Prompt string
+        final_system_prompt = build_general_system_prompt(chat_history_str=history_text)
+        
+        # 4. Call LLM
+        # We pass 'final_system_prompt' as the System Instructions
+        # We pass 'query_to_process' as the User Message
+        response_text = call_model_system_then_user(
+            system_prompt=final_system_prompt,
+            user_prompt=query_to_process, 
+            temperature=0.3
         )
 
-        # Translation if needed...
-        final_answer_translated = final_answer
-        if req.output_language and req.output_language != 'en' and final_answer:
-            translated = translate_text(final_answer, target_language=req.output_language)
-            if translated:
-                final_answer_translated = translated
-        return {"success": True, "answer": final_answer_translated}
+        # 5. Translate Response if needed
+        final_answer = response_text
+        if req.output_language and req.output_language != 'en':
+            translated_resp = translate_text(response_text, target_language=req.output_language)
+            if translated_resp: final_answer = translated_resp
+
+        return {
+            "success": True,
+            "answer": final_answer
+        }
 
     except Exception as e:
-        print(f"--- [API GeneralAsk] Error: {e} ---")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"--- [General Ask] Error: {e} ---")
+        # Use 500 so we see the error in logs, but return detail
+        raise HTTPException(status_code=500, detail=f"Error processing request: {e}")
 
 
 
@@ -1137,3 +1232,143 @@ def api_event_timeline(req: FlowchartReq): # We can reuse FlowchartReq as it has
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating timeline: {e}")
+    
+@app.post("/api/short-summary")
+def api_short_summary(req: ShortSummaryReq):
+    """
+    Returns a 2-3 line summary of the uploaded document.
+    """
+    print("\n--- SERVER CHECK: The /api/short-summary endpoint was called. ---")
+    try:
+        result = generate_short_summary(req.user_id, req.thread_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=422, detail=result)
+            
+        summary_text = result.get("summary", "")
+        
+        # Translate if needed
+        if req.output_language and req.output_language != 'en' and summary_text:
+            translated = translate_text(summary_text, target_language=req.output_language)
+            if translated:
+                result["summary"] = translated
+                
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {e}")
+
+@app.post("/api/upload-risk-doc")
+async def upload_risk_doc(
+    file: UploadFile = File(...),
+    user_id: Optional[str] = Form(None),
+    thread_id: str = Form(...),
+    output_language: Optional[str] = Form('en')
+):
+    print(f"\n--- [/api/upload-risk-doc] Processing file: {file.filename} | Thread: {thread_id} ---")
+    
+    # Debug logs (Keep these for now)
+    print(f"DEBUG: Filename received: '{file.filename}'")
+    print(f"DEBUG: Content-Type received: '{file.content_type}'")
+
+    save_name = f"{thread_id}_{file.filename}"
+    local_path = UPLOAD_DIR / save_name
+    
+    # 1. Save File
+    try:
+        with local_path.open("wb") as f:
+            f.write(await file.read())
+            
+        ocr_result = None
+        extracted_text = ""
+        
+        # --- FIX IS HERE ---
+        # Check BOTH extension AND content_type
+        is_pdf = (
+            file.filename.lower().endswith(".pdf") 
+            or file.content_type == "application/pdf"
+        )
+        
+        if is_pdf:
+            try:
+                import pdfplumber
+                from backend_rag.form_processing import DetailedOcrResult, OcrPage, OcrWord
+                
+                print("--- [Risk API] Parsing PDF layout (Form-Filling Style)... ---")
+                with pdfplumber.open(local_path) as pdf:
+                    # ... (Existing pdfplumber logic) ...
+                    all_pages = []
+                    full_text_parts = []
+                    
+                    for i, page in enumerate(pdf.pages):
+                        page_words = []
+                        words = page.extract_words(x_tolerance=2, y_tolerance=2, keep_blank_chars=False)
+                        for word in words:
+                            bbox = [int(word['x0']), int(word['top']), int(word['x1']), int(word['bottom'])]
+                            page_words.append(OcrWord(text=word['text'], bbox=bbox))
+                        
+                        all_pages.append(OcrPage(page_number=i + 1, width=int(page.width), height=int(page.height), words=page_words))
+                        full_text_parts.append(page.extract_text() or "")
+
+                    ocr_result = DetailedOcrResult(pages=all_pages)
+                    extracted_text = "\n".join(full_text_parts)
+                    
+            except Exception as e:
+                print(f"--- [Risk API] PDF Parsing Warning: {e}. Falling back... ---")
+                process_result = _extract_and_translate_only(str(local_path))
+                extracted_text = process_result.get("extracted_text", "")
+
+        else:
+            # Non-PDF
+            print("--- [Risk API] Non-PDF detected. Using standard extraction. ---")
+            process_result = _extract_and_translate_only(str(local_path))
+            extracted_text = process_result.get("extracted_text", "")
+
+        # ... (Rest of the function remains the same) ...
+
+        if not extracted_text.strip():
+             raise HTTPException(status_code=422, detail="Could not extract text from document.")
+
+        # 3. Run Semantic Risk Analysis
+        # We pass the text directly.
+        analysis_result = generate_risk_analysis(user_id, thread_id, direct_context=extracted_text)
+        
+        if not analysis_result.get("success"):
+            raise HTTPException(status_code=422, detail=analysis_result)
+        
+        risks = analysis_result.get("risks", [])
+        
+        # 4. In-Memory Highlighting (No re-opening file)
+        if ocr_result:
+            print(f"--- [Risk API] Mapping {len(risks)} risks to coordinates using in-memory data... ---")
+            for risk in risks:
+                quote = risk.get("original_text", "")
+                if quote:
+                    # Use our new helper function
+                    coords = _find_coordinates_in_ocr_result(ocr_result, quote)
+                    risk["coordinates"] = coords
+                else:
+                    risk["coordinates"] = []
+        else:
+            # If not a PDF or parsing failed, return empty coords
+            for risk in risks: risk["coordinates"] = []
+
+        # 5. Translate Response (Output)
+        if output_language and output_language != 'en':
+            print(f"--- [Risk API] Translating output to {output_language} ---")
+            for risk in risks:
+                # Helper to translate specific keys
+                for key in ["explanation", "recommendation", "compliance_check"]:
+                    if key in risk:
+                        trans = translate_text(risk[key], output_language)
+                        if trans: risk[key] = trans
+
+        # 6. Return Final JSON
+        return {"success": True, "risks": risks}
+
+    except HTTPException as httpe:
+        raise httpe
+    except Exception as e:
+        print(f"--- [Risk API] Fatal Error: {e} ---")
+        raise HTTPException(status_code=500, detail=f"Error analyzing risks: {e}")
+
