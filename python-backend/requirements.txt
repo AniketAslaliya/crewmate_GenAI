@@ -26,9 +26,12 @@ beautifulsoup4
 playwright
 google-cloud-speech==2.25.0  
 google-cloud-translate==3.11.3
-python-docx 
+python-docx  
 reportlab
 playwright
 playwright-stealth
 pdfplumber
 google-cloud-texttospeech
+cryptography
+
+pymupdf

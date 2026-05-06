@@ -1,10 +1,13 @@
 FROM python:3.11-slim
 
 # System packages:
-# - poppler-utils for pdf2image (your old pipeline)
+# - poppler-utils for pdf2image
 # - libgl1 + libglib2.0-0 for Pillow/graphics
 # - build-essential + libjpeg-dev + zlib1g-dev for compiling Python deps
-# - ffmpeg for audio conversion (needed by pydub)
+# - ffmpeg for audio conversion
+#
+# NOTE: We have REMOVED chromium-browser from this list.
+# We will let Playwright handle its own system dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libgl1 \
@@ -13,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     zlib1g-dev \
     ffmpeg \
-  && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -25,8 +28,12 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt /app/requirements.txt
 
-# Install CPU-only torch first (so sentence-transformers won't try to pull CUDA wheels),
-# then install remaining requirements.
+# Install CPU-only torch, then all other requirements.
+# THEN, run 'playwright install-deps' to install all correct
+# system-level libraries for the browser.
+# FINALLY, run 'playwright install chromium' to download the
+# browser binary itself.
+# In Dockerfile
 RUN python -m pip install --upgrade pip && \
     pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install --no-cache-dir -r /app/requirements.txt
@@ -34,13 +41,8 @@ RUN python -m pip install --upgrade pip && \
 # Copy application code
 COPY . /app
 
-# Expose port (Render/Heroku will override with $PORT anyway)
-EXPOSE 10000
+# Expose port
+EXPOSE 7860
 
 # Run FastAPI with uvicorn
-# Use  as fallback so it works locally and on platforms like Render
-EXPOSE 7860
 CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
-
-
-

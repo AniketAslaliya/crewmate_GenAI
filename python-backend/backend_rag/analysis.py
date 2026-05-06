@@ -19,7 +19,28 @@ from .extract import extract_text_with_diagnostics
 from .chunking import chunk_text
 from .models import call_model_system_then_user
 from .vectorstore_pinecone import get_or_create_index, namespace, query_top_k
+from cryptography.fernet import Fernet
 
+from dotenv import load_dotenv
+
+# Force load .env
+load_dotenv()
+
+# --- SETUP DECRYPTION ---
+ENCRYPTION_KEY = os.getenv("TEXT_ENCRYPTION_KEY")
+cipher = Fernet(ENCRYPTION_KEY) if ENCRYPTION_KEY else None
+
+def _decrypt_text(text: str) -> str:
+    """Helper to decrypt text if key is available."""
+    if not cipher or not text:
+        return text
+    try:
+        return cipher.decrypt(text.encode()).decode()
+    except Exception:
+        # Return raw text if decryption fails (e.g. it wasn't encrypted)
+        return text
+
+    
 # Heuristic keywords
 LEGAL_KEYWORDS = [
     "agreement", "party", "parties", "indemnify", "indemnity", "warranty", "liability",
@@ -442,7 +463,11 @@ def generate_study_guide(user_id: Optional[str], thread_id: str, max_snippets: i
         initial_hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=max_snippets) 
         
         if not initial_hits: return {"success": False, "message": "No document excerpts available."}
-        snippets = [hit.get("metadata", {}).get("text", "") for hit in initial_hits if hit.get("metadata", {}).get("text", "")]
+        snippets = [
+            _decrypt_text(hit.get("metadata", {}).get("text", "")) 
+            for hit in initial_hits 
+            if hit.get("metadata", {}).get("text", "")
+        ]
         if not snippets: return {"success": False, "message": "No valid text snippets found."}
         full_context = "\n\n---\n\n".join(snippets)
 
@@ -600,7 +625,11 @@ def generate_faq(user_id: Optional[str], thread_id: str, max_snippets: int = 8, 
         if not initial_hits:
             return {"success": False, "message": "No document excerpts available for FAQ generation."}
 
-        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in initial_hits if hit.get("metadata", {}).get("text", "").strip()]
+        snippets = [
+            _decrypt_text(hit.get("metadata", {}).get("text", "")).strip() 
+            for hit in initial_hits 
+            if hit.get("metadata", {}).get("text", "")
+        ]
         if not snippets:
             return {"success": False, "message": "No valid text snippets found in Pinecone."}
 
@@ -732,7 +761,11 @@ def generate_timeline(user_id: Optional[str], thread_id: str, max_snippets: int 
         query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=20)
         if not query_result:
             return {"success": True, "timeline": [], "message": "No document excerpts available for timeline generation."}
-        snippets = [hit.get("metadata", {}).get("text", "").strip() for hit in query_result if hit.get("metadata", {}).get("text", "").strip()]
+        snippets = [
+            _decrypt_text(hit.get("metadata", {}).get("text", "")).strip() 
+            for hit in query_result 
+            if hit.get("metadata", {}).get("text", "")
+        ]
         if not snippets:
             return {"success": True, "timeline": [], "message": "No valid snippets found in Pinecone."}
         context_excerpt = "\n\n---\n\n".join(snippets)
@@ -964,7 +997,10 @@ def suggest_case_law(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
         if not query_result:
             return {"success": False, "message": "No document excerpts for analysis."}
         
-        user_context = "\n".join([hit.get("metadata", {}).get("text", "").strip() for hit in query_result])
+        user_context = "\n".join([
+            _decrypt_text(hit.get("metadata", {}).get("text", "")).strip() 
+            for hit in query_result
+        ])
         if len(user_context.strip()) < 100:
             return {"success": False, "message": "Document content is too short for analysis."}
     except Exception as e:
@@ -1012,91 +1048,89 @@ def suggest_case_law(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
 
 
         
-def _predictive_agent1_extract_facts(context: str) -> str:
-    """Agent 1: Scans the document to identify and create a structured list of all key facts, obligations, and liabilities."""
-    print("--- [Predictive Agent 1] Extracting critical facts... ---")
-    system_prompt = "You are a legal fact-extraction agent. Scan the provided document and create a structured, bulleted markdown list of all key facts, obligations, liabilities, and important figures (names, dates, amounts). Be concise and objective."
-    user_prompt = f"Document Text:\n---\n{context}\n---"
-    facts_summary = call_model_system_then_user(system_prompt, user_prompt, temperature=0.0)
-    print(f"--- [Predictive Agent 1] Extracted Facts: \n{facts_summary[:500]}...")
-    return facts_summary
+# In backend_rag/analysis.py
 
-# --- UPDATED: Agent 2 now performs comprehensive & adversarial analysis ---
-def _predictive_agent2_comprehensive_analysis(facts_summary: str) -> str:
-    """Agent 2: Assesses facts for primary strengths/risks AND from an adversarial perspective."""
-    print("--- [Predictive Agent 2] Performing comprehensive (primary & adversarial) analysis... ---")
-    system_prompt = (
-        "You are a senior legal analyst. Based on the following facts, provide a two-part analysis.\n\n"
-        "**Part 1: Primary Analysis**: From the perspective of the document's main party, identify the key 'Legal Strengths' and 'Potential Risks'.\n\n"
-        "**Part 2: Adversarial Analysis**: Now, acting as the 'Devil's Advocate' or opposing counsel, identify the 'Counter-Arguments / Opponent's Strengths'.\n\n"
-        "Structure your output with these three clear, bulleted markdown headings."
-    )
-    user_prompt = f"Extracted Facts:\n---\n{facts_summary}\n---"
-    risk_analysis = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
-    print(f"--- [Predictive Agent 2] Comprehensive Analysis: \n{risk_analysis[:500]}...")
-    return risk_analysis
+# --- AGENT 1: STRATEGY GENERATOR (Dynamic based on Doc Type) ---
+def _agent_generate_strategy(context: str, doc_type: str) -> Dict[str, Any]:
+    """
+    Generates a specific strategic output based on the document type.
+    """
+    print(f"--- [Strategy Agent] Generating game plan for {doc_type}... ---")
+    
+    # 1. CONTRACTS -> NEGOTIATION PLAYBOOK
+    if doc_type == "Agreement/Contract":
+        system_prompt = (
+            "You are a tough negotiator and legal strategist. Read the provided contract and identify "
+            "as many key terms you identify that are unfair or missing. For each, provide a 'Negotiation Strategy'.\n\n"
+            "Return JSON: `{ 'strategies': [{ 'title': 'Rent Escalation', 'their_stance': 'Clause 4 allows 10% hike', 'your_counter': 'Argue for 5% capped at CPI', 'win_probability': 'High' }] }`"
+        )
 
-# --- UPDATED: Agent 3 now synthesizes the comprehensive analysis ---
-def _predictive_agent3_synthesize_prediction(facts_summary: str, comprehensive_analysis: str) -> Dict[str, Any]:
-    """Agent 3: Combines facts and the two-part analysis to generate a balanced predictive summary."""
-    print("--- [Predictive Agent 3] Synthesizing balanced prediction... ---")
-    system_prompt = (
-        "You are a senior legal strategist. You have been given a list of facts, a primary analysis of strengths/risks, and an adversarial analysis of counter-arguments. "
-        "Your task is to synthesize ALL of this information into a balanced predictive forecast. Generate a summary of 2-3 potential future outcomes or scenarios. "
-        "For each outcome, your reasoning should be and in easy understable language and robust and consider both sides of the argument. "
-        "Conclude with a standard legal disclaimer. "
-        "The output MUST be a valid JSON object with two keys: `scenarios` (a list of objects, each with `outcome` and `reasoning` keys) and `disclaimer` (a string)."
-        "CRITICAL RULE: The keys in the JSON output ('scenarios', 'outcome', 'reasoning', 'disclaimer') MUST be in English and must not be translated."
-    )
-    user_prompt = f"Facts Summary:\n{facts_summary}\n\nComprehensive Analysis (Both Sides):\n{comprehensive_analysis}\n\nNow, generate the balanced predictive forecast as a JSON object."
-    json_string = call_model_system_then_user(system_prompt, user_prompt, temperature=0.4)
-    print(f"--- [Predictive Agent 3] Generated Prediction JSON: {json_string[:500]}...")
+    # 2. JUDGMENTS -> NEXT LEGAL MOVES
+    elif doc_type == "Case Judgment":
+        system_prompt = (
+            "You are a senior litigation lawyer. Read this court judgment/order. "
+            "Outline the as many as you have identified most logical 'Next Steps' for the losing party (or the user). "
+            "Focus on Appeal grounds, Compliance deadlines, or Settlement options.\n\n"
+            "Return JSON: `{ 'strategies': [{ 'title': 'File Appeal', 'basis': 'Error in applying Section 302', 'deadline': '30 Days', 'action_item': 'Contact High Court Advocate' }] }`"
+        )
+
+    # 3. NOTICES/GENERAL -> RESPONSE STRATEGY
+    else:
+        system_prompt = (
+            "You are a legal advisor. The user has received this legal document/notice. "
+            "Predict the consequences of ignoring it, and outline  as many as you have identified strategic ways to respond.\n\n"
+            "Return JSON: `{ 'strategies': [{ 'title': 'Deny Liability', 'reasoning': 'No proof of breach attached', 'action_item': 'Draft a denial letter citing lack of evidence' }] }`"
+        )
+
+    user_prompt = f"Document Excerpts:\n---\n{context[:20000]}\n---\n\nGenerate Strategic JSON:"
+
     try:
-        json_match = re.search(r'\{.*\}', json_string, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(0))
-        return {} # Return empty dict on failure
-    except json.JSONDecodeError:
-        print("--- [Predictive Agent 3] FAILED to parse JSON from LLM response.")
-        return {}
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
+        match = re.search(r'\{.*\}', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return {"strategies": []}
+    except Exception as e:
+        print(f"--- [Strategy Agent] Error: {e} ---")
+        return {"strategies": []}
 
-# --- UPDATED: The main orchestrator function ---
+
+# --- ORCHESTRATOR ---
 def generate_predictive_output(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
-    """Orchestrates the multi-agent pipeline for generating a predictive output with adversarial analysis."""
+    """
+    Upgraded Orchestrator: "The Universal Strategy Engine"
+    """
     try:
-        index = get_or_create_index(dim=384)
+        # 1. Get Context (With Decryption)
+        index = get_or_create_index(dim=get_embedding_dimension())
         ns = namespace(user_id, thread_id)
-        query_result = query_top_k(index, ns, query_vec=[0.0] * 384, top_k=25)
-        if not query_result:
-            return {"success": False, "message": "No document excerpts available for analysis."}
-        context = "\n\n---\n\n".join([hit.get("metadata", {}).get("text", "").strip() for hit in query_result])
-        if len(context.strip()) < 100:
-            return {"success": False, "message": "Document content is too short for meaningful analysis."}
+        hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=40)
         
-        # --- Agent 1: Fact Extraction ---
-        facts = _predictive_agent1_extract_facts(context)
-        if not facts.strip():
-            return {"success": False, "message": "Agent 1 failed to extract any facts."}
-            
-        # --- Agent 2: Comprehensive & Adversarial Analysis ---
-        analysis = _predictive_agent2_comprehensive_analysis(facts)
-        if not analysis.strip():
-            return {"success": False, "message": "Agent 2 failed to produce a comprehensive analysis."}
-            
-        # --- Agent 3: Prediction Synthesis ---
-        prediction = _predictive_agent3_synthesize_prediction(facts, analysis)
-        if not prediction or "scenarios" not in prediction:
-            return {"success": False, "message": "Agent 3 failed to synthesize a prediction."}
-            
-        return {"success": True, "prediction": prediction}
+        if not hits: return {"success": False, "message": "No context."}
+        
+        # Decrypt
+        full_context = "\n\n".join([
+            _decrypt_text(h.get("metadata", {}).get("text", "")) 
+            for h in hits
+        ])
+
+        # 2. Classify Document (Crucial Step)
+        # We reuse the classifier you already have!
+        doc_type = _agent_classify_document_type(full_context)
+        print(f"--- [Orchestrator] Document Type for Strategy: {doc_type} ---")
+
+        # 3. Generate Dynamic Strategy
+        strategy_data = _agent_generate_strategy(full_context, doc_type)
+        
+        # 4. Return Structured Data
+        return {
+            "success": True, 
+            "document_type": doc_type,
+            "prediction": strategy_data # Frontend maps this to "strategies" list
+        }
 
     except Exception as e:
-        print(f"--- [ERROR] An unexpected error occurred in generate_predictive_output: {e}")
-        return {"success": False, "message": f"An unexpected error occurred: {e}"}
-    
-
-# In backend_rag/analysis.py
-# (Add this new function alongside your other agents like generate_faq, etc.)
+        return {"success": False, "message": f"Error: {e}"}
 
 def _agent_explain_complex_clauses(context: str) -> Dict[str, str]:
     """
@@ -1162,7 +1196,11 @@ def generate_clause_explanations(user_id: Optional[str], thread_id: str) -> Dict
         if not hits:
             return {"success": False, "message": "No document excerpts available."}
         
-        snippets = [hit.get("metadata", {}).get("text", "") for hit in hits if hit.get("metadata", {}).get("text", "")]
+        snippets = [
+            _decrypt_text(hit.get("metadata", {}).get("text", "")) 
+            for hit in hits 
+            if hit.get("metadata", {}).get("text", "")
+        ]
         if not snippets:
             return {"success": False, "message": "No valid text snippets found."}
             
@@ -1193,21 +1231,52 @@ def generate_clause_explanations(user_id: Optional[str], thread_id: str) -> Dict
 # === 1. MIND MAP GENERATOR (Returns Mermaid Code) ===
 def _agent_generate_mindmap_only(context: str) -> str:
     """
-    Generates ONLY the Mermaid.js Mindmap code.
+    Generates a Colorful Mindmap using the 'base' theme to strictly force BLACK text.
     """
-    print("--- [Visual Agent] Generating Mind Map... ---")
+    print("--- [Visual Agent] Generating Mind Map (Pastel Colors + Black Text)... ---")
+
+    # We use 'base' theme to disable auto-contrast.
+    # We set manually defined light pastel colors for backgrounds.
+    # We set ALL text variables to #000000 (Black).
+    theme_directive = (
+        "%%{init: {'theme': 'base', 'themeVariables': { "
+        "'primaryColor': '#FFD700', "       # Root Node: Gold
+        "'primaryTextColor': '#000000', "   # Root Text: Black
+        "'secondaryColor': '#87CEEB', "     # Branch Node: Sky Blue
+        "'secondaryTextColor': '#000000', " # Branch Text: Black
+        "'tertiaryColor': '#98FB98', "      # Leaf Node: Pale Green
+        "'tertiaryTextColor': '#000000', "  # Leaf Text: Black
+        "'textColor': '#000000', "          # Global Text: Black
+        "'lineColor': '#333333', "          # Lines: Dark Grey
+        "'fontSize': '14px'"
+        "}}}%%"
+    )
+
     system_prompt = (
         "You are a legal visualization expert. Create a `mindmap` code block for the provided document.\n"
-        "- Root node: Document Title.\n"
-        "- Branches: Key Themes, Core Issues, Evidence, Outcomes.\n"
-        "- Focus on **Knowledge Clusters**.\n"
-        "- Output ONLY the raw Mermaid syntax (no markdown)."
+        "Rules:\n"
+        "1. Root node: Document Title.\n"
+        "2. Branches: Key Themes, Core Issues, Evidence, Outcomes.\n"
+        "3. **CRITICAL**: Start the code with this EXACT line:\n"
+        f"{theme_directive}\n"
+        "4. Focus on **Knowledge Clusters**.\n"
+        "5. Output ONLY the raw Mermaid syntax (no markdown)."
     )
+
     user_prompt = f"Document Excerpts:\n---\n{context[:25000]}\n---\n\nGenerate Mermaid mindmap:"
 
     try:
         response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.2)
-        return response.replace("```mermaid", "").replace("```", "").strip()
+        
+        # Clean up formatting
+        code = response.replace("```mermaid", "").replace("```", "").strip()
+        
+        # Safety Check
+        if "%%{init" not in code:
+            code = f"{theme_directive}\n{code}"
+            
+        return code
+
     except Exception as e:
         print(f"--- [Mindmap Agent] Error: {e} ---")
         return "mindmap\n root((Error))"
@@ -1220,7 +1289,10 @@ def generate_mindmap(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
         hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=40)
         if not hits: return {"success": False, "message": "No context."}
         
-        full_context = "\n".join([h.get("metadata", {}).get("text", "") for h in hits])
+        full_context = "\n".join([
+            _decrypt_text(h.get("metadata", {}).get("text", "")) 
+            for h in hits
+        ])
         code = _agent_generate_mindmap_only(full_context)
         
         return {"success": True, "mindmap_code": code}
@@ -1271,9 +1343,276 @@ def generate_structured_timeline(user_id: Optional[str], thread_id: str) -> Dict
         hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=40)
         if not hits: return {"success": False, "message": "No context."}
         
-        full_context = "\n".join([h.get("metadata", {}).get("text", "") for h in hits])
+        full_context = "\n".join([
+            _decrypt_text(h.get("metadata", {}).get("text", "")) 
+            for h in hits
+        ])
         timeline_data = _agent_generate_event_data(full_context)
         
         return {"success": True, "timeline": timeline_data}
     except Exception as e:
         return {"success": False, "message": str(e)}
+    
+
+# In backend_rag/analysis.py
+
+# === SHORT SUMMARY AGENT ===
+def _agent_generate_short_summary(context: str) -> str:
+    """
+    Generates a concise 2-3 line summary of the document.
+    """
+    print("--- [Summary Agent] Generating short summary... ---")
+    system_prompt = (
+        "You are a concise legal summarizer. Your task is to read the provided text "
+        "and generate a strictly **2-3 sentence** plain English summary of the document's core content.\n"
+        "Rules:\n"
+        "- Focus on what the document IS and what it DOES.\n"
+        "- Do NOT use markdown formatting (no bold, no headers).\n"
+        "- Do NOT add introductions like 'This document appears to be...'. Just state the facts.\n"
+        "- Keep it under 50 words."
+    )
+    user_prompt = f"Document Excerpts:\n---\n{context[:15000]}\n---\n\nSummary:"
+
+    try:
+        # Use a lower temperature for factual consistency
+        return call_model_system_then_user(system_prompt, user_prompt, temperature=0.1).strip()
+    except Exception as e:
+        print(f"--- [Summary Agent] Error: {e} ---")
+        return "Summary unavailable."
+
+def generate_short_summary(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """
+    Orchestrator for Short Summary.
+    """
+    try:
+        # 1. Get Context
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        # We need enough context to understand the whole file
+        hits = query_top_k(index, ns, query_vec=[0.0] * get_embedding_dimension(), top_k=20)
+        
+        if not hits:
+            return {"success": False, "message": "No document excerpts available."}
+            
+        snippets = [
+            _decrypt_text(hit.get("metadata", {}).get("text", "")) 
+            for hit in hits 
+            if hit.get("metadata", {}).get("text", "")
+        ]
+        if not snippets:
+            return {"success": False, "message": "No valid text snippets found."}
+            
+        full_context = "\n\n".join(snippets)
+
+        # 2. Call Agent
+        summary = _agent_generate_short_summary(full_context)
+        
+        return {"success": True, "summary": summary}
+
+    except Exception as e:
+        print(f"--- [Summary Orchestrator] Error: {e} ---")
+        return {"success": False, "message": f"generate_short_summary error: {e}"}
+
+def _agent_detect_risky_clauses(context: str) -> List[Dict[str, Any]]:
+    """
+    Analyzes the document for risky clauses using a comprehensive scan.
+    Optimized for:
+    1. Non-lawyer education (simple explanations).
+    2. Perfect highlighting (short, unique quotes).
+    3. Full document coverage (large context window).
+    """
+    print("--- [Clause Watchdog] Detecting risks & compliance issues... ---")
+    
+    # 1. CRITICAL: Guard against empty context to prevent hallucinations
+    if not context or not context.strip():
+        print("--- [Clause Watchdog] WARNING: No text context provided. Returning empty list. ---")
+        return []
+
+    # 2. Context Limit: Increased to ~100k chars (approx 30-40 pages)
+    safe_context = context[:100000]
+
+    system_prompt = (
+        "You are a protective Legal Risk Guide for Indian Law. Your goal is to explain risks to a non-lawyer in simple, everyday language.\n\n"
+        
+        "**YOUR MISSION:**\n"
+        "Analyze the provided document and identify clauses that pose a **Critical** or **High** risk to any party signing it (or the likely weaker party). "
+        "Focus on traps, aggressive terms, illegal conditions, and unfair obligations.\n\n"
+        
+        "**SIMPLICITY RULE (EL5):**\n"
+        "Explain the risk as if you are talking to a college student. "
+        "Do NOT use words like 'pursuant to', 'aforementioned', or 'indemnification' without explaining them. "
+        "Use analogies if it helps (e.g., 'This means you are writing a blank cheque...').\n\n"
+        
+        "**ANALYSIS STEPS (Chain of Thought):**\n"
+        "1. **Read:** Look for Red Flags (Unlimited Liability, One-sided Termination, strict Non-Compete, Vague Payment Terms).\n"
+        "2. **Check Law:** Does this violate Indian Law (e.g., Section 27 of Contract Act regarding restraint of trade, Section 74 regarding penalties)?\n"
+        "3. **Evaluate:** Is this standard market practice or an aggressive trap?\n\n"
+
+        "**OUTPUT FORMAT:**\n"
+        "Return a valid JSON list of objects `[]`. Each object must have:\n"
+        "1. `original_text`: **VERBATIM QUOTE**. Extract the substring EXACTLY as it appears in the text. This is used for highlighting, so do not change a single character, punctuation, or space.\n"
+        "2. `risk_level`: 'High' (Illegal/Dangerous/Very Unfair) or 'Medium' (Watch out).\n"
+        "3. `category`: e.g., 'Financial Trap', 'Job Restriction', 'Termination', 'Liability'.\n"
+        "4. `explanation`: A simple, explanation of the worst-case scenario and why it is  risky. (e.g., 'If you sign this, they can fire you immediately without paying notice period money.')\n"
+        "5. `compliance_check`: **The Legal Verdict.** Is this clause legally binding in India? Cite the Act/Section if it is void or problematic (e.g., 'Void under Section 27, Indian Contract Act').\n"
+        "6. `recommendation`: Actionable advice. (e.g., 'Ask to change 30 days to 60 days', 'Cap the liability amount', or 'Delete this clause entirely').\n\n"
+        
+        "**Output ONLY the JSON list.**"
+    )
+    
+    user_prompt = (
+        "Analyze the text below and identify legal risks.\n\n"
+        f"Document Text:\n---\n{safe_context}\n---"
+    )
+    
+    try:
+        # Use a slightly higher temperature (0.3) to ensure it catches nuances, 
+        # but keeps the JSON structure strict.
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
+        
+        # Extract JSON list
+        match = re.search(r'\[.*\]', response, re.DOTALL)
+        if match:
+            risks = json.loads(match.group(0))
+            print(f"--- [Clause Watchdog] Detected {len(risks)} risky clauses. ---")
+            return risks
+        return []
+    except Exception as e:
+        print(f"--- [Clause Watchdog] Error: {e} ---")
+        return []
+
+# In backend_rag/analysis.py
+
+def generate_risk_analysis(user_id: Optional[str], thread_id: str, direct_context: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Orchestrator for Risk Detection.
+    Accepts 'direct_context' to bypass Pinecone latency for immediate uploads.
+    """
+    try:
+        full_context = ""
+        
+        if direct_context:
+            # USE DIRECT TEXT (Reliable for new uploads)
+            print("--- [Risk Analysis] Using direct context (bypassing Pinecone)... ---")
+            full_context = direct_context
+        else:
+            # FALLBACK TO PINECONE (For old threads)
+            print("--- [Risk Analysis] Querying Pinecone for context... ---")
+            index = get_or_create_index(dim=get_embedding_dimension())
+            ns = namespace(user_id, thread_id)
+            hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=60)
+            if not hits: 
+                return {"success": False, "message": "No context found in DB."}
+            
+            full_context = "\n".join([
+            _decrypt_text(h.get("metadata", {}).get("text", "")) 
+            for h in hits
+        ])
+        
+        # Run the Agent
+        risks = _agent_detect_risky_clauses(full_context)
+        
+        return {"success": True, "risks": risks}
+        
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+# In backend_rag/analysis.py
+
+def _agent_generate_stress_scenarios(context: str, doc_type: str) -> List[Dict[str, str]]:
+    """
+    Identifies 3-4 critical 'What If' scenarios based on the document type.
+    """
+    print("--- [Stress Test Agent] Generating 'What If' scenarios... ---")
+    
+    system_prompt = (
+        "You are a 'Devil's Advocate' legal AI. Your job is to stress-test legal documents.\n"
+        "Based on the document text, identify 3-4 specific, high-risk situations that could go wrong.\n"
+        "Formulate them as 'What If' questions from the user's perspective.\n\n"
+        "**Examples:**\n"
+        "- (Rent Agreement): 'What if I vacate the property before the lock-in period ends?'\n"
+        "- (Legal Notice): 'What happens if I do not respond within 15 days?'\n"
+        "- (Employment): 'What if I join a competitor immediately after resigning?'\n"
+        "- (General): 'What are the penalties for breaching Clause X?'\n\n"
+        "**Output Format:**\n"
+        "Return a JSON list of objects: `[{\"question\": \"...\", \"severity\": \"High/Medium\"}]`"
+    )
+    
+    user_prompt = f"Document Type: {doc_type}\nContext:\n---\n{context[:15000]}\n---\n\nGenerate JSON Scenarios:"
+
+    try:
+        response = call_model_system_then_user(system_prompt, user_prompt, temperature=0.3)
+        match = re.search(r'\[.*\]', response, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return []
+    except Exception as e:
+        print(f"--- [Stress Test Agent] Error: {e} ---")
+        return []
+
+def _agent_simulate_outcome(context: str, question: str) -> str:
+    """
+    Answers a specific 'What If' question based STRICTLY on the document clauses.
+    """
+    system_prompt = (
+        "You are a strict legal analyst. Answer the user's 'What If' question based ONLY on the provided document clauses.\n"
+        "Rules:\n"
+        "1. **Cite the Clause:** Mention which section/clause dictates the outcome (e.g., 'According to Clause 4.2...').\n"
+        "2. **Be Direct:** State the consequence clearly (e.g., 'You will lose your security deposit').\n"
+        "3. **Markdown:** Use bolding for consequences.\n"
+        "4. If the document is silent on this, state: 'The document does not explicitly state a penalty for this.'"
+    )
+    user_prompt = f"Document Context:\n{context[:20000]}\n\nUser Question: {question}\n\nAnswer:"
+    
+    try:
+        return call_model_system_then_user(system_prompt, user_prompt, temperature=0.1)
+    except Exception:
+        return "Could not simulate outcome."
+
+def generate_legal_stress_test(user_id: Optional[str], thread_id: str) -> Dict[str, Any]:
+    """
+    Orchestrator: 
+    1. Classifies Doc
+    2. Generates 'What If' Questions
+    3. Simulates Answers for them immediately (so user sees Q&A together).
+    """
+    try:
+        # 1. Get Context (With Decryption)
+        index = get_or_create_index(dim=get_embedding_dimension())
+        ns = namespace(user_id, thread_id)
+        hits = query_top_k(index, ns, query_vec=[0.0]*get_embedding_dimension(), top_k=40)
+        
+        if not hits: return {"success": False, "message": "No context."}
+        
+        # Decrypt text
+        full_context = "\n".join([
+            _decrypt_text(h.get("metadata", {}).get("text", "")) 
+            for h in hits
+        ])
+
+        # 2. Classify (Reuse your existing classifier or simple check)
+        # For speed, we can just ask the stress agent to infer type, but using the classifier is better
+        doc_type = "Legal Document" 
+        # (Optional: Call _agent_classify_document_type(full_context) if you want precision)
+
+        # 3. Generate Questions
+        scenarios = _agent_generate_stress_scenarios(full_context, doc_type)
+        
+        # 4. Answer them immediately
+        # This creates a "Pre-computed" FAQ of risks
+        results = []
+        for item in scenarios:
+            question = item.get("question")
+            if question:
+                answer = _agent_simulate_outcome(full_context, question)
+                results.append({
+                    "question": question,
+                    "severity": item.get("severity", "Medium"),
+                    "outcome": answer
+                })
+
+        return {"success": True, "stress_test": results}
+
+    except Exception as e:
+        return {"success": False, "message": f"Error: {e}"}
